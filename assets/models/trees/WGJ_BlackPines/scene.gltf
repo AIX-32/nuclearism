@@ -1,0 +1,336 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "split by opencode"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "name": "Sketchfab_Scene",
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "children": [
+    1
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    2.220446049250313e-16,
+    -1.0,
+    0.0,
+    0.0,
+    1.0,
+    2.220446049250313e-16,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "Sketchfab_model"
+  },
+  {
+   "children": [
+    2
+   ],
+   "matrix": [
+    0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.009999999776482582,
+    0.0,
+    0.0,
+    -0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "trees and vegetation.fbx"
+  },
+  {
+   "children": [
+    3
+   ],
+   "name": "RootNode"
+  },
+  {
+   "children": [
+    4
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -184.16024780273438,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "WGJ BlackPines"
+  },
+  {
+   "children": [
+    6,
+    5
+   ],
+   "name": "WGJ BlackPines.Shape"
+  },
+  {
+   "mesh": 1,
+   "name": "WGJ BlackPines.Shape_Branches_0"
+  },
+  {
+   "mesh": 0,
+   "name": "WGJ BlackPines.Shape_Twigs_0"
+  }
+ ],
+ "meshes": [
+  {
+   "name": "WGJ BlackPines.Shape_Twigs_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 0,
+      "POSITION": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  },
+  {
+   "name": "WGJ BlackPines.Shape_Branches_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 4,
+      "POSITION": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    0.9974573850631714,
+    0.9999960660934448,
+    0.9999039769172668
+   ],
+   "min": [
+    -0.9977335333824158,
+    -0.9994930624961853,
+    -0.9878373742103577
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    90.77726745605469,
+    350.70050048828125,
+    144.8708953857422
+   ],
+   "min": [
+    -116.10758972167969,
+    87.00704956054688,
+    -167.73570251464844
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    1.0,
+    1.0
+   ],
+   "min": [
+    0.0,
+    0.0
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 30039,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 4,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    0.999521791934967,
+    0.9989789128303528,
+    0.9946079850196838
+   ],
+   "min": [
+    -0.999430775642395,
+    -0.9993342161178589,
+    -0.9953206777572632
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 5,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    73.75653076171875,
+    345.8367004394531,
+    127.76529693603516
+   ],
+   "min": [
+    -101.98379516601562,
+    -11.363089561462402,
+    -146.6304931640625
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 6,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    1.0,
+    0.9259260296821594
+   ],
+   "min": [
+    0.0,
+    0.0
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 7,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 8790,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 111168
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 111168,
+   "byteLength": 111168
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 222336,
+   "byteLength": 74112
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 296448,
+   "byteLength": 120156
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 416604,
+   "byteLength": 21888
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 438492,
+   "byteLength": 21888
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 460380,
+   "byteLength": 14592
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 474972,
+   "byteLength": 35160
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 510132,
+   "uri": "scene.bin"
+  }
+ ],
+ "materials": [
+  {
+   "doubleSided": true,
+   "name": "Stem_2",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.9577051494623774
+   }
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  }
+ ],
+ "images": [
+  {
+   "uri": "textures/Stem_2_baseColor.jpg"
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9729,
+   "minFilter": 9987,
+   "wrapS": 10497,
+   "wrapT": 10497
+  }
+ ]
+}

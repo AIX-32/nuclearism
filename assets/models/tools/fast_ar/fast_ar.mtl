@@ -1,0 +1,8 @@
+newmtl M
+Ns 250
+Ka 1 1 1
+Ks 0.3 0.3 0.3
+Kd 1 1 1
+d 1
+illum 2
+map_Kd MP5Texture.jpg

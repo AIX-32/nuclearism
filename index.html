@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <title>NUCLEARISM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Quantico:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+
+<body>
+
+  <div id="hud"></div>
+  <div id="crosshair"></div>
+  <div id="bar">
+    <div id="barFill"></div>
+  </div>
+  <div id="hotbar"></div>
+  <section id="vitals" aria-label="Vitals">
+    <div class="vital">
+      <span class="vl">HP</span>
+      <div class="vt hpTrack">
+        <div id="hpFill"></div>
+      </div>
+      <span class="vn" id="hpNum">100</span>
+    </div>
+    <div class="vital">
+      <span class="vl">FOOD</span>
+      <div class="vt foodTrack">
+        <div id="hungerFill"></div>
+      </div>
+      <span class="vn" id="hungerNum">100</span>
+    </div>
+    <div id="wounds"></div>
+  </section>
+  <section id="radMeter" role="progressbar" aria-label="Radiation dose against the human lethal dose" aria-valuemin="0"
+    aria-valuemax="100" aria-valuenow="0">
+    <header>RAD</header>
+    <div class="track">
+      <div id="radFill"></div>
+      <div id="radLd50" title="LD50 · 450 rad"></div>
+    </div>
+    <span id="radNum">SAFE
+      0 rad
+      0 rad/s</span>
+  </section>
+  <div id="cursorGhost" class="slot"></div>
+  <div id="tip">
+    <div class="t"></div>
+    <div class="b"></div>
+  </div>
+
+  <div id="deathBanner"><span>YOU DIED</span><small>you lost everything you carried</small></div>
+
+  <div id="minimap" aria-hidden="true"><canvas id="minimapCanvas"></canvas></div>
+
+  <div id="mapPanel" class="hidden">
+    <div class="mapBox">
+      <header class="mapHead">
+        <span class="mapTitle">MAP</span>
+        <div id="mapInfo" class="mapInfo"></div>
+        <div id="mapCursor" class="mapCursor"></div>
+        <button id="mapClose">CLOSE</button>
+      </header>
+      <div class="mapBody">
+        <div class="mapCanvasWrap">
+          <canvas id="mapCanvas"></canvas>
+        </div>
+        <aside class="mapSide">
+          <div class="mapSectionTitle">LAYERS</div>
+          <div id="mapLayers" class="mapLayers"></div>
+          <div class="mapSectionTitle">MARKERS</div>
+          <div id="mapMarkers" class="mapMarkers"></div>
+          <div class="mapRow" id="mapRenameRow">
+            <input id="mapName" class="mapInput" maxlength="24" placeholder="BOOKMARK NAME" autocomplete="off">
+            <button id="mapSaveName" class="mapBtn">SAVE</button>
+          </div>
+          <div class="mapRow">
+            <button id="mapAddBtn" class="mapBtn">ADD HERE</button>
+            <button id="mapCenterBtn" class="mapBtn">PLAYER</button>
+            <button id="mapFitBtn" class="mapBtn">FIT</button>
+          </div>
+          <div class="mapRow">
+            <button id="mapZoomOut" class="mapBtn">-</button>
+            <button id="mapZoomIn" class="mapBtn">+</button>
+            <button id="mapDeleteBtn" class="mapBtn danger" disabled>DELETE</button>
+          </div>
+          <div class="mapHint">DRAG PAN · WHEEL ZOOM · ARROWS PAN · F FIT · DBL-CLICK MARK</div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div id="invPanel" class="hidden">
+    <div class="box">
+      <header class="inventory-header">
+        <h2>INVENTORY</h2><button id="invRecipesBtn">RECIPES</button>
+      </header>
+      <div class="inventory-body">
+        <aside class="inventory-armor">
+          <div class="inventory-section-title">ARMOR</div>
+          <div id="invArmor" class="armorGrid"></div>
+          <div class="armorHint">drop a plate onto a piece to install</div>
+        </aside>
+        <div class="inventory-main">
+          <section class="inventory-craft">
+            <div class="inventory-section-title">CRAFTING <span class="craftHint">FROM YOUR BAG</span></div>
+            <div id="invCraft" class="inventory-craft-options"></div>
+          </section>
+          <section class="inventory-storage">
+            <div class="inventory-section-title">STORAGE</div>
+            <div id="invMain" class="invGrid"></div>
+          </section>
+          <section class="inventory-hotbar">
+            <div class="inventory-section-title">HOTBAR</div>
+            <div id="invHot" class="invGrid"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="recipePanel" class="hidden">
+    <div class="box">
+      <header class="inventory-header">
+        <h2>RECIPES</h2><button id="recipeClose">CLOSE</button>
+      </header>
+      <div class="recipe-body">
+        <aside class="recipe-list">
+          <input id="recipeSearch" type="text" placeholder="SEARCH ITEMS" autocomplete="off" autocorrect="off"
+            spellcheck="false">
+          <div id="recipeFilters" class="recipeFilters"></div>
+          <div id="recipeHint" class="recipeHint"></div>
+          <div id="recipeItems" class="recipeItems"></div>
+        </aside>
+        <section id="recipeDetail" class="recipe-detail"></section>
+      </div>
+    </div>
+  </div>
+
+  <div id="treePanel" class="hidden">
+    <div class="treeBox">
+      <header id="treeHead"><span id="treeTitle">i</span><button id="treeClose">CLOSE</button></header>
+      <div id="treeBody"></div>
+    </div>
+  </div>
+
+  <div id="cmd" class="hidden">
+    <div id="cmdSug" class="hidden"></div>
+    <input id="cmdInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+      placeholder="/give item [count]   ·   /time [set day]   ·   /tp cave|cavern|noodle|building|garage|container|tank|industrial|machine">
+  </div>
+
+  <div id="menu">
+    <canvas id="menuBg"></canvas>
+    <div class="menu-pano-nav">
+      <button class="mbtn" id="panoPrev" title="Previous panorama" aria-label="Previous panorama">&lsaquo;</button>
+      <button class="mbtn" id="panoNext" title="Next panorama" aria-label="Next panorama">&rsaquo;</button>
+    </div>
+    <div class="menu-panel">
+      <section class="menu-view" data-view="home">
+        <h1><span class="title-text">NUCLEARISM <span id="splash"></span></span></h1><p style="font-size: 18px;">Preview 0.12</p>
+        <div class="menu-actions">
+          <button class="mbtn primary" data-act="worlds">START</button>
+          <button class="mbtn" data-act="settings">SETTINGS</button>
+          <button class="mbtn" data-act="discord">DISCORD</button>
+        </div>
+      </section>
+
+      <section class="menu-view hidden" data-view="worlds">
+        <h2>WORLDS</h2>
+        <div id="worldList" class="world-list"></div>
+        <div class="menu-row">
+          <button class="mbtn" data-act="create">CREATE</button>
+          <button class="mbtn" id="worldPlayBtn" data-act="play" disabled>PLAY</button>
+          <button class="mbtn" id="worldEditBtn" data-act="edit" disabled>EDIT</button>
+        </div>
+        <button class="mbtn link" data-act="home">BACK</button>
+      </section>
+
+      <section class="menu-view hidden" data-view="create">
+        <h2>CREATE WORLD</h2>
+        <input id="createName" class="mfield" maxlength="24" placeholder="WORLD NAME" autocomplete="off">
+        <div class="menu-row" id="createMode">
+          <button class="mbtn mode on" data-mode="survival">SURVIVAL</button>
+          <button class="mbtn mode" data-mode="sandbox">SANDBOX</button>
+        </div>
+        <button class="mbtn primary" data-act="doCreate">CREATE</button>
+        <button class="mbtn link" data-act="worlds">BACK</button>
+      </section>
+
+      <section class="menu-view hidden" data-view="edit">
+        <h2>RENAME WORLD</h2>
+        <input id="editName" class="mfield" maxlength="24" autocomplete="off">
+        <button class="mbtn primary" data-act="doEdit">SAVE</button>
+        <button class="mbtn" data-act="doDelete">DELETE WORLD</button>
+        <button class="mbtn link" data-act="worlds">BACK</button>
+      </section>
+
+      <section class="menu-view hidden" data-view="settings">
+        <h2>SETTINGS</h2>
+        <div class="menu-setting"><span>RENDER DISTANCE</span><span class="opts" id="menuDist">
+            <button data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
+              data-val="6">6</button>
+          </span></div>
+        <div class="menu-setting"><span>INFO HUD</span><span class="opts" id="menuHud">
+            <button data-val="0">OFF</button><button data-val="1">ON</button>
+          </span></div>
+        <div class="menu-setting"><span>VSYNC</span><span class="opts" id="menuVsync">
+            <button data-val="1">ON</button><button data-val="0">OFF</button>
+          </span></div>
+        <div class="menu-setting"><span>VOLUME</span><span class="opts" id="menuVol">
+            <button data-val="0">0%</button><button data-val="0.25">25%</button><button
+              data-val="0.5">50%</button><button data-val="0.75">75%</button><button data-val="1">100%</button>
+          </span></div>
+        <button class="mbtn link" data-act="home">BACK</button>
+      </section>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div class="panel">
+      <div class="view view-main">
+        <h1>NUCLEARISM</h1>
+        <button id="playBtn" class="btn">RESUME</button>
+        <button id="settingsBtn" class="btn">SETTINGS</button>
+        <button id="menuBtn" class="btn">MAIN MENU</button>
+      </div>
+      <div class="view view-settings hidden">
+        <h1>SETTINGS</h1>
+        <div class="settings">
+          <div class="row" data-setting="distance"><span>DISTANCE</span><span class="opts"><button
+                data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
+                data-val="6">6</button></span></div>
+          <div class="row" data-setting="hud"><span>INFO HUD</span><span class="opts"><button
+                data-val="0">OFF</button><button data-val="1">ON</button></span></div>
+          <div class="row" data-setting="vsync"><span>VSYNC</span><span class="opts"><button
+                data-val="0">OFF</button><button data-val="1">ON</button></span></div>
+          <div class="row" data-setting="volume"><span>VOLUME</span><span class="opts"><button
+                data-val="0">0%</button><button data-val="0.25">25%</button><button data-val="0.5">50%</button><button
+                data-val="0.75">75%</button><button data-val="1">100%</button></span></div>
+        </div>
+        <button id="backBtn" class="btn">BACK</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+  <script type="module" src="assets/js/main.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,463 @@
+
+
+import { existsSync, readdirSync } from 'node:fs';
+import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate } from './content.js';
+import * as Liquid from './liquids.js';
+import { MachineSystem } from './machines.js';
+
+const ok = [];
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'absorber', 'cable', 'storage', 'geiger', 'cleaner']);
+
+function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
+
+
+for (const r of CRAFT_RECIPES) {
+  for (const id of Object.keys(r.out)) ok.push([has(id), `craft out "${id}"`]);
+  for (const id of Object.keys(r.needs)) ok.push([has(id), `craft need "${id}"`]);
+}
+
+
+ok.push([TABLE_RECIPES.length >= 5, `pocket table has recipes (${TABLE_RECIPES.length})`]);
+for (const r of TABLE_RECIPES) {
+  ok.push([CRAFT_RECIPES.includes(r), 'table recipe is in CRAFT_RECIPES']);
+  ok.push([Object.keys(r.needs).length <= 6, `table recipe "${Object.keys(r.out)[0]}" has a compact ingredient list`]);
+  for (const id of Object.keys(r.out)) ok.push([has(id), `table out "${id}"`]);
+  for (const id of Object.keys(r.needs)) ok.push([has(id), `table need "${id}"`]);
+}
+
+
+const seen = new Set();
+for (const m of MACHINE_DEFS) {
+  ok.push([!seen.has(m.id), `machine id unique "${m.id}"`]);
+  seen.add(m.id);
+  ok.push([KINDS.has(m.kind), `machine kind "${m.kind}" (${m.id})`]);
+  for (const r of (m.recipes || [])) {
+    for (const id of Object.keys(r.in || {})) ok.push([has(id), `${m.id} in "${id}"`]);
+    for (const id of Object.keys(r.out || {})) ok.push([has(id), `${m.id} out "${id}"`]);
+  }
+}
+
+
+for (const m of MACHINE_DEFS) {
+  ok.push([Object.values(ITEM_DEFS).some((d) => d.workbench === m.id), `block item for "${m.id}"`]);
+}
+for (const [id, d] of Object.entries(ITEM_DEFS)) {
+  if (d.workbench) ok.push([!!MACHINE_BY_ID[d.workbench], `item "${id}" -> machine "${d.workbench}"`]);
+}
+
+
+
+const gridOut = new Set();
+for (const r of CRAFT_RECIPES) for (const id of Object.keys(r.out)) gridOut.add(id);
+const machineOut = new Set();
+for (const m of MACHINE_DEFS) for (const r of (m.recipes || [])) for (const id of Object.keys(r.out || {})) machineOut.add(id);
+for (const m of MACHINE_DEFS) {
+  const blockId = Object.keys(ITEM_DEFS).find((k) => ITEM_DEFS[k].workbench === m.id);
+  if (blockId) ok.push([gridOut.has(blockId) || machineOut.has(blockId), `machine "${m.id}" is obtainable`]);
+}
+for (const id of ['manufactory', 'armor_workbench', 'crusher', 'electric_furnace', 'wooden_powerpole', 'assembler']) {
+  ok.push([gridOut.has(id), `bootstrap block "${id}" is grid-craftable`]);
+}
+
+
+
+
+const gun = MACHINE_BY_ID.gun_workbench;
+ok.push([!!gun, 'gun_workbench exists']);
+if (gun) {
+  const subset = (a, b) => Object.entries(a).every(([k, v]) => (b[k] || 0) >= v);
+  gun.recipes.forEach((ri, i) => {
+    for (const id of Object.keys(ri.in)) ok.push([has(id), `gun in "${id}"`]);
+    for (const id of Object.keys(ri.out)) ok.push([has(id), `gun out "${id}"`]);
+    gun.recipes.forEach((rj, j) => {
+      if (j <= i) return;
+      ok.push([!subset(ri.in, rj.in), `gun recipe ${j} not shadowed by ${i}`]);
+    });
+  });
+  for (const id of ['gun_barrel', 'gun_stock', 'gun_parts']) {
+    ok.push([gridOut.has(id), `gun part "${id}" grid-craftable`]);
+  }
+}
+
+
+const c4 = ITEM_DEFS.c4;
+ok.push([!!c4?.c4, 'c4 is a placeable timed charge']);
+ok.push([MACHINE_BY_ID.chemical_reactor.recipes.some((r) => r.out?.rdx), 'chemical reactor makes rdx']);
+const gunRec = MACHINE_BY_ID.gun_workbench.recipes;
+ok.push([gunRec.some((r) => r.out?.detonator), 'gun workbench makes a detonator']);
+const c4Rec = gunRec.find((r) => r.out?.c4);
+ok.push([!!c4Rec, 'gun workbench makes c4']);
+ok.push([!!c4Rec?.in.card_reader && !!c4Rec?.in.detonator && !!c4Rec?.in.rdx,
+  'c4 needs a card reader, a detonator and rdx']);
+
+
+const machineIn = new Set();
+for (const m of MACHINE_DEFS) for (const r of (m.recipes || [])) for (const id of Object.keys(r.in || {})) machineIn.add(id);
+for (const id of ['circuit_board', 'memory_module', 'data_drive', 'data_disk', 'cooling_fan', 'card_reader', 'optic_lens', 'timer_module']) {
+  ok.push([has(id), `chip "${id}"`]);
+  ok.push([gridOut.has(id), `chip "${id}" grid-craftable`]);
+  ok.push([machineIn.has(id), `chip "${id}" used by a machine`]);
+}
+
+
+for (const [fuel, dep] of Object.entries(DEPLETED_OF)) {
+  ok.push([has(fuel), `fuel "${fuel}"`]);
+  ok.push([has(dep), `depleted "${dep}"`]);
+}
+for (const [id, d] of Object.entries(ITEM_DEFS)) {
+  if (d.fuel) ok.push([!!DEPLETED_OF[id], `fuel "${id}" has a depleted form`]);
+}
+
+
+for (const m of MACHINE_DEFS) {
+  const l = layoutFor(m);
+  ok.push([l && Array.isArray(l.elements) && l.elements.length > 0, `layout "${m.id}" non-empty`]);
+  for (const e of l.elements) {
+    ok.push([TYPES.has(e.type), `layout "${m.id}" element type ${e.type}`]);
+    if (e.type === 'slot') ok.push([typeof e.role === 'string' && e.role.length > 0, `layout "${m.id}" slot ${e.id} role`]);
+    ok.push([e.x >= 0 && e.y >= 0 && e.x + e.w <= l.grid.cols && e.y + e.h <= l.grid.rows, `layout "${m.id}" element ${e.id} in bounds`]);
+  }
+}
+
+
+
+const craftLayout = layoutFor(MACHINE_BY_ID.manufactory);
+ok.push([!craftLayout.elements.some((e) => e.type === 'recipes'), 'manufactory recipe list lives in the side rail']);
+ok.push([!craftLayout.elements.some((e) => e.type === 'slot'), 'manufactory has no craft-grid slots']);
+for (const id of ['crusher', 'gun_workbench', 'medicine_workbench', 'liquid_mixer', 'assembler']) {
+  const l = layoutFor(MACHINE_BY_ID[id]);
+  ok.push([!l.elements.some((e) => e.type === 'recipes'), `"${id}" recipe list lives in the side rail`]);
+  ok.push([!l.elements.some((e) => e.type === 'slot'), `"${id}" uses the bag-based craft list`]);
+}
+
+
+const nz = ITEM_DEFS.neurozam_9;
+ok.push([!!nz?.consumable?.intake, 'neurozam_9 damps rad intake']);
+ok.push([nz.consumable.intake > 0 && nz.consumable.intake < 1, 'neurozam_9 intake < 1']);
+ok.push([nz.consumable.intakeTime === 1800, 'neurozam_9 lasts 30 real minutes']);
+const med = MACHINE_BY_ID.medicine_workbench;
+ok.push([!!med, 'medicine_workbench exists']);
+ok.push([!!gridOut.has('medicine_workbench'), 'medicine_workbench grid-craftable']);
+ok.push([(med.recipes || []).some((r) => r.out.neurozam_9), 'medicine_workbench makes neurozam_9']);
+
+
+const cans = Object.entries(ITEM_DEFS).filter(([, d]) => d.container && !d.container.medical)
+  .map(([id, d]) => ({ id, ...d })).sort((a, b) => a.container.tier - b.container.tier);
+ok.push([cans.length === 6, `six container tiers (${cans.length})`]);
+for (let i = 1; i < cans.length; i++) {
+  ok.push([cans[i].container.capacity > cans[i - 1].container.capacity,
+    `${cans[i].id} holds more than ${cans[i - 1].id}`]);
+}
+const acidCans = cans.filter((c) => Liquid.accepts(c, 'acid')).map((c) => c.id);
+ok.push([acidCans.length === 1, `only one can is acid-proof (${acidCans.join(',')})`]);
+ok.push([acidCans[0] === 'jerry_can_white', 'hazmat can is the acid-proof one']);
+for (const c of cans) {
+  if (!c.container.filter) ok.push([Liquid.accepts(c, 'water'), `${c.id} holds water`]);
+  ok.push([gridOut.has(c.id), `${c.id} is craftable`]);
+}
+ok.push([Liquid.accepts(ITEM_DEFS.fuel_carton, 'gasoline') && !Liquid.accepts(ITEM_DEFS.fuel_carton, 'water'),
+  'fuel carton takes gasoline only']);
+
+const canStack = { id: 'jerry_can_black', n: 1 };
+ok.push([Liquid.fill(canStack, ITEM_DEFS.jerry_can_black, 'water', 999) === 10, 'fill clamps to capacity']);
+ok.push([Liquid.volume(canStack) === 10, 'volume after fill']);
+ok.push([Liquid.fill(canStack, ITEM_DEFS.jerry_can_black, 'acid', 5) === 0, 'wrong liquid refused while full']);
+ok.push([Liquid.drain(canStack, 4) === 4 && Liquid.volume(canStack) === 6, 'drain']);
+ok.push([Liquid.fill(canStack, ITEM_DEFS.jerry_can_black, 'acid', 5) === 0, 'non-acid can refuses acid']);
+ok.push([Liquid.fill(canStack, ITEM_DEFS.jerry_can_black, 'water', 5) === 4, 'fill stops at capacity']);
+ok.push([Liquid.drain(canStack, 999) === 10 && !canStack.liquid, 'empty clears liquid field']);
+
+
+const produced = new Set();
+const used = new Set();
+for (const m of MACHINE_DEFS) {
+  for (const r of (m.recipes || [])) {
+    for (const l of (r.liquidOut ? [r.liquidOut] : [])) produced.add(l.id);
+    for (const l of (r.liquidIn || [])) used.add(l.id);
+  }
+}
+for (const [id, d] of Object.entries(Liquid.LIQUIDS)) {
+  ok.push([typeof d.name === 'string' && d.color >= 0, `liquid "${id}" has name/colour`]);
+  if (id !== 'water') ok.push([produced.has(id), `liquid "${id}" is produced by a machine`]);
+  if (id !== 'water') ok.push([used.has(id) || produced.has(id), `liquid "${id}" has a use`]);
+}
+ok.push([Liquid.LIQUIDS.ethanol && Liquid.LIQUIDS.heavy_water && Liquid.LIQUIDS.nuclear_waste,
+  'the extra liquids exist']);
+const gen = MACHINE_BY_ID.fuel_generator;
+ok.push([!!gen?.liquidFuel?.burn?.gasoline, 'gas generator burns gasoline']);
+ok.push([!!gen?.liquidFuel?.burn?.ethanol, 'gas generator burns ethanol']);
+ok.push([gen.liquidFuel.burn.ethanol > gen.liquidFuel.burn.gasoline, 'ethanol is the weaker fuel']);
+ok.push([Liquid.accepts(ITEM_DEFS.jerry_can_white, 'nuclear_waste'), 'hazmat can holds nuclear waste']);
+ok.push([!Liquid.accepts(ITEM_DEFS.jerry_can_black, 'nuclear_waste'), 'plain can refuses nuclear waste']);
+ok.push([Liquid.LIQUIDS.nuclear_waste.rad > 0, 'nuclear waste is radioactive']);
+
+const iv = ITEM_DEFS.radaway_iv;
+ok.push([!!iv?.container, 'radaway_iv is a container']);
+ok.push([Liquid.accepts(iv, 'radaway'), 'radaway_iv holds radaway']);
+ok.push([!Liquid.accepts(iv, 'water'), 'radaway_iv refuses water']);
+ok.push([!!Liquid.LIQUIDS.radaway, 'radaway liquid exists']);
+ok.push([MACHINE_BY_ID.liquid_mixer.recipes.some((r) => r.liquidOut?.id === 'radaway'), 'liquid mixer makes radaway']);
+ok.push([MACHINE_BY_ID.chemical_reactor.recipes.some((r) => r.out?.chelating_agent), 'chemical reactor makes chelating agent']);
+const unradRec = MACHINE_BY_ID.medicine_workbench.recipes.find((r) => r.out?.unrad_juice);
+ok.push([!!unradRec?.liquidIn?.some((l) => l.id === 'radaway'), 'medicine workbench packages radaway into unrad']);
+ok.push([!has('unrad_juice_strong'), 'concentrated unrad was removed']);
+for (const m of MACHINE_DEFS) {
+  for (const r of (m.recipes || [])) {
+    ok.push([!r.out?.unrad_juice || !!r.liquidIn?.some((l) => l.id === 'radaway'), `${m.id} unrad recipe needs radaway`]);
+  }
+}
+const reac = MACHINE_BY_ID.fission_reactor;
+ok.push([reac?.coolPerHeavy > reac?.coolPerWater, 'heavy water cools better than water']);
+ok.push([layoutFor(reac).elements.some((e) => e.type === 'slot' && e.role === 'coolant'), 'reactor has a coolant slot']);
+ok.push([MACHINE_BY_ID.isotope_separator.recipes.some((r) => r.liquidOut?.id === 'heavy_water'),
+  'isotope separator makes heavy water']);
+
+const rodEls = layoutFor(reac).elements.filter((e) => e.type === 'slot' && /^rod\d+$/.test(e.role));
+ok.push([rodEls.length === REACTOR_ROD_SLOTS, `reactor shows all ${REACTOR_ROD_SLOTS} cooling-rod slots (${rodEls.length})`]);
+const RODS = Object.entries(ITEM_DEFS).filter(([, d]) => d.rod);
+ok.push([RODS.length >= 6, `at least six cooling-rod types (${RODS.length})`]);
+const rodOut = new Set([
+  ...CRAFT_RECIPES.flatMap((r) => Object.keys(r.out)),
+  ...MACHINE_DEFS.flatMap((m) => (m.recipes || []).flatMap((r) => Object.keys(r.out || {}))),
+]);
+for (const [id, d] of RODS) {
+  ok.push([d.rod.cool > 0, `rod "${id}" cools`]);
+  ok.push([d.rod.absorb >= 0 && d.rod.absorb <= 1, `rod "${id}" absorption 0..1`]);
+  ok.push([d.rod.mod >= 0, `rod "${id}" moderation non-negative`]);
+  ok.push([rodOut.has(id), `rod "${id}" is craftable`]);
+}
+const rodCools = RODS.map(([, d]) => d.rod.cool);
+function coolingReachable(target) {
+  let reach = new Set([0]);
+  for (let i = 0; i < REACTOR_ROD_SLOTS; i++) {
+    const next = new Set(reach);
+    for (const v of reach) for (const c of rodCools) next.add(v + c);
+    reach = next;
+  }
+  return reach.has(target);
+}
+for (const [id, d] of Object.entries(ITEM_DEFS)) {
+  if (!d.fuel) continue;
+  ok.push([d.fuel.cool > 0, `fuel "${id}" has a cooling target`]);
+  ok.push([coolingReachable(d.fuel.cool), `fuel "${id}" target ${d.fuel.cool} is reachable with ${REACTOR_ROD_SLOTS} rods`]);
+}
+
+
+const mix = MACHINE_BY_ID.liquid_mixer;
+ok.push([!!mix, 'liquid_mixer exists']);
+ok.push([!!gridOut.has('liquid_mixer'), 'liquid_mixer grid-craftable']);
+for (const r of (mix?.recipes || [])) {
+  for (const l of (r.liquidIn || [])) ok.push([!!Liquid.liquidDef(l.id), `mixer liquidIn "${l.id}"`]);
+  if (r.liquidOut) {
+    ok.push([!!Liquid.liquidDef(r.liquidOut.id), `mixer liquidOut "${r.liquidOut.id}"`]);
+    ok.push([!!ITEM_DEFS[r.liquidOut.container]?.container, `mixer container "${r.liquidOut.container}"`]);
+  }
+}
+
+
+const cig = ITEM_DEFS.cigarette_pack;
+ok.push([!!cig?.consumable?.smoke, 'cigarette_pack is smokeable']);
+ok.push([cig.consumable.smoke === 120, 'cigarette lasts 120s']);
+ok.push([Math.abs((cig.consumable.speed || 1) - 1.02) < 1e-9, 'cigarette speed +2%']);
+ok.push([gridOut.has('cigarette_pack'), 'cigarette_pack grid-craftable']);
+for (const f of ['apple', 'orange', 'pear']) {
+  ok.push([!!ITEM_DEFS[f]?.consumable?.food, `${f} is edible`]);
+  ok.push([ITEM_DEFS[f].icon === `assets/images/items/${f}.png`, `${f} uses its fruit icon`]);
+}
+
+ok.push([!!ITEM_DEFS.lighter, 'lighter exists']);
+ok.push([!ITEM_DEFS.lighter.consumable, 'lighter is reusable']);
+ok.push([gridOut.has('lighter'), 'lighter grid-craftable']);
+
+
+const WOUND_TYPES = ['bleeding', 'infection', 'burn', 'poison', 'pain', 'eye', 'respiratory', 'bloodloss'];
+const meds = Object.entries(ITEM_DEFS).filter(([, d]) => d.consumable?.cures);
+for (const w of WOUND_TYPES) {
+  ok.push([meds.some(([, d]) => d.consumable.cures.includes(w)), `wound "${w}" has a cure`]);
+}
+for (const [id, d] of meds) {
+  for (const w of d.consumable.cures) ok.push([WOUND_TYPES.includes(w), `"${id}" cures known wound "${w}"`]);
+  ok.push([itemModelIcon(id) === `assets/models/items/${id}.glb`, `"${id}" has a model icon`]);
+}
+ok.push([TUNING.HUNGER_DRAIN > 0, 'hunger drains']);
+
+
+let prev = -1;
+for (const s of TUNING.RAD_STAGES) {
+  ok.push([s.at > prev, `stage ${s.name} ascending`]);
+  ok.push([s.speed > 0 && s.speed <= 1, `stage ${s.name} speed`]);
+  prev = s.at;
+}
+ok.push([TUNING.RAD_STAGES.at(-1).at === TUNING.RAD_LETHAL_DOSE, 'last stage is the lethal dose']);
+ok.push([TUNING.RAD_STAGES[0].at === TUNING.RAD_ARS_DOSE, 'first stage is ARS onset']);
+ok.push([TUNING.RAD_STAGES.some((s) => s.at === TUNING.RAD_LD50), 'LD50 has a dose stage']);
+ok.push([TUNING.RAD_LD50 > 0 && TUNING.RAD_LD50 < TUNING.RAD_LETHAL_DOSE, 'LD50 sits below the lethal dose']);
+ok.push([TUNING.RAD_ARS_DOSE > 0 && TUNING.RAD_ARS_DOSE < TUNING.RAD_LD50, 'ARS onset precedes LD50']);
+ok.push([formatRad(0) === '0 rad', `zero dose formats in rad (${formatRad(0)})`]);
+ok.push([formatRad(600) === '600 rad', `whole-body dose formats in rad (${formatRad(600)})`]);
+ok.push([formatRad(0.6) === '600 mrad', `sub-rad doses use mrad (${formatRad(0.6)})`]);
+ok.push([formatRadRate(0.000000015) === '15 nrad/s', `background rates use nrad/s (${formatRadRate(0.000000015)})`]);
+ok.push([formatRadRate(0.02) === '20 mrad/s', `ambient rates use mrad/s (${formatRadRate(0.02)})`]);
+ok.push([formatRadRate(TUNING.WASTELAND_RAD) === '350 mrad/s', `wasteland rate formats (${formatRadRate(TUNING.WASTELAND_RAD)})`]);
+
+
+
+
+const RAW_ORES = new Set(['stone', 'carbon', 'copper', 'tin', 'iron', 'lead', 'uranium',
+  'lithium', 'boron', 'magnesium', 'zirconium', 'beryllium', 'thorium', 'wood']);
+const pocketOut = new Set(TABLE_RECIPES.flatMap((r) => Object.keys(r.out)));
+const bootable = MACHINE_DEFS.filter((m) => m.kind === 'generator').some((m) => {
+  const blockId = Object.keys(ITEM_DEFS).find((k) => ITEM_DEFS[k].workbench === m.id);
+  const rec = CRAFT_RECIPES.find((r) => r.out[blockId]);
+  return !!rec && Object.keys(rec.needs).every((id) => pocketOut.has(id) || RAW_ORES.has(id));
+});
+ok.push([!MACHINE_BY_ID.manufactory?.energy || bootable, 'a generator is bootstrappable without power']);
+
+
+for (const id of ITEM_MODEL_ICON_EXCLUDE) {
+  ok.push([has(id), `excluded model icon "${id}" is an item`]);
+  ok.push([itemModelIcon(id) === null, `excluded model icon "${id}" resolves to null`]);
+}
+for (const [id, def] of Object.entries(ITEM_DEFS)) {
+  if (!def.workbench) continue;
+  const m = MACHINE_BY_ID[def.workbench];
+  ok.push([!!m, `workbench item "${id}" has a machine`]);
+  if (m) ok.push([itemModelIcon(id) === m.model, `workbench icon "${id}" uses the machine model`]);
+}
+
+const itemsDir = new URL('../../assets/models/items/', import.meta.url);
+if (existsSync(itemsDir)) {
+  for (const f of readdirSync(itemsDir)) {
+    if (!f.endsWith('.glb') || !has(f.slice(0, -4))) continue;
+    ok.push([itemModelIcon(f.slice(0, -4)) === `assets/models/items/${f}`, `item model file ${f} maps to its id`]);
+  }
+}
+
+
+for (const [id, d] of Object.entries(ITEM_DEFS)) {
+  if (!d.light) continue;
+  ok.push([d.torch === true, `light "${id}" is placeable`]);
+  ok.push([['wall', 'floor'].includes(d.light.mount), `light "${id}" mount known`]);
+  ok.push([d.light.range > 0 && d.light.power > 0, `light "${id}" range/power positive`]);
+  ok.push([gridOut.has(id), `light "${id}" is craftable`]);
+}
+ok.push([ITEM_DEFS.lantern.light.range > ITEM_DEFS.torch.light.range, 'lantern outranges torch']);
+ok.push([ITEM_DEFS.floodlight.light.range > ITEM_DEFS.lantern.light.range, 'floodlight outranges lantern']);
+ok.push([ITEM_DEFS.lantern.light.mount === 'floor', 'lantern stands on floors']);
+ok.push([ITEM_DEFS.floodlight.light.mount === 'wall', 'floodlight mounts on walls']);
+
+
+for (const id of REGION_ORE_IDS) ok.push([has(id), `region ore "${id}"`]);
+const seams = new Map();
+for (let rx = -20; rx < 20; rx++) {
+  for (let rz = -20; rz < 20; rz++) {
+    const x0 = rx * ORE_REGION_SIZE, z0 = rz * ORE_REGION_SIZE;
+    const a = regionOre(x0, z0), b = regionOre(x0 + ORE_REGION_SIZE - 1, z0 + ORE_REGION_SIZE - 1);
+    ok.push([a === b, `chunk corners share a seam (${a} vs ${b} at ${rx},${rz})`]);
+    ok.push([a === regionOre(x0 + 5.9, z0 + 2), 'seam is stable inside its chunk']);
+    seams.set(a, (seams.get(a) || 0) + 1);
+  }
+}
+ok.push([seams.size >= 8, `seams vary across the world (${seams.size} kinds found)`]);
+ok.push([(seams.get('stone') || 0) > 100, 'barren chunks are common']);
+
+
+const exc = MACHINE_BY_ID.excavator;
+ok.push([exc?.outputs >= 9, `excavator storage slots (${exc?.outputs})`]);
+ok.push([exc?.drillRate >= 1, `excavator drill rate (${exc?.drillRate})`]);
+ok.push([!!exc?.spin, 'excavator spins a named node']);
+
+for (const m of MACHINE_DEFS) {
+  const shown = layoutFor(m).elements.filter((e) => e.type === 'slot' && /^output\d+$/.test(e.role)).length;
+  ok.push([!shown || shown === (m.outputs || 4), `"${m.id}" layout shows all ${m.outputs || 4} output slots`]);
+}
+const excRec = MACHINE_BY_ID.assembler.recipes.find((r) => r.out.excavator);
+ok.push([Object.keys(excRec.in).length >= 6, 'excavator recipe is expensive']);
+for (const id of Object.keys(excRec.in)) ok.push([has(id), `excavator ingredient "${id}"`]);
+for (const id of Object.keys(excRec.in)) {
+  ok.push([gridOut.has(id) || machineOut.has(id), `excavator ingredient "${id}" is obtainable`]);
+}
+
+
+const tb = MACHINE_BY_ID.test_bench;
+ok.push([!!tb?.battery, 'test_bench runs on batteries']);
+ok.push([tb?.energy?.gen > 0, 'test_bench generates power']);
+ok.push([!!tb?.battery?.life, 'test_bench battery life set']);
+ok.push([gridOut.has('test_bench'), 'test_bench grid-craftable']);
+ok.push([TABLE_RECIPES.some((r) => r.out.test_bench), 'test_bench in the pocket table']);
+ok.push([!!ITEM_DEFS.car_battery.battery, 'car battery is a battery']);
+ok.push([layoutFor(tb).elements.some((e) => e.type === 'slot' && e.role === 'fuel'), 'test_bench has a battery slot']);
+
+
+const sys = new MachineSystem({
+  THREE: { Group: class { constructor() { this.children = []; } add(o) { this.children.push(o); } } },
+  ITEMS: ITEM_DEFS, inv: { hot: [], main: [], sel: 0 }, scene: { add() {} }, ui: { setBridge() {} },
+});
+const spinNode = { turns: 0, rotateY(a) { this.turns += a; } };
+const mkExc = (x, z) => ({
+  def: exc, x, z, spinNode,
+  state: { slots: {}, progress: 0, heat: 0, buffer: 0, status: '' },
+});
+function findRegion(want) {
+  for (let rx = 0; rx < 400; rx++) for (let rz = 0; rz < 400; rz++) {
+    if (regionOre(rx * ORE_REGION_SIZE + 5, rz * ORE_REGION_SIZE + 5) === want) {
+      return mkExc(rx * ORE_REGION_SIZE + 5, rz * ORE_REGION_SIZE + 5);
+    }
+  }
+  return null;
+}
+const iron = findRegion('iron');
+ok.push([!!iron, 'an iron seam exists somewhere']);
+const net = { pool: 1e6, cap: 1e6 };
+const tickExc = (m, dt, n) => { sys.chargePower(m, dt, n); sys.tickExcavator(m, dt, n); };
+tickExc(iron, 1, net);
+ok.push([iron.state.slots.output0?.id === 'iron', `excavator yields its seam (${iron.state.slots.output0?.id})`]);
+ok.push([spinNode.turns > 0, 'digger wheel turns while working']);
+ok.push([net.pool < 1e6, 'excavator draws power']);
+const spun = spinNode.turns;
+tickExc({ ...iron, state: { slots: {}, progress: 0, status: '' } }, 1, { pool: 0, cap: 0 });
+ok.push([spinNode.turns === spun, 'digger wheel is still when unpowered']);
+const barren = findRegion('stone');
+tickExc(barren, 1, net);
+ok.push([barren.state.status === 'BARREN GROUND', `barren seam says so (${barren.state.status})`]);
+const full = mkExc(iron.x, iron.z);
+for (let i = 0; i < exc.outputs; i++) full.state.slots[`output${i}`] = { id: 'iron', n: 99 };
+sys.tickExcavator(full, 5, net);
+ok.push([full.state.status === 'OUTPUT FULL', 'full storage stops the drill']);
+
+const bench = { def: tb, x: 0, z: 0, state: { slots: { fuel: { id: 'car_battery', n: 2 } }, burnT: 0, status: '' } };
+const bnet = { pool: 0, cap: 1e6 };
+sys.tickBattery(bench, tb.battery.life, bnet);
+ok.push([bnet.pool > 0, 'test bench powers a network from a battery']);
+ok.push([bench.state.slots.fuel.n === 1, 'spent battery is consumed']);
+sys.tickBattery({ ...bench, state: { slots: {}, burnT: 0, status: '' } }, 1, bnet);
+
+sys.ctx.world = { waterAt: () => 0, useWater() {} };
+const mkReactor = (rodIds) => {
+  const slots = { fuel: { id: 'leu_235_fuel', n: 4 } };
+  rodIds.forEach((id, i) => { slots[`rod${i}`] = { id, n: 1 }; });
+  return {
+    def: reac, x: 0, y: 0, z: 0,
+    state: { slots, heat: 0, burning: false, burnT: 0, buffer: 0, status: '', progress: 0 },
+  };
+};
+const runReactor = (rodIds) => {
+  const m = mkReactor(rodIds);
+  const n = { pool: 0, cap: 1e6 };
+  sys.tickReactor(m, 1, n);
+  return { m, power: n.pool };
+};
+// LEU-235 wants 80 cooling: four graphite rods hit it exactly.
+const matched = runReactor(['control_rod', 'control_rod', 'control_rod', 'control_rod']);
+const over = runReactor(new Array(REACTOR_ROD_SLOTS).fill('heavy_water_rod'));
+const under = runReactor([]);
+ok.push([matched.power > over.power, `matched cooling out-produces over-cooling (${matched.power.toFixed(0)} vs ${over.power.toFixed(0)})`]);
+ok.push([matched.m.state.heat <= 0.001, 'matched cooling holds the core at temperature']);
+ok.push([under.m.state.heat > 0, 'an uncooled core heats up']);
+ok.push([under.m.state.status.startsWith('NO COOLANT'), 'an empty core reports no coolant']);
+ok.push([matched.m.state.coolMatch > 0.99, 'matched layout reports a full cooling match']);
+
+const bad = ok.filter(([p]) => !p);
+if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }
+console.log(`content OK — ${ok.length} assertions`);

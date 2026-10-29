@@ -1,0 +1,224 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "split by opencode"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "name": "Sketchfab_Scene",
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "children": [
+    1
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    2.220446049250313e-16,
+    -1.0,
+    0.0,
+    0.0,
+    1.0,
+    2.220446049250313e-16,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "Sketchfab_model"
+  },
+  {
+   "children": [
+    2
+   ],
+   "matrix": [
+    0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.009999999776482582,
+    0.0,
+    0.0,
+    -0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "trees and vegetation.fbx"
+  },
+  {
+   "children": [
+    3
+   ],
+   "name": "RootNode"
+  },
+  {
+   "children": [
+    4
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -245.6759490966797,
+    1.0
+   ],
+   "name": "Mondo_Grass_1"
+  },
+  {
+   "children": [
+    5
+   ],
+   "name": "Mondo_Grass_1.Shape"
+  },
+  {
+   "mesh": 0,
+   "name": "Mondo_Grass_1.Shape_Leaf_0"
+  }
+ ],
+ "meshes": [
+  {
+   "name": "Mondo_Grass_1.Shape_Leaf_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 0,
+      "POSITION": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 16317,
+   "max": [
+    0.9967058897018433,
+    0.9999427199363708,
+    0.9939103126525879
+   ],
+   "min": [
+    -0.9973505735397339,
+    -0.8877951502799988,
+    -0.9996919631958008
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 16317,
+   "max": [
+    15.679439544677734,
+    17.03706932067871,
+    14.367919921875
+   ],
+   "min": [
+    -16.854509353637695,
+    -5.971902847290039,
+    -16.117839813232422
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 16317,
+   "max": [
+    0.97154700756073,
+    0.9749739766120911
+   ],
+   "min": [
+    0.047906000167131424,
+    0.02310200035572052
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 60858,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 195804
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 195804,
+   "byteLength": 195804
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 391608,
+   "byteLength": 130536
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 522144,
+   "byteLength": 243432
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 765576,
+   "uri": "scene.bin"
+  }
+ ],
+ "materials": [
+  {
+   "doubleSided": true,
+   "name": "Leaf_0",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.27451,
+     0.368627,
+     0.211765,
+     1.0
+    ],
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.9577051494623774
+   }
+  }
+ ]
+}

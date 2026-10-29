@@ -1,0 +1,616 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "split by opencode"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "name": "Sketchfab_Scene",
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "children": [
+    1
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    2.220446049250313e-16,
+    -1.0,
+    0.0,
+    0.0,
+    1.0,
+    2.220446049250313e-16,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "Sketchfab_model"
+  },
+  {
+   "children": [
+    2
+   ],
+   "matrix": [
+    0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.009999999776482582,
+    0.0,
+    0.0,
+    -0.009999999776482582,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "trees and vegetation.fbx"
+  },
+  {
+   "children": [
+    3
+   ],
+   "name": "RootNode"
+  },
+  {
+   "children": [
+    11,
+    7,
+    4
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    313.06005859375,
+    0.0,
+    135.70533752441406,
+    1.0
+   ],
+   "name": "WGJ BlackPines_dup_2"
+  },
+  {
+   "children": [
+    6,
+    5
+   ],
+   "name": "WGJ BlackPines_dup_2.Shape"
+  },
+  {
+   "mesh": 3,
+   "name": "WGJ BlackPines_dup_2.Shape_Branches_0"
+  },
+  {
+   "mesh": 2,
+   "name": "WGJ BlackPines_dup_2.Shape_Twigs_0"
+  },
+  {
+   "children": [
+    8
+   ],
+   "name": "UltraScatterPro [S] WGJ Pine Needles 01 1"
+  },
+  {
+   "children": [
+    9
+   ],
+   "matrix": [
+    0.0010000000474974513,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0010000000474974513,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0010000000474974513,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "name": "UltraScatterPro [S] WGJ Pine Needles 01 1 Proxy"
+  },
+  {
+   "children": [
+    10
+   ],
+   "name": "UltraScatterPro [S] WGJ Pine Needles 01 1 Proxy.Shape"
+  },
+  {
+   "mesh": 1,
+   "name": "UltraScatterPro [S] WGJ Pine Needles 01 1 Proxy.Shape_Default_0"
+  },
+  {
+   "children": [
+    12
+   ],
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.935927867889404,
+    0.0,
+    -13.587630271911621,
+    1.0
+   ],
+   "name": "WGJ PineNeedles 01"
+  },
+  {
+   "children": [
+    13
+   ],
+   "name": "WGJ PineNeedles 01.Shape"
+  },
+  {
+   "mesh": 0,
+   "name": "WGJ PineNeedles 01.Shape_Needles_0"
+  }
+ ],
+ "meshes": [
+  {
+   "name": "WGJ PineNeedles 01.Shape_Needles_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 0,
+      "POSITION": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0,
+     "mode": 4
+    }
+   ]
+  },
+  {
+   "name": "UltraScatterPro [S] WGJ Pine Needles 01 1 Proxy.Shape_Default_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 4,
+      "POSITION": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 1,
+     "mode": 4
+    }
+   ]
+  },
+  {
+   "name": "WGJ BlackPines_dup_2.Shape_Twigs_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 8,
+      "POSITION": 9,
+      "TEXCOORD_0": 10
+     },
+     "indices": 11,
+     "material": 2,
+     "mode": 4
+    }
+   ]
+  },
+  {
+   "name": "WGJ BlackPines_dup_2.Shape_Branches_0",
+   "primitives": [
+    {
+     "attributes": {
+      "NORMAL": 12,
+      "POSITION": 13,
+      "TEXCOORD_0": 14
+     },
+     "indices": 15,
+     "material": 2,
+     "mode": 4
+    }
+   ]
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 296,
+   "max": [
+    0.9950522184371948,
+    0.43676984310150146,
+    0.9867438673973083
+   ],
+   "min": [
+    -0.999468982219696,
+    -0.7287039160728455,
+    -0.9930393695831299
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 1,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 296,
+   "max": [
+    5.552145004272461,
+    7.386899471282959,
+    5.546687602996826
+   ],
+   "min": [
+    -4.78469705581665,
+    -0.3654346466064453,
+    -4.720099449157715
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 296,
+   "max": [
+    0.999288022518158,
+    1.0
+   ],
+   "min": [
+    0.0007169999880716205,
+    0.0
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 666,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 4,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 8,
+   "max": [
+    0.5773503184318542,
+    0.5773503184318542,
+    0.5773503184318542
+   ],
+   "min": [
+    -0.5773503184318542,
+    -0.5773503184318542,
+    -0.5773503184318542
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 5,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 8,
+   "max": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "min": [
+    -0.5,
+    -0.5,
+    -0.5
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 6,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 8,
+   "max": [
+    0.5,
+    0.5
+   ],
+   "min": [
+    -0.5,
+    -0.5
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 7,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 36,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 8,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    0.9974573850631714,
+    0.9999960660934448,
+    0.9999039769172668
+   ],
+   "min": [
+    -0.9977335333824158,
+    -0.9994930624961853,
+    -0.9878373742103577
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 9,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    90.77726745605469,
+    350.70050048828125,
+    144.8708953857422
+   ],
+   "min": [
+    -116.10758972167969,
+    87.00704956054688,
+    -167.73570251464844
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 10,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 9264,
+   "max": [
+    1.0,
+    1.0
+   ],
+   "min": [
+    0.0,
+    0.0
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 11,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 30039,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 12,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    0.999521791934967,
+    0.9989789128303528,
+    0.9946079850196838
+   ],
+   "min": [
+    -0.999430775642395,
+    -0.9993342161178589,
+    -0.9953206777572632
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 13,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    73.75653076171875,
+    345.8367004394531,
+    127.76529693603516
+   ],
+   "min": [
+    -101.98379516601562,
+    -11.363089561462402,
+    -146.6304931640625
+   ],
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 14,
+   "byteOffset": 0,
+   "componentType": 5126,
+   "count": 1824,
+   "max": [
+    1.0,
+    0.9259260296821594
+   ],
+   "min": [
+    0.0,
+    0.0
+   ],
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 15,
+   "byteOffset": 0,
+   "componentType": 5125,
+   "count": 8790,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 3552
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 3552,
+   "byteLength": 3552
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 7104,
+   "byteLength": 2368
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 9472,
+   "byteLength": 2664
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 12136,
+   "byteLength": 96
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 12232,
+   "byteLength": 96
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 12328,
+   "byteLength": 64
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 12392,
+   "byteLength": 144
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 12536,
+   "byteLength": 111168
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 123704,
+   "byteLength": 111168
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 234872,
+   "byteLength": 74112
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 308984,
+   "byteLength": 120156
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 429140,
+   "byteLength": 21888
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 451028,
+   "byteLength": 21888
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 472916,
+   "byteLength": 14592
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 487508,
+   "byteLength": 35160
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 522668,
+   "uri": "scene.bin"
+  }
+ ],
+ "materials": [
+  {
+   "doubleSided": true,
+   "name": "Needles",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.34902,
+     0.466667,
+     0.258824,
+     1.0
+    ],
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.9577051494623774
+   }
+  },
+  {
+   "doubleSided": true,
+   "name": "Default",
+   "pbrMetallicRoughness": {
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.6605887450304573
+   }
+  },
+  {
+   "doubleSided": true,
+   "name": "Stem_2",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.9577051494623774
+   }
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  }
+ ],
+ "images": [
+  {
+   "uri": "textures/Stem_2_baseColor.jpg"
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9729,
+   "minFilter": 9987,
+   "wrapS": 10497,
+   "wrapT": 10497
+  }
+ ]
+}
