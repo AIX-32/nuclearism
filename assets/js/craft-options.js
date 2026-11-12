@@ -62,12 +62,13 @@ export class CraftOptions {
       info.className = 'ccInfo';
       const name = document.createElement('span');
       name.className = 'ccName';
-      name.textContent = def.name || o.id;
+      name.textContent = o.label || def.name || o.id;
       const meta = document.createElement('span');
       meta.className = 'ccMeta';
       const parts = CraftOptions.needsOf(o)
         .map(([id, n]) => `${n}× ${this.item(id)?.name || id}`);
       for (const l of (o.liquidNeeds || [])) parts.push(`${l.amount}L ${l.id}`);
+      if (o.time) parts.push(`${Math.round(o.time * 10) / 10}s`);
       meta.textContent = parts.join('  ·  ') || 'NO MATERIALS';
       info.append(name, meta);
 

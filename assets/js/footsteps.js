@@ -110,6 +110,22 @@ export function createFootsteps(base = 'assets/audio/footsteps') {
       }
       src.start();
     },
+    land(category, volume = 0.65) {
+      const c = audio();
+      if (!c) return;
+      const pool = (pools[category] && pools[category].length ? pools[category] : pools.dirt) || [];
+      if (!pool.length) return;
+      const buf = pool[(Math.random() * pool.length) | 0];
+      last = buf;
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = 0.78 + Math.random() * 0.08;
+      const g = c.createGain();
+      g.gain.value = volume * (0.9 + Math.random() * 0.1);
+      src.connect(g);
+      g.connect(c.destination);
+      src.start();
+    },
   };
 }
 

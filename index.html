@@ -38,6 +38,12 @@
     </div>
     <div id="wounds"></div>
   </section>
+  <section id="objective" aria-live="polite" hidden>
+    <header><span>NEXT STEP</span><b id="objectiveStep"></b></header>
+    <h3 id="objectiveTitle"></h3>
+    <p id="objectiveHint"></p>
+    <div id="objectiveNeeds"></div>
+  </section>
   <section id="radMeter" role="progressbar" aria-label="Radiation dose against the human lethal dose" aria-valuemin="0"
     aria-valuemax="100" aria-valuenow="0">
     <header>RAD</header>
@@ -49,7 +55,6 @@
       0 rad
       0 rad/s</span>
   </section>
-  <div id="cursorGhost" class="slot"></div>
   <div id="tip">
     <div class="t"></div>
     <div class="b"></div>
@@ -96,6 +101,27 @@
     </div>
   </div>
 
+  <div id="achievePanel" class="hidden" role="dialog" aria-label="Achievements">
+    <div class="achieveBox">
+      <header class="achieveHead">
+        <span class="achieveTitle">ACHIEVEMENTS</span>
+        <span id="achieveCount" class="achieveCount"></span>
+        <span class="achieveHint">SCROLL HORIZONTALLY FOR MORE TYPES</span>
+        <button id="achieveClose">CLOSE</button>
+      </header>
+      <div id="achieveScroll" class="achieveScroll">
+        <div id="achieveGrid" class="achieveGrid"></div>
+      </div>
+      <footer id="achieveDetail" class="achieveDetail">
+        <span class="adKicker">SELECT AN ACHIEVEMENT</span>
+        <b id="achieveName"></b>
+        <span id="achieveReq"></span>
+        <span id="achieveProg"></span>
+      </footer>
+    </div>
+    <div id="achieveTip" class="achieveTip hidden"></div>
+  </div>
+
   <div id="invPanel" class="hidden">
     <div class="box">
       <header class="inventory-header">
@@ -134,6 +160,10 @@
         <aside class="recipe-list">
           <input id="recipeSearch" type="text" placeholder="SEARCH ITEMS" autocomplete="off" autocorrect="off"
             spellcheck="false">
+          <section id="recipeStart" class="recipeStart" hidden>
+            <header><span>START HERE</span><b id="recipeStartLeft"></b></header>
+            <div id="recipeStartItems" class="recipeStartItems"></div>
+          </section>
           <div id="recipeFilters" class="recipeFilters"></div>
           <div id="recipeHint" class="recipeHint"></div>
           <div id="recipeItems" class="recipeItems"></div>
@@ -156,6 +186,16 @@
       placeholder="/give item [count]   ·   /time [set day]   ·   /tp cave|cavern|noodle|building|garage|container|tank|industrial|machine">
   </div>
 
+  <div id="intro" class="hidden" role="dialog" aria-modal="true" aria-labelledby="introTitle">
+    <div class="introBox">
+      <strong id="introTitle">THE ZONE IS STILL HOT</strong>. The reactors never shut down. The Zone is still hot.
+      No one is coming to get you. Bare hands break dirt and stone. Open your bag with <b>TAB</b> and craft from the pocket table. Use your first ingots on a
+      pick, a hand crank, and a manufactory. The card in the <b>botuitom-left corner</b> tells you what to
+      do first and moves on as you finish. Each day lasts 15 minutes. <button id="introBegin" class="mbtn primary"
+        disabled>LOADING</button>
+    </div>
+  </div>
+
   <div id="menu">
     <canvas id="menuBg"></canvas>
     <div class="menu-pano-nav">
@@ -164,7 +204,8 @@
     </div>
     <div class="menu-panel">
       <section class="menu-view" data-view="home">
-        <h1><span class="title-text">NUCLEARISM <span id="splash"></span></span></h1><p style="font-size: 18px;">Preview 0.12</p>
+        <h1><span class="title-text">NUCLEARISM <span id="splash"></span></span></h1>
+        <p style="font-size: 18px;">Preview 0.12</p>
         <div class="menu-actions">
           <button class="mbtn primary" data-act="worlds">START</button>
           <button class="mbtn" data-act="settings">SETTINGS</button>
@@ -206,7 +247,7 @@
         <h2>SETTINGS</h2>
         <div class="menu-setting"><span>RENDER DISTANCE</span><span class="opts" id="menuDist">
             <button data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
-              data-val="6">6</button>
+              data-val="6">6</button><button data-val="2000">2000</button>
           </span></div>
         <div class="menu-setting"><span>INFO HUD</span><span class="opts" id="menuHud">
             <button data-val="0">OFF</button><button data-val="1">ON</button>
@@ -225,9 +266,22 @@
 
   <div id="overlay">
     <div class="panel">
+      <div class="view view-loading hidden">
+        <div class="loading-shell">
+          <span class="loading-kicker">ZONE</span>
+          <h1>LOADING</h1>
+          <div class="loading-square" aria-label="loading progress">
+            <div class="loading-square-fill"></div>
+          </div>
+          <div class="loading-status">INITIALIZING</div>
+          <div class="loading-hint">CLICK TO LOCK</div>
+        </div>
+      </div>
       <div class="view view-main">
         <h1>NUCLEARISM</h1>
         <button id="playBtn" class="btn">RESUME</button>
+        <button id="manualBtn" class="btn">FIELD MANUAL</button>
+        <button id="achievementsBtn" class="btn">ACHIEVEMENTS</button>
         <button id="settingsBtn" class="btn">SETTINGS</button>
         <button id="menuBtn" class="btn">MAIN MENU</button>
       </div>
@@ -236,7 +290,7 @@
         <div class="settings">
           <div class="row" data-setting="distance"><span>DISTANCE</span><span class="opts"><button
                 data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
-                data-val="6">6</button></span></div>
+                data-val="6">6</button><button data-val="2000">2000</button></span></div>
           <div class="row" data-setting="hud"><span>INFO HUD</span><span class="opts"><button
                 data-val="0">OFF</button><button data-val="1">ON</button></span></div>
           <div class="row" data-setting="vsync"><span>VSYNC</span><span class="opts"><button

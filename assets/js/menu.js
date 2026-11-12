@@ -9,6 +9,11 @@ const DISCORD_URL = 'https://discord.com/';
 
 const menu = document.getElementById('menu');
 const overlay = document.getElementById('overlay');
+const loadingView = document.querySelector('#overlay .view-loading');
+const loadingShell = document.querySelector('#overlay .loading-shell');
+const loadingFill = document.querySelector('#overlay .loading-square-fill');
+const loadingStatus = document.querySelector('#overlay .loading-status');
+const loadingHint = document.querySelector('#overlay .loading-hint');
 const listEl = document.getElementById('worldList');
 const playBtn = document.getElementById('worldPlayBtn');
 const editBtn = document.getElementById('worldEditBtn');
@@ -129,6 +134,75 @@ function stopPanorama() {
 overlay.style.display = 'none';
 menu.classList.remove('hidden');
 
+let loadingFrame = 0;
+let loadingReadyAt = 0;
+
+function setLoadingScreen(active, value = 0, text = 'INITIALIZING', ready = false) {
+  if (!loadingView || !loadingFill || !loadingStatus || !loadingHint || !loadingShell) return;
+  const viewMain = document.querySelector('#overlay .view-main');
+  const viewSettings = document.querySelector('#overlay .view-settings');
+  if (active) {
+    viewMain?.classList.add('hidden');
+    viewSettings?.classList.add('hidden');
+    loadingView.classList.remove('hidden');
+    overlay.style.display = 'flex';
+    overlay.style.cursor = 'pointer';
+    loadingStatus.textContent = text.toUpperCase();
+  } else {
+    loadingView.classList.add('hidden');
+    viewMain?.classList.remove('hidden');
+    overlay.style.display = 'none';
+    overlay.style.cursor = 'default';
+  }
+  loadingShell.classList.toggle('ready', ready);
+  loadingHint.classList.toggle('visible', ready);
+  loadingHint.textContent = 'CLICK TO LOCK';
+  if (ready) {
+    loadingStatus.textContent = '';
+  } else {
+    loadingStatus.textContent = text.toUpperCase();
+  }
+  loadingFill.style.setProperty('--progress', String(Math.max(0, Math.min(1, value))));
+}
+
+function animateLoadingScreen() {
+  cancelAnimationFrame(loadingFrame);
+  const started = performance.now();
+  loadingReadyAt = started + 3000;
+  const tick = () => {
+    const now = performance.now();
+    const elapsed = (now - started) / 3000;
+    const raw = Math.min(1, 0.08 + elapsed * 0.92);
+    const steps = 11;
+    const chunky = Math.min(1, (Math.round(raw * steps) / steps));
+    loadingFill.style.setProperty('--progress', String(chunky));
+    const ready = now >= loadingReadyAt;
+    loadingShell.classList.toggle('ready', ready);
+    loadingHint.classList.toggle('visible', ready);
+    if (!ready) {
+      loadingStatus.textContent = 'INITIALIZING';
+      loadingFrame = requestAnimationFrame(tick);
+    } else {
+      loadingStatus.textContent = '';
+      loadingHint.textContent = 'CLICK TO LOCK';
+    }
+  };
+  loadingFrame = requestAnimationFrame(tick);
+}
+
+overlay.addEventListener('click', () => {
+  if (!loadingView || loadingView.classList.contains('hidden')) return;
+  if (performance.now() < loadingReadyAt) return;
+  setLoadingScreen(false);
+  cancelAnimationFrame(loadingFrame);
+  loadingStatus.textContent = 'INITIALIZING';
+  const canvas = window.__NUCLEARISM_GAME_CANVAS__ || document.querySelector('canvas');
+  if (canvas && typeof canvas.requestPointerLock === 'function') {
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => { });
+  }
+});
+
 function show(name) {
   for (const v of menu.querySelectorAll('.menu-view')) {
     v.classList.toggle('hidden', v.dataset.view !== name);
@@ -158,7 +232,8 @@ function paintWorlds() {
 }
 
 function paintSettings() {
-  const cur = +settings.renderDistance || 3;
+  const raw = +settings.renderDistance;
+  const cur = Number.isFinite(raw) && raw >= 1 ? Math.min(2000, raw) : 3;
   for (const b of distEl.querySelectorAll('button')) {
     b.classList.toggle('on', parseFloat(b.dataset.val) === cur);
   }
@@ -186,12 +261,19 @@ function beginWorld(w) {
   stopPanorama();
   window.__NUCLEARISM_WORLD__ = { id: w.id, name: w.name, mode: w.mode };
   menu.classList.add('hidden');
-  overlay.style.display = 'flex';
+  setLoadingScreen(true, 0.08, 'INITIALIZING', false);
+  animateLoadingScreen();
   const label = playBtn.textContent;
   playBtn.textContent = 'LOADING';
   playBtn.disabled = true;
-  import('./game.js').catch((e) => {
+  import('./game.js').then(() => {
+    loadingStatus.textContent = 'READY';
+    loadingHint.classList.add('visible');
+    loadingHint.textContent = 'CLICK TO LOCK';
+    overlay.style.cursor = 'pointer';
+  }).catch((e) => {
     console.error('world failed to load', (e && e.stack) || e);
+    setLoadingScreen(false);
     playBtn.textContent = label;
     playBtn.disabled = false;
     menu.classList.remove('hidden');
@@ -257,7 +339,7 @@ createMode.addEventListener('click', (e) => {
 distEl.addEventListener('click', (e) => {
   const val = e.target.closest('[data-val]')?.dataset.val;
   if (!val) return;
-  settings.renderDistance = parseFloat(val);
+  settings.renderDistance = Math.min(2000, Math.max(1, parseFloat(val)));
   writeJSON(SETTINGS_KEY, settings);
   paintSettings();
 });

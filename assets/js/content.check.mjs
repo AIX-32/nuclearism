@@ -1,16 +1,21 @@
 
 
 import { existsSync, readdirSync } from 'node:fs';
-import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate } from './content.js';
+import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS } from './content.js';
 import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes']);
-const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'absorber', 'cable', 'storage', 'geiger', 'cleaner']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
 
+for (const [id, def] of Object.entries(ITEM_DEFS)) {
+  if (!id.endsWith('_ingot')) continue;
+  ok.push([def.icon === 'assets/images/items/ingot.png', `ingot "${id}" uses the shared base texture`]);
+  ok.push([typeof def.tint === 'number', `ingot "${id}" has a tint color`]);
+}
 
 for (const r of CRAFT_RECIPES) {
   for (const id of Object.keys(r.out)) ok.push([has(id), `craft out "${id}"`]);
@@ -25,6 +30,17 @@ for (const r of TABLE_RECIPES) {
   for (const id of Object.keys(r.out)) ok.push([has(id), `table out "${id}"`]);
   for (const id of Object.keys(r.needs)) ok.push([has(id), `table need "${id}"`]);
 }
+
+ok.push([STARTER_GUIDE_SECONDS === 1800, `starter guide lasts 30 real minutes (${STARTER_GUIDE_SECONDS}s)`]);
+for (const id of STARTER_GUIDE) {
+  ok.push([has(id), `starter guide item "${id}" exists`]);
+  // Tree fruit is picked by hand (hit a fruiting tree), not made at the table.
+  ok.push([TABLE_RECIPES.some((r) => r.out[id]) || ['carbon', 'iron', 'copper', 'apple', 'orange', 'pear'].includes(id), `starter guide item "${id}" is obtainable at the table or by hand`]);
+}
+ok.push([STARTER_GUIDE.includes('hand_crank'), 'starter guide points at the hand crank']);
+ok.push([MACHINE_BY_ID.hand_crank?.manual === true, 'hand crank is a manual generator']);
+ok.push([MACHINE_BY_ID.water_pump?.kind === 'pump', 'water pump exists']);
+ok.push([TABLE_RECIPES.some((r) => r.out.water_pump), 'water pump is craftable at the table']);
 
 
 const seen = new Set();
@@ -125,6 +141,9 @@ for (const m of MACHINE_DEFS) {
 const craftLayout = layoutFor(MACHINE_BY_ID.manufactory);
 ok.push([!craftLayout.elements.some((e) => e.type === 'recipes'), 'manufactory recipe list lives in the side rail']);
 ok.push([!craftLayout.elements.some((e) => e.type === 'slot'), 'manufactory has no craft-grid slots']);
+ok.push([craftLayout.elements.some((e) => e.id === 'progress'), 'manufactory has a craft progress bar']);
+ok.push([CRAFT_RECIPES.every((r) => r.time > 0), 'every bag recipe has a craft time']);
+ok.push([CRAFT_RECIPES.find((r) => r.out.manufactory).time > CRAFT_RECIPES.find((r) => r.out.iron_ingot).time, 'machine blocks take longer to craft than simple items']);
 for (const id of ['crusher', 'gun_workbench', 'medicine_workbench', 'liquid_mixer', 'assembler']) {
   const l = layoutFor(MACHINE_BY_ID[id]);
   ok.push([!l.elements.some((e) => e.type === 'recipes'), `"${id}" recipe list lives in the side rail`]);
@@ -337,6 +356,11 @@ if (existsSync(itemsDir)) {
 
 for (const [id, d] of Object.entries(ITEM_DEFS)) {
   if (!d.light) continue;
+  if (d.light.mount === 'held') {
+    ok.push([d.tool?.flashlight === true, `light "${id}" is a held light`]);
+    ok.push([d.light.range > 0 && d.light.power > 0, `light "${id}" range/power positive`]);
+    continue;
+  }
   ok.push([d.torch === true, `light "${id}" is placeable`]);
   ok.push([['wall', 'floor'].includes(d.light.mount), `light "${id}" mount known`]);
   ok.push([d.light.range > 0 && d.light.power > 0, `light "${id}" range/power positive`]);
@@ -378,6 +402,24 @@ for (const id of Object.keys(excRec.in)) ok.push([has(id), `excavator ingredient
 for (const id of Object.keys(excRec.in)) {
   ok.push([gridOut.has(id) || machineOut.has(id), `excavator ingredient "${id}" is obtainable`]);
 }
+
+
+const bwe = MACHINE_BY_ID.bucket_wheel_excavator;
+ok.push([!!bwe, 'bucket wheel excavator exists']);
+ok.push([bwe?.kind === 'bwe', 'bucket wheel excavator has its own machine kind']);
+ok.push([bwe?.outputs === 64, `bucket wheel excavator has 64 hold slots (${bwe?.outputs})`]);
+ok.push([layoutFor(bwe).elements.some((e) => e.type === 'bwe'), 'bucket wheel excavator uses the scrollable BWE panel']);
+const bweRec = MACHINE_BY_ID.assembler.recipes.find((r) => r.out.bucket_wheel_excavator);
+ok.push([!!bweRec, 'assembler makes the bucket wheel excavator']);
+ok.push([bweRec && Object.keys(bweRec.in).length >= 10, 'bucket wheel excavator recipe is enormous']);
+ok.push([!!bweRec?.in.blueprint_excavator, 'bucket wheel excavator needs its blueprint']);
+for (const id of Object.keys(bweRec?.in || {})) {
+  ok.push([has(id), `bucket wheel excavator ingredient "${id}"`]);
+  ok.push([gridOut.has(id) || machineOut.has(id), `bucket wheel excavator ingredient "${id}" is obtainable`]);
+}
+ok.push([has('bwe_controller'), 'bwe controller item exists']);
+const ctrlRec = MACHINE_BY_ID.assembler.recipes.find((r) => r.out.bwe_controller);
+ok.push([!!ctrlRec, 'assembler makes the bwe controller']);
 
 
 const tb = MACHINE_BY_ID.test_bench;
@@ -457,6 +499,50 @@ ok.push([matched.m.state.heat <= 0.001, 'matched cooling holds the core at tempe
 ok.push([under.m.state.heat > 0, 'an uncooled core heats up']);
 ok.push([under.m.state.status.startsWith('NO COOLANT'), 'an empty core reports no coolant']);
 ok.push([matched.m.state.coolMatch > 0.99, 'matched layout reports a full cooling match']);
+
+// Late-game research chain: blueprints gate fission, fusion and the endgame.
+const asm = MACHINE_BY_ID.assembler.recipes;
+const lab = MACHINE_BY_ID.research_lab;
+ok.push([!!lab, 'research_lab exists']);
+for (const bp of ['blueprint_reactor', 'blueprint_fusion', 'blueprint_scrubber', 'blueprint_containment']) {
+  ok.push([has(bp), `blueprint "${bp}" exists`]);
+  ok.push([(lab.recipes || []).some((r) => r.out[bp]), `research lab makes ${bp}`]);
+}
+for (const id of ['blueprint_fusion', 'blueprint_scrubber', 'blueprint_containment']) {
+  const rec = lab.recipes.find((r) => r.out[id]);
+  ok.push([!!rec && Object.keys(rec.in).length >= 3, `${id} needs a real sample set`]);
+}
+const fissRec = asm.find((r) => r.out.fission_reactor);
+ok.push([!!fissRec?.in.blueprint_reactor, 'fission reactor requires the reactor blueprint']);
+const fusionRec = asm.find((r) => r.out.fusion_reactor);
+ok.push([!!fusionRec?.in.blueprint_fusion, 'fusion reactor requires the fusion blueprint']);
+const scrubRec = asm.find((r) => r.out.atmospheric_scrubber);
+ok.push([!!scrubRec?.in.blueprint_scrubber, 'scrubber requires the scrubber blueprint']);
+const suitRec = asm.find((r) => r.out.containment_chestplate);
+ok.push([!!suitRec && ['containment_helmet', 'containment_chestplate', 'containment_leggings', 'containment_boots', 'containment_gloves'].every((id) => suitRec.out[id]),
+  'one blueprint builds the whole containment suit']);
+
+const fus = ITEM_DEFS.fusion_fuel;
+ok.push([!!fus?.fuel, 'fusion fuel exists']);
+ok.push([fus.fuel.power > ITEM_DEFS.hep_239_fuel.fuel.power, 'fusion out-powers the best fission fuel']);
+ok.push([!!DEPLETED_OF.fusion_fuel && has(DEPLETED_OF.fusion_fuel), 'fusion fuel has a depleted form']);
+ok.push([MACHINE_BY_ID.isotope_separator.recipes.some((r) => r.out?.fusion_fuel), 'isotope separator makes fusion fuel']);
+ok.push([MACHINE_BY_ID.fuel_reprocessor.recipes.some((r) => r.in?.depleted_fusion), 'reprocessor recycles fusion fuel']);
+
+const scrubDef = MACHINE_BY_ID.atmospheric_scrubber;
+ok.push([scrubDef?.kind === 'scrubber' && scrubDef.ambientCut > 0, 'scrubber cuts ambient dose']);
+ok.push([!!scrubDef.filter && has(scrubDef.filter.item), 'scrubber filter is an item']);
+ok.push([asm.some((r) => r.out?.[scrubDef.filter.item]), 'scrubber filters are craftable']);
+const scrub = { def: scrubDef, x: 0, y: 0, z: 0, state: { slots: { fuel: { id: scrubDef.filter.item, n: 2 } }, buffer: 1000, status: '', progress: 0, burnT: 0 } };
+sys.tickScrubber(scrub, 1, { pool: 1000, cap: 1000 });
+ok.push([sys.scrubbers.length === 1, 'a powered scrubber registers as active']);
+ok.push([Math.abs(sys.ambientCut() - scrubDef.ambientCut) < 1e-9, 'active scrubbers reduce ambient dose']);
+const dry = { def: scrubDef, x: 0, y: 0, z: 0, state: { slots: {}, buffer: 1000, status: '', progress: 0, burnT: 0 } };
+sys.scrubbers.length = 0;
+sys.tickScrubber(dry, 1, { pool: 1000, cap: 1000 });
+ok.push([sys.scrubbers.length === 0 && dry.state.status === 'NO FILTER', 'a scrubber without a filter does nothing']);
+ok.push([!!ITEM_DEFS.plasma_drill?.tool, 'plasma drill is a tool']);
+ok.push([asm.some((r) => r.out?.plasma_drill), 'plasma drill is assembler-made']);
 
 const bad = ok.filter(([p]) => !p);
 if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }

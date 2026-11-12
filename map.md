@@ -1,0 +1,1004 @@
+# Nuclearism Project Map
+
+## Project purpose
+This project is a browser voxel survival game built with Three.js. The world is generated procedurally from a signed-distance style density field, with chunk streaming, mining/placement, lighting and a first-person controller. It is a dry world: there is no surface water, ocean or beach, and water exists only in containers (filled from industrial tanks or a powered water pump).
+
+On top of that engine sits a NuclearCraft-style progression: a 15-minute day clock with ambient radiation that escalates over time, dose stages that debuff you until they kill you, mining by depth for ore, a pocket crafting table, armor and shielding plates, and power-networked machines — up to reactors that melt down and irradiate the area.
+
+The goal of the codebase is to let you survive an increasingly hostile world by mining, crafting and building out machines to shield yourself, without a heavy build step.
+
+## Main files
+
+### Content, machines and workbench interfaces
+- `assets/js/content.js` is the data catalogue: `ITEM_DEFS` (items), `LIQUID_DEFS` (liquid types), `MACHINE_DEFS` (machines), `MACHINE_BY_ID`, `CRAFT_RECIPES`, `TABLE_RECIPES` / `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor(def)` fallback layouts, `STARTER_GUIDE` / `GUIDE_STEPS` (opening build order), `ACHIEVEMENT_TYPES` (achievement categories/tiers), and `TUNING`.
+- `assets/js/liquids.js` is the global liquid/container system: pure helpers over `stack.liquid` (`fill`, `drain`, `transfer`, `accepts`, `sanitize`, `volume`). Acid liquids require an acid-proof container.
+- `assets/js/machines.js` is the machine runtime: placement, power networks and auto-linking cables, reactors and meltdowns, the excavator, bucket wheel excavator, radiation emission, save/restore.
+- `assets/js/workbench-ui.js` renders JSON-described machine panels as an HTML overlay with a fixed power meter mirroring the RAD bar (bridge-driven, works for every machine).
+- `assets/js/craft-options.js` is the shared option-based crafting widget: a small scrollable list of recipe cards (title left, icon right, inventory tooltip on hover) used by both the pocket table and the manufactory.
+- `assets/js/drag-drop.js` is the shared pointer drag-and-drop controller for every item slot (inventory, armor, workbench sidebar, machine/storage slots, BWE hold). Slots supply `stack`/`take`/`put`/`restore`; the controller owns the ghost, hover highlight, merge/swap rules and suppresses the click that follows a drag. `inventoryAdapter()` is the standard grid-slot adapter.
+- `assets/ui/furnace.json` is an example layout; `ble.html` is the grid editor for authoring them.
+- `assets/js/content.check.mjs` validates the catalogue (`node assets/js/content.check.mjs`, 6,000+ assertions: recipes, machine/block pairing, fuel depletion, layout bounds, craft times, radiation curve, progression deadlock guards).
+- `assets/js/package.json` is just `{"type":"module"}` so node can import the ES modules for the checker above.
+- `assets/js/footsteps.js` is the footstep audio player: preloaded clip pools, `surfToCategory()`, `createFootsteps()`.
+- `assets/js/game.js` also holds the first-person **held-tool viewmodel** (§9d) and **tree chopping** (§10c).
+- `assets/js/menu.js` is the main menu + world select. It runs before game.js is imported: world list (`idte.worlds.v1`), create/rename/play, the animated panorama backdrop (one of `assets/images/menu/panorama-1.png` … `panorama-3.png` picked at random per launch), the clickable splash line under the title (`SPLASHES`, re-rolled on click), and the main-menu settings (render distance, INFO HUD) written to `idte.settings.v1` (`SETTINGS_KEY`).
+- `assets/js/pipes.js` is the grid-snapped decorative pipe system: `PipeSystem` (place, pick, removeAt, serialize/restore), one 1 m XZ cell per pipe, models `assets/models/pipes/{long,short,corner,tee}.glb`.
+- `assets/js/map.js` is the map system: `MapSystem` (corner minimap + fullscreen map), per-chunk terrain tile cache, fog-of-war `seen` set, bookmarks and death spots, layer toggles, pan/zoom and marker management. Pure helpers (`chunkKey`, `worldToScreen`, `screenToWorld`) are exported; `map.check.mjs` self-checks them.
+- `assets/js/block-layout-editor.js` is the grid editor (`ble.html`) for authoring machine panel layouts.
+- `WORKBENCHES.md` explains items, machines and layout extension points.
+
+### Asset conventions (all fallback-safe)
+The game never breaks on a missing asset — each has a code-generated substitute:
+- machine models `assets/models/workbenches/<machineId>.gltf` → missing = placeholder box
+- item models `assets/models/items/<itemId>.glb` (source art; icons rendered offline)
+- item icons: **any item with a model gets a rendered icon automatically** — `itemModelIcon()` in content.js resolves `<id>.glb`, workbench items use their machine's model; `ITEM_MODEL_ICON_EXCLUDE` (a blacklist, currently empty) opts an item back to its flat/generated icon. Missing files fall back to `assets/images/items/<itemId>.png`, else a generated tile. The same path is reused for the **in-hand prop** viewmodel.
+  - **Gotcha:** the `<id>.png` fallback is *not* auto-discovered. If an item has no `.glb`, you must set `icon: 'assets/images/items/<id>.png'` in its `ITEM_DEFS` entry or it renders the generated code tile. (The five ore icons — uranium, copper, lithium, boron, beryllium — and `shotgun_shell` needed this.)
+- machine panel layouts `assets/ui/<machineId>.json` → missing = `layoutFor(def)`
+- held tool models `assets/models/tools/<tool>/<Tool>.obj` (+ `.mtl`, `Tools_Texture.png`) → missing = no viewmodel (the item still works)
+- footstep clips `assets/audio/footsteps/<family>-N.ogg` (concrete/dirt/grass/gravel/metal/stairs/stone/wood) → missing = silent step
+
+Real art can be dropped in later without touching code.
+
+### index.html
+Entry page for the game.
+- loads the stylesheet
+- loads `assets/js/main.js`, which imports `menu.js` (the main menu); `game.js` is only imported once a world is played
+- contains the canvas, HUD (health/hunger/RAD/wounds), inventory, recipe browser (`#recipePanel`) with its **START HERE** strip, recipe-tree popup (`#treePanel`), the **NEXT STEP** objective card (`#objective`), the achievements panel (`#achievePanel`), the first-run field manual (`#intro`), command line, corner minimap (`#minimap`), fullscreen map (`#mapPanel`) and the menu/pause-overlay markup (including the settings rows and the **FIELD MANUAL** button)
+
+### assets/css/styles.css
+Contains the game UI styling: HUD (health/hunger/RAD/wounds), inventory, menus, workbench panels, the recipe browser, the START HERE strip, the NEXT STEP objective card, the achievements panel/grid, the bwe full and mini control cards, the recipe tree popup and the minimap/fullscreen map. All chrome uses one pure-black alpha token (`rgba(0,0,0,.55)`) with no borders, outlines, radii or bevel shadows, so stacked elements darken by alpha compositing. Active/selected states get a 50%-white outline offset 2px. The recipe tree draws its connectors as 45%-white lines (vertical per indent level + elbow into each child icon).
+
+### assets/js/main.js
+Minimal loader/entry bridge that imports the main menu (`menu.js`), which in turn lazy-imports the game.
+
+### assets/js/game.js
+This is the main gameplay and world-generation file. It contains most of the logic.
+
+### assets/images/
+Texture assets used by terrain surfaces, plus `assets/images/items/<itemId>.png` item icons (missing icon = generated tile) and `assets/images/menu/panorama-{1..5}.png` main-menu panoramas (one picked at random per launch).
+
+### assets/models/
+3D model assets such as torches or other static meshes, plus `assets/models/workbenches/<machineId>.gltf` machine models (missing model = placeholder box).
+
+## High-level structure of the game logic
+
+### 1. Constants and world config
+Relevant area in game.js:
+- around the top of the file, from the constants block to lighting
+
+Key things:
+- CHUNK_SIZE
+- SEA_LEVEL (kept as the terrain base-height datum; it is no longer a water level)
+- WATER_OVERSHOOT (legacy water-mesh extent; unused with no surface water)
+- WORLD_SEED
+- SUN_DIR and global lighting
+
+These values control map scale, terrain base height and lighting setup.
+
+### 2. Noise and climate generation
+Relevant area:
+- hash3, noise3, fbm3
+- climateAt()
+- biomeWeights()
+- biomeAt()
+
+What this does:
+- creates pseudo-random procedural noise
+- computes climate bands (temperature, humidity, continentality, erosion)
+- maps those values into biome weights and dominant biome IDs (ocean/shallow/beach IDs are no longer assigned; every column picks a land biome)
+
+This is the foundation of the terrain shape and biome distribution.
+
+### 3. Terrain generation
+Relevant functions:
+- terrainTrend()
+- pondHere()
+- terrainDensity()
+
+What this does:
+- defines the large-scale heightfield of the world
+- generates the signed density field used by the terrain mesh
+
+This is where the heightmap is shaped. There are no coastlines or ocean floor: `terrainTrend()` always builds the land plate, and `pondHere()` always returns `false` so nothing can seed surface water.
+
+### 3b. Cave systems (mouths → tunnels → caverns + buried noodles)
+Relevant parts in game.js (right after `columnDensity()`):
+- `CAVE_CELL` (80 m candidate grid), `CAVE_CHANCE` (0.62), `CAVE_REACH`, `CAVE_SINK` (density removed at the core)
+- `NOODLE_CHANCE` (0.68), `NOODLE_REACH`, `NOODLE_DEPTH` (rock kept above a tunnel), `NOODLE_FLOOR`
+- `caveHash()` / `caveSite()` / `buildCaveSite()` — one deterministic site per grid cell, generated lazily and cached; each cell rolls a sinkhole and a noodle network independently
+- `caveSitesAt()` — per-column list of cave sites whose AABB covers that column
+- `caveCarveAt()` — smooth 0..1 carve value (capsule tunnels + ellipsoid chambers, with rock-spike suppression)
+- integration: `terrainDensity()` subtracts `carve * CAVE_SINK` inside the near-surface band
+
+What this does:
+- a sinkhole cave is a real destination instead of noise: a mouth on dry, gentle land, a near-vertical shaft, a winding tunnel, and a chamber that is a proper cavern ~38% of the time (big rooms flatten when the land is low so they never breach the surface or bedrock)
+- ~45% of sinkhole caves fork into a side passage ending in a small pocket
+- big caverns (room `rx >= 6.5`) grow rock spikes: 1–4 stalactites hanging from the ceiling and, about half the time, 1–3 shorter stalagmites. They are not extra meshes — `caveCarveAt()` multiplies the carve down inside each hashed cone, so a spike is simply rock the cave did not remove (deterministic, save-free, and visible to mining/collision automatically)
+- **noodle caves** are closed-off networks of narrow (1.3–2.2 m radius) winding tunnels buried at least `NOODLE_DEPTH` (9 m) under the surface, with no opening: a hub chamber, 3–5 kinked arms up to `NOODLE_REACH` (26 m), occasional loops between neighbouring arms and small end pockets. They roll independently of the mouths, so they exist even where a mouth is rejected (steep cliffs, industrial pads) and make the underground much denser than the visible sinkholes
+- mouths are rejected on slopes > 5 m and under industrial pads; the biome's `cave` bias thins them out (savanna = 0.35)
+- the old per-voxel fbm "worm" caves are gone — they perforated the whole underground instead of making readable caves
+- the shape is hashed from the cell, so it lines up across chunk borders and is never stored in the save
+- cave digging is part of the density field, so mining, collision and raycasts all see it automatically; map tiles are base-terrain only and do not show caves
+
+### 3c. Industrial sites (buildings, containers, wall masks)
+Relevant parts in game.js (after the cave system):
+- `IND_CELL` (96 m candidate grid), `IND_MAX_R`, `IND_FADE`, `IND_DIMS`, `INDUSTRIAL_MODELS`
+- `industrialSite()` / `buildIndustrialSite()` — one deterministic site (or none) per cell, generated lazily and cached
+- `industrialPadAt()` / `industrialInside()` — smooth pad weight and footprint test
+- `DensityField.base()` blends the density toward `site.y0` by the pad weight, so every site sits on a perfectly flat pad
+- `industrialUpdate()` / `industrialCreate()` — streams whole sites in and out around the player and rebuilds colliders
+- `buildWallMask()` / `parseWallMask()` / `indApplyMaskEdits()` — 15 cm wall-occupancy mask derived from the model's near-vertical triangles (or read from `assets/models/industrial/03_garage.mask.txt`); manual edits persist in `idte.ind.masks.v1`
+- `industrialBlockedAt()` / `structureBlockedAt()` — per-wall and per-box player collision
+
+What this does:
+- about 55% of 96 m cells that are flat enough (≤ 6.5 m relief), well above the terrain datum and at least plains biome contain a site: a `building_a` or `garage` (sometimes with a `liquid_tank`) or 1–4 shipping containers, snapped to quarter turns
+- pads are flattened into the density field (mining/building there persists like any terrain edit), cave mouths are rejected on them, and vegetation is suppressed inside the footprint
+- sites are not saved: they are hashed from the seed + cell coordinates and rebuilt as the player streams, so they line up across reloads
+- buildings collide per wall via the mask, so doorways are walkable; containers and tanks use simple boxes
+- a `liquid_tank` is a **water source**: aim at it and right-click with a jerry can to fill it (`FILL CONTAINER` prompt); tanks are otherwise decorative and unlimited
+- `/tp building` / `garage` / `container` / `tank` / `industrial` lands on the pad just outside a site; the map draws pad outlines and type labels
+
+### 3d. Vegetation and harvestables
+Relevant parts in game.js:
+- `VEG_DIR`, `VEG_LAYERS` (`canopy` 6 m, `ground` / `floor` 2 m, `cover` / `aquatic` 3 m cells), `VEG_SPECIES`
+- `vegCell()` / `vegResolve()` / `vegStream()` / `vegUpdate()` / `vegAnimate()` / `vegUpdateInstances()` / `vegRebuildTrunks()` / `vegFalling()`
+- `_vegHarvested`, `vegParentNear()`, `groundDepth()`
+- pickups through `registerPickup()` and the `pickup` field on a species
+
+What this does:
+- each grid cell rolls a biome-weighted species from the list: PS1 trees and dead trees, grass, herbs, flowers, ferns, moss, bamboo, reeds, duckweed and leaf litter
+- placements are deterministic from seed + cell, then resolved against live terrain (surface normal slope, cave intersection, industrial pads); rejected spots are cached so they are not retried every frame
+- the `aquatic` layer and its species (reeds, duckweed, iris) are still defined but never place: they require a water surface, and the world has none
+- rendering is instanced and streamed in species-sized rings; trees keep real trunks for chopping and collision, and litter only appears under suitable parent trees
+- ground plants with `pickup` register crosshair pickups (`herb`, `flower`) gated by gardening gloves; harvested cells are remembered in `_vegHarvested` so they do not respawn
+- hitting a tree can shake loose fruit (`TREE_FRUITS` = apple/orange/pear, `TREE_FRUIT_CHANCE` = 10%)
+- streaming is budgeted: at most 6 species' instance buffers are refreshed per frame
+
+### 4. Density field and chunk mesh generation
+Relevant classes:
+- DensityField
+- Chunk
+
+What this does:
+- stores procedural and edited density data
+- rebuilds chunk meshes for terrain blocks
+- updates the visible geometry for each loaded region around the player
+
+The world is broken into chunks so only nearby regions are processed.
+
+### 5. Surface water (disabled)
+Relevant parts:
+- WaterSim class
+- pondAt(), surfaceOf(), floorAt(), canHold()
+- update(), step(), seed()
+
+What this does:
+- the finite-volume water simulation still exists in the code but is dormant: `pondHere()` always returns `false`, so no column is ever seeded, and nothing can add water to the world (pouring discards it)
+- `waterAt()` therefore always returns 0; swimming, underwater fog and the reactor's adjacent-water cooling never trigger
+- **water is a container resource only**: fill a jerry can from an industrial `liquid_tank` or from the powered `water_pump` machine
+
+### 6. Water rendering (dormant)
+Relevant parts:
+- waterMaterial shader
+- rebuildWater() in Chunk
+- waterUniforms
+
+What this does:
+- the water mesh path still exists (`Chunk.rebuildWater()` is called for low chunks), but with no simulated water columns it always produces an empty mesh
+- `assets/js/map.js` no longer paints water tiles and the fullscreen map has no WATER layer
+
+### 7. World streaming and updates
+Relevant parts:
+- World.update()
+- World.processDirty()
+- World.processWaterDirty()
+- World.markRegionDirty(), markColumnDirty(), markWaterDirty()
+
+What this does:
+- loads nearby chunks around the player
+- unloads distant ones
+- rebuilds terrain meshes in bounded work budgets to keep the game performant (the water rebuild queue stays empty)
+
+This is how the world feels continuous without having to build everything at once.
+
+### 8. Player, spawn, and input
+Relevant parts:
+- player object
+- movePlayer()
+- spawnOnGround()
+- validSpawnPos()
+- playerCollides() — samples the full body height, including eye level and the top of the head, so cave ceilings cannot be jumped through
+
+What this does:
+- handles movement and camera behavior
+- ensures player spawn points are valid on solid ground (nothing is underwater any more)
+- keeps the player standing on solid ground
+
+### 9. Mining / placing / world edits
+Relevant parts:
+- mine(), place(), mineAnimated()
+- density field edits and markRegionDirty()
+- `mineAim()` (terrain ray, `REACH` = 7 m), `raycastTerrain()`
+- `resolveInteractTarget()` / `useInteractable()` / `refreshInteractPrompt()` — opening machines and pickups
+- `raySphereHit()` — ray/sphere test behind the interact prompt
+
+What this does:
+- lets the player carve blocks into the terrain
+- lets the player place items or terrain blocks
+- marks affected regions dirty so chunk geometry rebuilds
+- right-click opens whichever machine/pickup the crosshair hits, up to the same `REACH` as mining (7 m)
+- while a workbench item is held, `updatePlacePreview()` shows a translucent, flashing ghost of the machine at the target spot (red where placement is blocked)
+
+### 10. Rendering and frame loop
+Relevant section:
+- frame() function
+- camera setup
+- world.updateWater()
+- world.processDirty()
+- underwater fog / color blending
+
+What this does:
+- executes the main game loop
+- updates movement, world generation and chunks (the water sim tick is still called but has nothing to simulate)
+- keeps the camera synced with the current world state; the underwater fog checks are unreachable
+
+### 11. Item and machine catalogue
+Relevant parts in content.js:
+- `ITEM_DEFS`, `MACHINE_DEFS`, `MACHINE_BY_ID`
+- `CRAFT_RECIPES`, `TABLE_RECIPES`, `TABLE_OUTPUTS`
+- `DEPLETED_OF`, `layoutFor()`, `TUNING`
+
+What this does:
+- defines every item and machine as plain data (no per-machine code)
+- pairs each machine with a placeable block item (`item.workbench -> machine.id`)
+- declares recipes: `CRAFT_RECIPES` are option-based (available as soon as the bag has the ingredients) and carry a `time` — machine blocks craft in 10 s, everything else in 2 s, tunable per recipe; machine `recipes` run inside the machine
+- `TABLE_OUTPUTS` is the whitelist of recipes the pocket table can make
+- maps spent fuel to its depleted form for the reactor
+- content tiers: firearms (fast AR, SMG, shotgun shells), electronics chips (craftable in the bag, consumed by the assembler tier), consumables (juice, iodine, NEUROZAM-9, cigarette packs), liquids, wood tools and the water pump
+- **water sources**: industrial `liquid_tank` parts (unlimited, fill a held can) and the powered `water_pump` machine (`kind: 'pump'`, right-click a held can to pump 5 L for 30 PU)
+- late-game tiers: **research blueprints** gate the reactor/fusion/scrubber/containment tier, **fusion fuel** burns in a second reactor, and the **atmospheric scrubber** is a powered ambient-dose sink
+
+Changing gameplay content means editing this file, not game.js.
+
+### 12. Day clock and ambient radiation
+Relevant parts in game.js:
+- `clock = { day, t }`, `TUNING.DAY_SECONDS` (900s = 15 real minutes/day)
+- `dayTier()`, `ambientRad()`, `radStage()`, `isDay()`
+- `doseRate()`, `paintRad()`, radiation post-FX uniforms (`uRadBlur`, `uRadDark`, `uTime`)
+- `die()`, `deathT`, `#deathBanner`
+
+What this does:
+- advances day/time and, from day 10 (`TUNING.RAD_RAMP_DAY`), ramps ambient radiation superlinearly per tier
+- tracks **absorbed dose in rad** (1 rad = 0.01 Gy); rates use real SI-prefixed units (`nrad/s`, `µrad/s`, `mrad/s`, `rad/s`) through `formatRad()` / `formatRadRate()` in content.js
+- scales the RAD meter to the human whole-body lethal dose: `TUNING.RAD_LETHAL_DOSE` (600 rad) is 100%, with an **LD50 tick at 450 rad** and ARS onset at 100 rad
+- turns accumulated dose into a stage (`SLOWED / BLURRED / CRITICAL / FATAL` at 100/250/450/600 rad) that scales move speed and drives lens blur/darkening
+- kills the player at the lethal dose: **everything carried drops where you died**, then you respawn at 0,0
+
+This is the core pressure loop — the reason shielding and machines matter.
+
+### 12b. Vitals, wounds and hunger
+Relevant parts in game.js:
+- `vitals = { hp, maxHp, hunger, maxHunger, wounds, infectionImmunity }`
+- `WOUNDS`, `addWound()`, `cureWounds()`, `hurt(amount, type)`, `woundSpeed()`, `updateVitals(dt)`
+- HUD meters `#hpFill` / `#hpNum`, `#hungerFill` / `#hungerNum`, wound chips `#wounds`; `paintVitals()`
+- `TUNING.HUNGER_DRAIN` (0.07/s); consumable fields `food`, `heal`, `cures`, `immunity`
+
+What this does:
+- health and hunger are real survival meters: hunger drains continuously, at 0 it deals 0.6 dps, and above 40 with no active damage the player regenerates 0.6 hp/s
+- wound types are `bleeding`, `infection`, `burn`, `poison`, `pain`, `eye`, `respiratory`, `bloodloss`; each carries dps, a speed multiplier and/or a blur amount
+- wounds stack; bleeding/burn lasting over 30 s can roll an infection, which `infectionImmunity` blocks; hits of 12+ damage also add pain
+- wounds slow movement (`woundSpeed()`) and some blur the view; consumables can heal, feed, cure specific wounds or grant temporary infection immunity
+- sandbox mode pins health/hunger full and clears wounds; survival death still routes through `die()` and the drop-everything respawn
+- vitals are saved with the world and exposed on the debug handle as `vitals` / `hurt` / `addWound`
+
+### 13. Mining, ore bands and hand tools
+Relevant parts:
+- `BARE_HANDS` (radius/rate/yield, can only break dirt/grass/stone)
+- `mineOreDrop(band, y)` — depth-dependent ore table
+- `hasGardeningGloves()` — gates plant pickups
+- `doMine()`, `resolveInteractTarget()`, `activate()`, `heldTool()`
+- `ITEM_DEFS` tools in content.js: `pick`, `shovel`, `drill`, plus the steel woodsman's tools `axe`, `hatchet`, `hoe`
+
+What this does:
+- lets a cold start bootstrap: bare hands mine enough to gather the first ore and carbon
+- yields different ores by depth band
+- requires gloves for vegetables, and refuses the pickup (with a notice) otherwise
+- `pick` also carries a weak `chop` so wood is obtainable before the steel axe; its `tool.stone: 3` triples the stone dropped per hit (ores keep their normal rate)
+- `axe` / `hatchet` are steel (steel ingot + wood) and chop trees; `hoe` is steel with no special function yet
+
+### 13b. Held tool viewmodel
+Relevant parts in game.js §9d:
+- `TOOL_MODELS` (item id → PS1 OBJ + MTL), `orientTool()` (grip at origin, head forward)
+- `viewScene` / `viewCam`, `vmRig` / `vmSwing`
+- `updateViewmodel(dt)`, `triggerSwing()`, `vmSwingCurve()`
+
+What this does:
+- shows the held `pick` / `shovel` / `axe` / `hatchet` / `hoe` as a first-person model
+- sway/bob while walking, smoothed look sway, equip raise, and a windup→strike→recover swing tied to `tool.rate`
+- rendered in a separate depth-cleared pass so terrain never clips through the tool; still gets the PS1 post-FX
+
+### 13c. Tree chopping
+Relevant parts in game.js §10c:
+- `chopTarget()` (analytic ray-vs-trunk-cylinder, reach from `tool.chop`)
+- `chopTree()` — splits the model at the struck height with `clipPiece()`
+- `updateChop(dt)` — topple physics, ground contact, settle, shrink-out, wood drops
+- `despawnTree()`, `removeDyn()`, `chopFall[]`
+
+What this does:
+- an axe/hatchet/pick hit cuts the trunk where you struck it
+- the part above the cut becomes a rigid piece hinged at the cut, topples away from the player, bounces once and settles
+- after a short rest it shrinks out and drops `wood` on the ground
+- the remaining lower section becomes a shorter, recuttable stump; chopped cells are added to `_vegHarvested` so they don't respawn
+- the stump is removed when the player travels far away; all cutting is geometry-based on the tree's normalized model
+
+### 13d. Item icons and held props
+Relevant parts in game.js:
+- `itemModelIcon()` (content.js), `modelIconSource()`, `renderModelIcon()`, `initModelIcons()`
+- `ICON_CACHE_KEY` (`idte.icon.v3.`), `modelIconCache` (data URL / `''` = tried-no-model / `null` = untried)
+- `itemIconUrl()`, `propModelUrl()`, `loadPropModel()`, `PROP_POS` / `PROP_SIZE`
+- `vmHeld` / `heldIconTexture()` / `showHeldIcon()` — two-handed flat-icon fallback for items with no model
+- `TOOL_MODELS` still overrides for hand tools (OBJ + MTL, §13b)
+
+What this does:
+- **no whitelist**: every item resolves an icon source automatically (`assets/models/items/<id>.glb`, workbenches use the machine model); render once isometrically and cache the PNG in localStorage
+- a failed load is cached as `''` so the item falls back to its PNG/generated tile and isn't re-probed; bump `ICON_CACHE_KEY` to re-render after adding art
+- non-tool items with a model are shown **in hand** as a spinning/bobbing prop on the viewmodel rig; tools use the swing rig instead
+- non-tool items **without** a model are still held: a flat icon sits low and centred as if gripped in both hands, bobbing with movement but never spinning (it also covers the short window while a real model loads)
+
+### 13e. Placeable lights and machine lighting
+Relevant parts in game.js:
+- `torches` registry (torch / lantern / floodlight entries; each carries `light { mount, range, power, color }`)
+- `lightAt()` / `solidAt()` — per-vertex bake for terrain (occluded, per-light range/colour)
+- `torchMesh()` / `addTorch()` / `tryTorchPlace()` / `updateTorches()`
+- `patchMachineMaterial()` + `refreshMachineLights()` — the 8-nearest-light uniform pool for machine materials
+
+What this does:
+- item defs opt into `torch: true` + `light` (content.js); `mount` is `wall` (side faces only) or `floor` (ground only)
+- torches, lanterns and floodlights all use the same placement, save/load, despawn and baked-light path; only their light numbers differ
+- terrain gets the light in the shader (see `aLight` in `buildMesh`), machines get it through their own material patch, so a torch next to a workbench actually lights the machine
+- the machine pool is the nearest 8 lights to the player: cheap, leak-free, and enough for anything visible; raise `MACHINE_LIGHT_SLOTS` only if machines far outside the view matter
+
+### 13f. Ore regions (one seam per chunk)
+Relevant parts:
+- `content.js`: `ORE_REGION_SIZE` (16 = one chunk), `regionOre(x, z)`, `REGION_ORE_IDS` / `REGION_ORE_WEIGHT`
+- game.js `mineDrops(band, y, x, z)` and machines.js `seamAt(m)`
+
+What this does:
+- ore is not spread evenly: every 16×16 patch has one dominant ore, hashed from its chunk coords (deterministic, no storage)
+- hand mining always yields the block itself (stone/dirt) and rolls the local seam on top — 30% (`MINE_ORE_CHANCE`), half that on barren ground via the depth table
+- the excavator yields **only** its seam, so you sample a chunk (mine a block) and build the excavator on the good one
+
+### 13g. Excavator, its storage and animation
+Relevant parts:
+- `MACHINE_DEFS.excavator`: `outputs: 9` (internal storage), `drillRate`, `spin: 'cylinder'`, `spinRate`, `sink`
+- machines.js `tickExcavator()`, `hasOutputRoom()`, `addOutput()` (both honour `def.outputs`), `place()` (`inst.spinNode`)
+
+What this does:
+- the digger wheel (`cylinder` node in `excavator.gltf`) **only turns while the machine is drilling** — it spins on its own axle, `def.spin` names the node so any model can opt in
+- ore falls straight into the machine's own 9 slots (no chest, no cables needed to collect); a full storage reads `OUTPUT FULL` and stops the wheel
+- the panel reports the seam being cut (`DRILLING IRON ORE` / `BARREN GROUND`)
+
+### 13g-b. Bucket wheel excavator (BWE)
+Relevant parts:
+- `MACHINE_DEFS.bucket_wheel_excavator` (`kind: 'bwe'`, `outputs: 64`, `energy.use: 350`, `bwe: { boomPivot, mast, boomAnchor, ropeSpan, ropeCenter }`) and `assets/models/workbenches/bucket_wheel_excavator.gltf`
+- item defs `bucket_wheel_excavator` (workbench item) and `bwe_controller`; recipes live in the assembler, the blueprint in the research lab
+- machines.js `setupBwe()`, `updateBweRope()`, `tickBwe()`, `digBwe()`, `controlBwe()`; workbench-ui.js `buildBwe()` / `renderBweDynamic()`; layout type `bwe`
+
+What this does:
+- the GLTF's `frontboom` and bucket-wheel group (`bw`) are re-parented under one pivot at the boom root, so boom up/down carries the wheel; `wheel.rotateY()` spins the buckets; yaw rotates the whole house
+- `ropetofrontboom` is re-stretched every frame between the fixed mast and the moving boom tip, so it stays visually attached while the boom moves (`ropeSpan` / `ropeCenter` match the model's 14-unit rope)
+- right-clicking with `bwe_controller` links to the nearest BWE within 128 m and opens its panel; controls are yaw, boom up/down and a wheel on/off toggle
+- `MINIMIZE` hides the full panel and leaves a compact bottom-right control card visible over the world (yaw/boom/spin, live readouts); `EXPAND` returns to the full hold UI and `×` closes the controls and returns to play
+- yaw and boom use a target pose plus a heavily smoothed render pose (`yawCur` / `boomCur`): inputs are tiny nudges, the house turns at roughly 12°/s and the boom at roughly 4°/s, and it eases to a stop like a machine with real mass
+- a spinning, powered wheel samples 28 rim points, carves the terrain they touch and rolls `mineDrops()` for the removed voxels (same drops as hand mining), capped at 260 voxels per 0.16 s tick
+- loot lands in the BWE's own 64-slot hold, shown as an 8-column scrollable grid; a full hold shows `OUTPUT FULL` and stops digging
+- no flatten pad: the machine is placed on the surface as-is, so the huge tracks sit on uneven ground
+
+### 13h. Test bench (portable battery power)
+Relevant parts:
+- `MACHINE_DEFS.test_bench` (`kind: 'generator'`, `battery: { life }`), `ITEM_DEFS.car_battery.battery`
+- machines.js `tickBattery()`; `layoutFor()` `def.battery` branch
+
+What this does:
+- no cables, no fuel chain: drop a car battery in the slot and it outputs 150/s for 180 s, then the cell is spent
+- stackable/pickable, so you can carry power to a test site (auto-links to machines within 2.2 m) and craftable from the pocket table
+
+### 13h-b. Hand crank (manual bootstrap power)
+Relevant parts:
+- `MACHINE_DEFS.hand_crank` (`kind: 'generator'`, `manual: true`, `energy.gen`, `capacity`), `ITEM_DEFS.hand_crank`
+- machines.js manual-generator branch in `update()`; `crank()` adds one turn's charge to the machine's own buffer on right-click (`open()` never opens a panel for manual machines)
+- recipe: iron ingots + copper ingot + wood, available from the pocket table
+
+What this does:
+- the first non-radioactive power source: no fuel, no battery, no rad
+- power is only made by right-clicking the machine: each click is one turn of the handle and adds a chunk of charge to its own buffer, so you can crank a few times and run a manufactory or crusher on the stored power
+- shows `CRANKING` / `IDLE` and the usual local-buffer power meter
+
+### 13i. The Wrapper (night enemy) and wasteland radiation
+Relevant parts:
+- `assets/models/enemies/wrapper.glb` — rigged monster with six clips (`idle`, `walk`, `run`, `attack`, `scream`, `slam`); `wrapper_diffuse.png` is the source texture (the GLB embeds it)
+- game.js `WRAPPER` / `Wrapper` class (extends `Walker`), `wrapperTemplate`, `cloneSkeleton` (SkeletonUtils)
+- game.js `WRAPPER_SPAWN` / `spawnWrapper()` / `updateWrapperSpawns()`
+- `TUNING.WASTELAND_RAD` in content.js; biome check in `doseRate()`
+- `doMine()` wrapper hit test; **G** spawns one for debugging
+
+What this does:
+- the Wrapper reuses the Walker's ground-following movement and adds a skinned model, animation mixer, yaw-facing and a distance state machine (walk > 18 m, run < 18 m, attack < 2.2 m, occasional distant scream); the model is authored Z-up at ~175 units, so it is scaled 0.01 and stands 1.75 m
+- spawning is rolled on a timer, not per frame: normal biomes only at night (`isDay()` false), 35% per 9 s, capped at 2; the wasteland spawns them 24/7 every 6 s, capped at 5 (they stay in wasteland when you are in wasteland)
+- they claw for bleeding damage, are despawned beyond 96 m, and take tool hits (a swing aimed at one hits it before terrain; ~5 hits kills it)
+- standing on wasteland ground adds `WASTELAND_RAD` (0.35 rad/s) on top of ambient, day or night, with a one-time `WASTELAND · HOT GROUND` notice when crossing the biome edge
+
+### 13j. C4 demolition
+Relevant parts:
+- `ITEM_DEFS.c4` (`c4: true`, stack 8); assembler recipe (`rdx`, detonator, plastic, timer module, card reader)
+- game.js `C4_FUSE` (5 s), `C4_RADIUS` (3.4 m), `C4_BLAST` (12 m), `c4Charges`, `c4Mesh()`
+- `useC4()` / `placeC4()` / `detonateC4()` / `updateC4()`, `beep()` / `boom()` / `c4Audible()`
+
+What this does:
+- right-click with C4 places a charge on any ground-ish surface within reach, then it beeps with an accelerating cadence for 5 s
+- detonation carves a 3.4 m sphere out of the density field, rolls the normal mining drops for every removed voxel, and spawns them on the crater floor
+- machines within the blast are removed, nearby charges chain-detonate, and the player takes up to 70 damage (burn) plus 45 rad at point blank, falling off to 12 m; the blast also shakes the camera
+- sandbox mode still places and detonates C4, but `hurt()` leaves health at max
+
+### 14. Inventory and pocket crafting table
+Relevant parts:
+- `inv = { hot, main, armor, dose, sel }`, `giveStack()`, `spawnDrop()`
+- drag & drop through `DragDrop` (drag-drop.js): every slot supports dragging out and in; shift-click still quick-moves/equips, and clicks on hotbar slots select them
+- pocket table: `CraftOptions` (craft-options.js), `tableOptions()`, `tableCraft()`, `invCounts()`, `takeInv()`, `bagRoomFor()`, `buildTable()`
+- `toggleInv()`; markup in `index.html`, styling in `assets/css/styles.css`
+
+What this does:
+- a hotbar + storage grid inventory, plus a small always-available option-based crafting table
+- the table only accepts `TABLE_OUTPUTS` recipes, giving a bootstrap route before any machine exists
+- no grid: every affordable recipe appears as a card in a small scrollable container (title left, icon right, inventory tooltip on hover); clicking spends ingredients straight from the bag, shift-click crafts as many as fit
+
+### 14a. Option-based crafting (pocket table + every recipe machine)
+Relevant parts:
+- `assets/js/craft-options.js` — `CraftOptions`, the shared scrollable card list
+- `content.js` `CRAFT_RECIPES` / `TABLE_RECIPES`; machine `recipes` (in/out, optional liquidIn/liquidOut)
+- `machines.js` `bagOptions()` / `startJob()` / `craftRecipe()` / `invCounts()` / `takeInv()` / `takeBagLiquid()` / `outputsHaveRoom()` / `giveOutputs()` / `addOutput()`
+- workbench-ui.js bridge hooks `craftOptions()` / `craftRecipe()` / `hasCraftList()` / `collect()`, the fixed craft rail and the `renderMachineWorkflow()` card
+- `layoutFor()` for `kind: 'crafting' | 'processor'` (no input slots)
+
+What this does:
+- replaces the old 5×4 / 3×2 shape grids: a recipe is offered as soon as the bag holds every ingredient (containers a recipe returns are netted out)
+- the list lives in a fixed vertical rail beside the machine window — same `CraftOptions` cards as the pocket table, presented like the power meter but wider. `hasCraftList()` shows it for the manufactory and every processor
+- the machine card's **ACTIVE / OUTPUTS / PROCESS / QUEUE** workflow is the crafting surface: the active recipe, the progress bar and the queued jobs are shown live, and finished items land in the machine's own 4 output slots — click one (or drag it) to collect
+- the manufactory runs a timed job: ingredients and `energy.craft` are spent up front, then `recipe.time` (10 s for machine blocks, 2 s for everything else) elapses before the output goes to an output slot
+- processors start a timed job: ingredients and liquid inputs are spent up front, the machine draws `energy.use` while the progress bar runs, and outputs (including `liquidOut` fills) land in the output slots on completion
+- a full output blocks the job (`OUTPUT FULL`) until the player collects; shift-click queues as many crafts as the bag and power allow
+
+### 14b. Global liquid system and containers
+Relevant parts:
+- `LIQUID_DEFS` in content.js (registry: `water`, `acid`, `gasoline`, `ethanol`, `heavy_water`, `nuclear_waste`, `radaway`; each has `name`, `color`, `acidic`, `rad`)
+- `assets/js/liquids.js` (`fill`, `drain`, `transfer`, `accepts`, `sanitize`, `volume`)
+- container items in `ITEM_DEFS` with `container: { capacity, tier, acidProof }`
+- `useLiquidContainer()` in game.js; water-filling now goes through the industrial tank activator and `MachineSystem.pump()`
+- `WATER_PUMP` in `MACHINE_DEFS` (`kind: 'pump'`, `pump: { amount, cost }`) and its `pump()` method in machines.js
+- `World.addWater()` / `World.useWater()` still exist but have no natural source and are unused by pouring
+- mixer/separator/reprocessor `liquidIn` / `liquidOut` recipes in content.js
+
+What this does:
+- a liquid lives on the stack (`stack.liquid = { id, amount }`), so a container carries its contents through slots, saves and ground drops
+- five tiered jerry cans (black → white) hold increasing volumes; each is `stack: 1` so one item = one tank
+- `accepts()` enforces the acid rule: acidic liquids only fit a container with `acidProof` (the white hazmat can); everything else is refused, so a wrong can can never be corroded
+- **water has only two sources**: target an industrial `liquid_tank` and right-click with a jerry can (`FILL CONTAINER`), or right-click a placed, powered `water_pump` while holding a can (5 L per 30 PU). There are no ponds, lakes, rivers, oceans or beaches to fill from
+- right-clicking with a filled can discards water (it cannot be poured onto the ground); acid/waste pours burn and dose you (`LIQUID_DEFS[id].acidic` / `.rad`), everything else just empties
+- the HUD paints a liquid level bar on container slots and the tooltip reports litres/capacity and the liner rating
+- the can's `.glb` is shown in first person (`loadContainerModel()` reuses the tool viewmodel rig)
+- **ethanol** (herb + water, liquid mixer) is a weaker generator fuel; the gas generator's `liquidFuel.burn` maps liquid id → litres/sec, so adding a fuel is one line
+- **heavy water** (isotope separator: lithium + water) is the reactor coolant — a can in the reactor's `coolant` slot adds `coolPerHeavy` cooling while draining
+- **nuclear waste** (fuel reprocessor, corrosive + hot) only fits the hazmat can, so spent-fuel work needs the white liner
+
+### 14c. Consumables and the cigarette viewmodel
+Relevant parts in game.js:
+- `useConsumable()` — right-click applies `consumable.dose`, `shieldTime`, `intake`/`intakeTime`, and `smoke`/`speed`
+- `smokeTime` / `smokeSpeed` state; decremented in the frame loop
+- `movePlayer()` speed line multiplies by `smokeSpeed` while `smokeTime > 0`
+- cigarette viewmodel loaded from `assets/models/items/cigarette.glb`, parented to the camera and toggled visible
+
+What this does:
+- using a **cigarette pack** lights a cigarette for 2 real minutes (120s) and grants +2% walk speed
+- the pack is the inventory item (`cigarette_pack`, icon from `cigarette_pack.glb`); the cigarette itself is a first-person model attached to the camera, positioned at the mouth and drawn over the world (`depthTest:false`)
+- re-using while smoking refreshes the timer and consumes another pack
+- **rad-intake drugs** use one non-stacking multiplier (`radIntakeMult` / `radIntakeTimer`, applied once in `doseRate()`): `neurozam_9` = 20% damping for 30 real minutes, `stim` = 75% for 4 minutes (short burn, expensive recipe on the medicine workbench)
+- `iodine_pill` gives a short armor shield (`shieldTime`); `unrad_juice` / `cup_noodles` clear dose outright
+- unrad is made from RadAway fluid: `chemical_reactor` makes `chelating_agent` (herb + carbon + iodine), the `liquid_mixer` dissolves it in water into a `radaway_iv` bag, and the `medicine_workbench` bottles it with plastic into `unrad_juice`
+
+### 14d. Recipe browser and recipe tree
+Relevant parts in game.js:
+- recipe browser: `recipePanel` markup in index.html; `RECIPE_MAKES` / `RECIPE_USES` maps, `addRecipe()`, `itemFilter()`, `RECIPE_FILTERS`
+- `paintRecipeFilters()` (buttons carry item counts), `paintRecipeList()`, `paintRecipeDetail()`, `selectRecipe()`, `toggleRecipes()`
+- recipe tree: `treePanel` / `treeBody` markup; `treeNodes()`, `treeStationTag()`, `openTree()`, `toggleTree()`, header drag handlers
+- pointer-lock integration: `toggleInv(force, relink)` — recipes close the inventory with `relink = false`; `visibleTree()` gates the pause overlay
+
+What this does:
+- a JEI-style look-up: item grid on the left (8 columns, filter counts, search), item detail on the right with "how to obtain" and "used in" recipe cards
+- a **START HERE** strip sits above the filter buttons for the first 30 real minutes of a world: it lists the opening build order (`STARTER_GUIDE` in content.js — carbon, ores, ingots, pick, hand crank, first machines) and each icon jumps to that item. Play time is stored in the save as `playTime`, so the strip stays gone once the opening is over
+- every grid icon has a station dot strip: green = pocket table, yellow = crafting bench, blue = machine
+- search: Enter selects the first match; Escape clears the search before it closes the panel
+- the detail header has a **TREE** button that opens a large draggable popup (`#treePanel`, drag its header) rendering the full dependency tree downward: each item expands into one row per recipe (station label, fuel flag), ingredients recurse to mined/found leaves; cycles (self-feeding fuel) break instead of looping; hovering follows the house white-outline style and clicking a node opens that item's detail in the browser
+- `T` in gameplay re-opens/toggles the tree of the last selected item (unlocks the pointer while open); Escape closes the tree first, then the browser
+
+### 14e. Minimap and fullscreen map
+Relevant parts in game.js / map.js:
+- `MapSystem` (map.js): tile cache, `revealAround()`, `drawMini()`, `drawFull()`, `serialize()` / `restore()`, `addBookmark()`, `noteDeath()`
+- wiring in game.js after the save is loaded: `mapSystem = new MapSystem({...})` with terrain/biome samplers, player/clock getters, machine list, industrial sites, save/notice and pointer-lock callbacks
+- keys: **B** drops a bookmark at the player's feet, **M** toggles the fullscreen map (also closes inventory/recipes/workbench)
+- `die()` calls `mapSystem.noteDeath(at.x, at.z)` before respawning
+
+What this does:
+- the corner minimap is north-up, 200 m across, and shows only chunks the player has seen (fog of war); it adds a 64 m reference grid, a facing cone, a 50 m-ish scale bar, a soft edge vignette and edge arrows for the nearest off-map bookmarks/deaths, so distant marks are never lost
+- terrain tiles are 16 m chunks rendered once from `terrainTrend` + `biomeAt` at 4 px/m (`TILE_PX = 64`): land colour from `BIOME_DEFS[id].top` with a true central-difference north-west hillshade and 8 m elevation contours. Water tiles are never painted (the world is dry)
+- layers: terrain, industrial sites, machines, death spots and bookmarks; reactors/generators get a restrained category tint and industrial pads gain a faint outline + type label when zoomed in. There is no WATER layer
+- the fullscreen map adds an adaptive world grid (`gridStep()`), bookmark labels (collision-aware), a player→selection dashed distance line, hover names for machines/markers, and a header cursor readout (position + biome)
+- fullscreen map: drag to pan, wheel/+/−/arrow keys/Home/F for zoom, pan, recenter and fit-explored, double-click to drop a bookmark at the cursor, PLAYER recenters, ADD HERE creates a bookmark at the map centre, FIT frames all seen chunks, click a marker to select it, rename bookmarks inline, delete selected markers, layer toggles persist per world
+- seen chunks, bookmarks, death spots and layer flags are saved in the world save (`map`); uncovering new ground or editing markers triggers a save
+- map tiles are a base-terrain approximation: player mining/building edits and cave voids are not re-baked into cached tiles (the tile cache is the performance ceiling; invalidate tiles if live edits must show)
+
+### 14f. Achievements and the NEXT STEP objective
+Relevant parts:
+- `content.js` `GUIDE_STEPS` (the opening build order) and `ACHIEVEMENT_TYPES` (10 categories with 4–13 tiers each: miner, builder, craftsman, engineer, machinist, survivor, irradiated, hunter, researcher, atomics)
+- `index.html` `#objective` (step counter, title, hint, requirement chips) and `#achievePanel` (header count, horizontally scrolling category grid, detail footer, hover tip)
+- game.js `playTime`, `guideIndex`, `paintGuide()`, `updateGuide()`, `migrateGuideFromMachines()`, `guideStepDone()`
+- `freshAchievements()`, `loadAchievements()`, `backfillAchievements()`, `achBump()`, `achCraft()`, `achievementValue()` / `achievementDone()` / `achievementProgress()`
+- `buildAchievements()`, `paintAchievements()`, `paintAchievementDetail()`, `updateAchievements()`, `openAchievements()` / `closeAchievements()`
+- pause-overlay `#achievementsBtn`
+
+What this does:
+- the **NEXT STEP** panel is a live objective tracker: every 0.2 s it checks the current `GUIDE_STEPS` entry against the bag or placed machines, paints `have/need` chips and auto-advances. It is hidden in sandbox and once the guide is finished, and progresses by id (`save.guide`) so a save can skip completed steps
+- the guide is separate from the recipe browser's **START HERE** strip: the strip is time-based (`playTime < STARTER_GUIDE_SECONDS`), while NEXT STEP is state-based
+- achievements track lifetime stats: `mined`, `placed`, `crafted`, `machines`, `kills`, `dosePeak`, `research` (blueprints), `fuel`, `walked`, plus `built.<machineId>` and `started.fission` / `started.fusion`
+- tiers are defined purely in data (`stat`/`need`, `built`, or `started`); the panel builds the category columns on first open, paints progress and unlock counts, shows a hover tooltip and a detail line for the selected tier
+- existing machines backfill `built`/`machines` on load, and unlocking or closing the panel saves the world
+- both systems survive save/load via `playTime`, `guide` and `achievements`; the achievements handle is `openAchievements()` from the pause overlay
+
+### 14g. Drag-and-drop item slots (shared across the whole UI)
+Relevant parts:
+- `assets/js/drag-drop.js` — `DragDrop` controller and `inventoryAdapter(grid, idx, items)`
+- game.js: the single `dragDrop` instance (`workbenchUI.dragDrop`), `buildSlots()` binding, `armorAdapter(slot)`, `quickMove()`, `showTip()` drag guard
+- workbench-ui.js: binds the workbench inventory sidebar, every layout `slot`, and the BWE hold; `refresh()` repaints after a drag
+- machines.js: `invAdapter(i)`, `slotAdapter(role)`, `slotAccepts()` / `slotTake()` / `slotPut()` / `slotRestore()`, and `drop()` / `take()` rebuilt on top of them
+- styles.css: `.dd-ghost`, `.dd-over`, `.dd-bad`, `.dd-dragging`
+
+What this does:
+- **one pointer drag system for every storage slot in the game**: inventory hotbar + storage, armor paper-doll, workbench inventory sidebar, every machine layout slot (inputs, fuel, rods, coolant, output, storage), and the BWE 64-slot hold
+- a slot is an adapter: `stack()` reads it, `take()` removes and returns the stack, `put(stack)` places it and returns leftovers (or the swapped-out stack), `restore(stack)` puts a stack back, and optional `accepts(stack)` gates highlighting. `DragDrop` owns the ghost, hit-testing, merge/swap rules and repaint callback
+- drag starts only after a 5 px move, so plain clicks still run the slot's own click handler (hotbar select, machine slot take/collect, shift-click quick move). The click that follows an actual drag is swallowed by a capture listener
+- merging respects each item's `stack` cap and never merges liquid containers; a swap is only allowed when the source slot would accept the displaced item, so dragging a rod/fuel/armor out onto a full grid slot refuses instead of corrupting the source
+- Escape, `pointercancel` and window blur cancel an active drag and restore the stack; closing the inventory or a workbench also cancels
+- after every take/drop the controller calls `onChange` → `syncBars()` plus `workbenchUI.refresh()`, so the source empties instantly and both UIs repaint without polling
+- the old click-to-carry cursor stack (`#cursorGhost`, `cursorStack`, `onSlotClick`) is gone; shift-click still quick-moves between bags and auto-equips armor
+- to add a new slot UI: call `dragDrop.bind(node, adapter)` with `{ stack, take, put, restore, accepts }`; for grid storage use `inventoryAdapter(grid, idx, ITEMS)`. Run `node assets/js/drag-drop.check.mjs` after changing adapter rules
+
+### 15. Armor and shielding plates
+Relevant parts:
+- `ARMOR_SLOTS` (`head/chest/legs/feet/hands`) exported from machines.js
+- `carryShield()` in machines.js
+- armor paper-doll strip in `index.html` / `styles.css`
+
+What this does:
+- five armor slots, shift-equipped from the inventory or drag-equipped onto the matching slot
+- armor pieces can hold shielding plates; drag a plate onto a worn piece (or onto a plate slot in the armor workbench) to install it
+- total shielding attenuates dose intake (`carryShield`)
+
+### 16. Machines, power networks and reactors
+Relevant parts in machines.js:
+- `MachineSystem` (construct, place, serialize, restore, load)
+- power network resolution and auto-linking cables; `rebuildCables()` draws each linked edge as three sagging strands (brown live, red neutral, green/yellow-striped earth; 8-segment quadratic droop, `LineSegments` per colour)
+- processor ticks (crusher, furnaces, former, press, assembler, crystallizer, …): every recipe machine crafts from the bag as an option-list job, with power drawn over the recipe's `time`; finished items go to the machine's own output slots (`outputsHaveRoom()` / `giveOutputs()` / `addOutput()`), where the player collects them from the panel
+- hand-cranked benches (no `energy` field, so zero power draw): gun_workbench, medicine_workbench
+- electronics chips (circuit_board, memory_module, data_drive, data_disk, cooling_fan, card_reader, optic_lens, timer_module) consumed by assembler recipes for the advanced machines
+- `tickReactor`, meltdown; `DEPLETED_OF[st.fuelId]` fuel mapping; `reactorRods()` / `reactorCooling()` for the five fuel-matched cooling-rod slots
+- excavator, radiation absorbers, geiger, machine storage
+- local power cells: `powerCap()` / `hasPowerPort()` / `chargeRate()` / `chargePower()` / `drawPower()` — every powered machine keeps a small buffer (about 3 s of draw, min 40 PU) topped up from the network at a finite flow (`max(50 PU/s, use × 2, capacity / 15 s)`), never in a single tick; storage/battery machines use their `capacity` instead
+- network energy does not teleport: generators add to the shared pool and machines charge from it over time; capacity machines fill from the frame's surplus (generation minus what the rest of the net drew) at their own flow rate, and a shortfall drains their buffers
+- powered machines draw from that local buffer, not directly from the shared network pool
+
+What this does:
+- places machine blocks in the world and wires them into power networks automatically
+- runs recipes on a tick, consuming/producing items from each machine's local power buffer
+- the local buffer is what the workbench power meter shows, and it persists in saves
+- reactors generate power from fuel; on meltdown they **explode and radiate** the area
+- the excavator mines and the absorbers/geiger let the player fight radiation
+- placement calls `flattenPad()` first: it levels a small blended pad into the density field so the machine sits on the ground instead of hovering on a slope (persists like any terrain edit), then bounds the pad/`hx`/`hz`/`top` from the model's bbox
+- machines are **solid**: `machineBlockedAt()` (game.js) blocks X/Z movement against each instance's box, combined with building colliders in `structureBlockedAt()`; placement is refused if the footprint would overlap the player
+
+### 16a. Reactor cooling rods and fuel matching
+Relevant parts:
+- `REACTOR_ROD_SLOTS` (5) in content.js; `ITEM_DEFS[*].rod` (`cool`, `absorb`, `mod`)
+- fuel `fuel.cool` — the core's ideal cooling target (a multiple of 10, reachable with ≤5 rods)
+- machines.js `reactorRods()` / `reactorCooling()` / `tickReactor()`
+- layoutFor() reactor branch: fuel + 5 `rod0..rod4` slots + liquid coolant + heat/match bars
+
+What this does:
+- the reactor has **five interchangeable cooling-rod slots**; each rod item adds `cool` to the core and may add `mod` (moderation) or `absorb` (neutron poison)
+- seven real-world-style rods exist: **graphite control** (`control_rod`, cheap, low cooling, +8% moderation), **beryllium reflector** (+12% moderation, 30 cool), **cadmium control** (50 cool, 22% absorption), **zirconium coolant** (70 cool, only 5% absorption), **hafnium control** (100 cool, 16% absorption), **boron carbide control** (150 cool, 28% absorption) and **heavy water coolant** (320 cool, +10% moderation, made in the assembler from a heavy-water can)
+- each fuel declares `fuel.cool`: TBU 20, TBU oxide 30, LEU-235 80, LEU-233 90, LEU-235 oxide 100, LEP-239 200, MOX-239 240, HEU-235 650, HEU-235 oxide 800, HEP-239 1600. Building a rod layout whose total cooling matches the fuel is the point of the machine
+- power is `fuel.power × coolingFactor × neutronFactor`: the first is ~1 inside ±5% of the target and falls off both ways, so **over-cooling costs power just like under-cooling**; the second rewards moderation and punishes absorber-heavy layouts. Heat gain is `fuel.heat − totalCool`; too little cooling climbs to `heatMax` and melts down
+- heavy water in the liquid coolant slot adds `coolPerHeavy` (and drains), so a can can act as a temporary trim rod. The old "water adjacent to the reactor" bonus is inert because there is no surface water any more
+- the panel shows `HEAT` and `COOLING MATCH` bars; status reads `OPTIMAL / OVERCOOLED / UNDERCOOLED <efficiency>%`, `NO COOLANT` or `OVERHEATING`, plus total cooling and live PU
+- recipes make sense: cadmium and hafnium are centrifuge by-products of lead/zirconium ore, boron carbide comes from boron + carbon in the alloy furnace, and rods are pressed with steel/zirconium cladding; the heavy-water rod is assembled with 8 L of heavy water
+- content.check verifies every fuel's target is reachable with the five slots, that rods are craftable, and that a matched layout out-produces an over-cooled one
+
+### 16b. Research blueprints (the mid/late-game gate)
+Relevant parts:
+- `MACHINE_DEFS.research_lab` (processor) and its recipes
+- `blueprint_reactor` / `blueprint_fusion` / `blueprint_scrubber` / `blueprint_containment` in `ITEM_DEFS`
+- `assembler` recipes for `research_lab`, `fission_reactor`, `fusion_reactor`, `atmospheric_scrubber`, the containment suit and the plasma drill
+
+What this does:
+- the lab turns **hot samples** into one-use blueprints: enriched uranium (`u235`) for the fission reactor, reactor-derived plutonium (`pu239`) for fusion, `polonium` for the scrubber, and a shielding plate for the containment suit
+- the fission reactor recipe now also needs `blueprint_reactor`, so the reactor can no longer be rushed straight off the assembler
+- fusion is deliberately chained behind a *running* fission reactor: `pu239` only comes from reprocessing/centrifuging spent fuel, so the fusion blueprint cannot be made before the fission tier has been operated
+- the containment suit is a single assembler job that outputs all five armour pieces from one blueprint, and the same blueprint unlocks the plasma drill
+- the lab is itself an assembler build, so the progression is: assembler → centrifuge → lab → reactor → reprocessing → fusion/scrubber/containment
+
+### 16c. Fusion reactor and the atmospheric scrubber (endgame)
+Relevant parts:
+- `MACHINE_DEFS.fusion_reactor` (`kind: 'reactor'`, `heatMax: 2000`, `coolPerHeavy: 600`)
+- `fusion_fuel` (isotope separator) and `depleted_fusion` (fuel reprocessor)
+- `MACHINE_DEFS.atmospheric_scrubber` (`kind: 'scrubber'`, `ambientCut`, `filter`)
+- machines.js `tickScrubber()` / `ambientCut()`; game.js `doseRate()` uses `machineSystem.ambientCut()`
+
+What this does:
+- **fusion fuel** is made in the isotope separator from lithium, boron, a fuel casing and 12 L of heavy water; it burns for 3200 PU but wants the full 1600 cooling (all five heavy-water coolant rods)
+- **depleted fusion fuel** is recycled in the fuel reprocessor back into lithium and boron, closing the loop
+- the **atmospheric scrubber** burns 200 PU/s and one `filter_cartridge` every 120 s, and cuts 15% off the ambient dose rate while running; the total cut is capped at 85%, so a scrubber farm makes the late ambient ramp survivable but never free
+- filters are assembler-made from carbon mesh, lead plates and plastic; scrubbers are a large power sink for a fusion grid
+- the reactor panel already shows heat/cooling match for both reactor kinds, and the scrubber panel shows its filter slot, status and filter progress
+
+### 16d. Water sources: tanks and the water pump
+Relevant parts:
+- `MACHINE_DEFS.water_pump` (`kind: 'pump'`, `energy.use: 30`, `pump: { amount: 5, cost: 30 }`); item `water_pump` (`workbench: 'water_pump'`)
+- pocket-table recipe: 4 iron ingots + 2 copper ingots + 2 wood (`TABLE_OUTPUTS` includes `water_pump`)
+- machines.js `pump(inst)`; `open()` and the placed activator both route a pump right-click straight to it (it never opens a panel)
+- industrial `liquid_tank` parts: the `industrialCreate()` activator with the `FILL CONTAINER` label
+
+What this does:
+- the **water pump** draws groundwater into the jerry can currently in the selected hotbar slot: one right-click = 5 L, costing 30 PU from the machine's local power buffer (so it must be on a powered network)
+- it refuses when no container is held, the can cannot hold water (e.g. a fuel carton), or the can is full
+- **industrial tanks** are the free but location-bound source: they spawn beside some buildings/garages and fill a held can to capacity on right-click
+- no other water source exists: there is no surface water to collect, and pouring a can only discards the water
+
+### 17. Workbench UI panels
+Relevant parts in workbench-ui.js:
+- bridge-driven `WorkbenchUI` (HTML panel, inventory sidebar)
+- element types `label` / `slot` / `progress` / `arrow` / `bwe`; legacy `recipes` / `power` elements are skipped
+- layouts from `assets/ui/<id>.json`, else `layoutFor(def)`
+- fixed `#powerMeter` meter (RAD-bar markup/styles) in the flex frame left of the panel, stretching to the panel's height
+- fixed `.workbench-craft-rail` immediately beside the meter: the shared vertical `CraftOptions` card list for every option-based workbench (`hasCraftList()`)
+- `renderMachineWorkflow()` — the machine card for `crafting` / `processor` benches: **ACTIVE** (job + icon), **OUTPUTS** (the machine's `outputN` slots; click or drag to collect), the **PROCESS** bar and the **QUEUE** list. This card is the crafting surface for these machines, so their layouts only need labels/progress
+- `renderPower()` / `renderDynamic()` / `renderCraftRail()` drive the meter, process bars and the recipe rail
+- slot elements and the sidebar are bound to the shared `DragDrop`; the workflow output cells use the same `slotAdapter`; `refresh()` forces an inventory + dynamic repaint after a drag
+
+What this does:
+- renders a machine's interface as an HTML overlay driven by the JSON layout
+- one generic implementation serves every machine; the duplicated layout `header` and `power` elements are skipped
+- every layout slot and sidebar slot accepts drag-in and drag-out through the same controller as the inventory; workflow output cells are take-only and click-to-collect
+- crafting and processor panels show the **ACTIVE / OUTPUTS / PROCESS / QUEUE** workflow card; finished jobs wait in the output slots (a full output reports `OUTPUT FULL` and pauses the job)
+- empty item slots render blank (no `EMPTY` text)
+- the power meter reads the open machine's local buffer through `powerView()` and is hidden for machines without a power port
+- `ble.html` is the grid editor for authoring new layouts
+
+### 18. Persistence, death and debug hook
+Relevant parts:
+- `SAVE_KEY` (`idte.save.v1`, or `idte.save.v2.<worldId>` for worlds created in the main menu), `World.save(player)` / `World.load()`
+- stored fields: `seed`, density `edits`, `player`, `inv` (hot/main/sel/dose/armor), `vitals` (hp/hunger/wounds/immunity), `playTime`, `guide`, `achievements`, `day`/`dayT`/`timeLock`, `machines`, `pipes`, `map` (seen chunks + bookmarks + death spots + layers), `torches`
+- `window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, machineSystem, pipeSystem, mapSystem, give, giveStack, Liquid, LIQUIDS, caveAt }` debug handle
+
+What this does:
+- serialises terrain edits, inventory, clock (including `/time allday` lock), machines, pipes and torches to localStorage and restores them (old saves without `inv` start empty)
+- the debug handle exposes the catalogue and live state for console testing; it is removable if unwanted
+
+### 18b. Developer command line
+Relevant parts in game.js / index.html / styles.css:
+- `#cmd`, `#cmdInput`, `#cmdSug` markup and styles; `cmdOpen` state
+- `openCmd()` / `closeCmd()`, `runCmd()`, `resolveItem()`, `nearestItems()`, `editDist()`
+- `/tp` finder: `TP_TARGETS`, `TP_RINGS`, `nearestCaveOf()`, `nearestIndustrialOf()`, `nearestMachineTarget()`, `caveLanding()` / `industrialLanding()` / `standYAt()`, `nearestTargets()`, `resolveTarget()`, `teleportTo()`
+- `timeLock` — `/time allday` freeze value (null = clock running)
+
+What this does:
+- pressing `'` or `` ` `` opens a small bottom console (and releases pointer lock / pauses movement); sandbox worlds only
+- closes via Escape, Enter on an empty box, or clicking outside — Enter/click are real gestures so pointer lock resumes instead of falling into the pause overlay
+- `/give <item> [count]` adds items; `<item>` accepts an id, an exact name, or the closest fuzzy match
+- `/tp <type>` (alias `/goto`) teleports to the nearest deterministic world feature and closes the console: `cave` / `cavern` / `noodle` (lands on the cave floor), `building` / `garage` / `container` / `tank` / `industrial` (lands on the flat pad just outside it), or `machine` (next to the nearest placed machine). Types also match by name/alias/fuzzy spelling, so `/tp liquid tank` works
+- `/time` reports the day + clock; `/time set <day> [t]` (or `/time <day>`) changes them (and releases any lock)
+- `/time allday` toggles a freeze at noon (`clock.t = DAY_SECONDS * 0.25`); the frame loop holds `clock.t` and stops advancing the day while locked
+- ArrowUp/Down walk command history; the dropdown shows the closest item or `/tp` destination names while typing, click or Tab to complete (an empty `/tp ` lists every destination)
+
+### 18c. Settings (main menu + pause overlay)
+Relevant parts:
+- `idte.settings.v1` (`SETTINGS_KEY`), shared by menu.js and game.js
+- main menu: `#menuDist` / `#menuHud` / `#menuVsync` / `#menuVolume` (`paintSettings()`), game.js imports the values at boot
+- pause overlay: `#overlay .view-settings` rows `data-setting="distance"` / `"hud"` / `"vsync"` / `"volume"`, wired by `syncMenu()` and the per-row click handler
+
+What this does:
+- **render distance** (2/3/4/6 chunk columns) applies live
+- **INFO HUD** (fps/frame breakdown/position/dose line in `#hud`) is **off by default**; when off the stats are hidden but gameplay notices (`noticeMsg`) still show. Hiding also resets the perf counters so they don't accumulate
+- **VSYNC** toggles the `requestAnimationFrame` gate, and **VOLUME** scales the footstep mix (menu and pause overlay share both)
+- all four settings persist globally (not per-world) in localStorage
+
+## Important code anchors
+
+### Survival layer
+- `TUNING`, `ITEM_DEFS`, `MACHINE_DEFS`, `CRAFT_RECIPES`, `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor()`: content.js
+- `MachineSystem`: placement, power, reactor meltdown, excavator, serialize/restore
+- `clock` / `dayTier()` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
+- `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
+- `BARE_HANDS` / `mineOreDrop()` / `hasGardeningGloves()`: mining and gating
+- `torches` / `lightAt()` / `addTorch()` / `tryTorchPlace()`: placeable lights (torch, lantern, floodlight)
+- `patchMachineMaterial()` / `refreshMachineLights()`: torch/lantern/floodlight light on machine models
+- `TOOL_MODELS` / `updateViewmodel()` / `triggerSwing()`: held tool viewmodel and swing animation
+- `chopTarget()` / `chopTree()` / `updateChop()`: tree chopping, toppling and wood drops
+- `createFootsteps()` / `surfToCategory()` (footsteps.js): surface-mapped step audio
+- `inv` / `tableCraft()` / `buildTable()` / `toggleInv()`: inventory and option-based pocket table
+- `DragDrop` / `inventoryAdapter()` / `canDrop()`: shared pointer drag-and-drop for every slot (ghost, merge/swap, click suppression)
+- `CraftOptions` / `craftOptions()` / `startJob()` / `craftRecipe()`: shared scrollable recipe-card list for the pocket table and every recipe machine (fixed side rail), with timed jobs and the ACTIVE/OUTPUTS/PROCESS/QUEUE machine card
+- `outputsHaveRoom()` / `giveOutputs()` / `addOutput()` / `renderMachineWorkflow()` / `collect`: machine output slots and click-to-collect
+- `ARMOR_SLOTS` / `carryShield()`: armor and shielding
+- `LIQUID_DEFS` / `liquids.js` (fill/drain/accepts/transfer): liquid types and container rules
+- `useLiquidContainer()`: acid refusal and discarding water; water is filled from tanks/pumps instead
+- `water_pump` / `MACHINE_DEFS.water_pump` / `pump()`: powered groundwater pump (5 L per 30 PU into the held can)
+- `liquid_tank` / `industrialCreate()`: industrial water tank with the `FILL CONTAINER` activator
+- `useConsumable()` / `smokeTime` / `smokeSpeed`: consumable effects and the cigarette buff/viewmodel
+- `radIntakeMult` / `radIntakeTimer` / `doseRate()`: NEUROZAM-9 and STIM intake damping
+- `itemModelIcon()` / `ITEM_MODEL_ICON_EXCLUDE`: automatic 3D icon/prop source (blacklist)
+- `flattenPad()` / `machineBlockedAt()` / `structureBlockedAt()`: machine ground pad and machine collision
+- `updatePlacePreview()` / `buildPlaceGhost()` / `hidePlaceGhost()`: flashing translucent workbench place-preview
+- `resolveInteractTarget()` / `useInteractable()` / `raySphereHit()`: crosshair interact prompt + open (REACH-limited)
+- `timeLock` / `/time allday`: frozen-clock sandbox command
+- `TP_TARGETS` / `nearestCaveOf()` / `nearestIndustrialOf()` / `teleportTo()`: `/tp` destination finder + dropdown (`cave`, `cavern`, `noodle`, `building`, `garage`, `container`, `tank`, `industrial`, `machine`)
+- `RECIPE_MAKES` / `paintRecipeList()` / `paintRecipeDetail()`: recipe browser (station dot strips, filter counts, Enter/Escape search)
+- `treeNodes()` / `openTree()` / `treePanel` / `T` key: draggable recursive recipe tree with white connector lines
+- `rebuildCables()`: sagging three-strand cable rendering in machines.js
+- `REACTOR_ROD_SLOTS` / `reactorRods()` / `reactorCooling()` / `fuel.cool`: five fuel-matched cooling-rod slots, over/under-cooling power curve and heat balance
+- `research_lab` / `blueprint_*` / assembler gates: blueprints gate the reactor, fusion, scrubber and containment tiers
+- `fusion_reactor` / `fusion_fuel` / `depleted_fusion` / isotope separator recipe: post-fission fuel tier
+- `atmospheric_scrubber` / `tickScrubber()` / `ambientCut()` / `filter_cartridge`: powered endgame ambient-dose reduction
+- `hand_crank` / `crank()` / `open()`: manual bootstrap generator (right-click turns the handle and charges its own buffer; it never opens a panel)
+- `STARTER_GUIDE` / `STARTER_GUIDE_SECONDS` / `paintStarterGuide()` / `playTime`: 30-minute opening build-order strip above the recipe filters
+- `GUIDE_STEPS` / `guideIndex` / `paintGuide()` / `updateGuide()` / `migrateGuideFromMachines()`: state-driven NEXT STEP objective card (inventory/machine checks, auto-advance, saved by id)
+- `ACHIEVEMENT_TYPES` / `freshAchievements()` / `achBump()` / `achCraft()` / `achievementProgress()` / `paintAchievements()` / `openAchievements()`: lifetime-stat achievements panel with data-defined tiers
+- `vitals` / `WOUNDS` / `hurt()` / `addWound()` / `cureWounds()` / `updateVitals()` / `paintVitals()`: health, hunger, wound effects and HUD meters
+- `industrialSite()` / `industrialPadAt()` / `industrialUpdate()` / `buildWallMask()` / `industrialBlockedAt()`: deterministic industrial buildings, flattened pads and per-wall collision
+- `VEG_SPECIES` / `VEG_LAYERS` / `vegCell()` / `vegResolve()` / `vegStream()` / `vegUpdate()` / `_vegHarvested`: deterministic instanced vegetation, pickups and harvesting
+- `useC4()` / `placeC4()` / `detonateC4()` / `updateC4()` / `C4_FUSE` / `C4_RADIUS`: armed demolition charges, crater carving and blast damage
+- `idte.settings.v1` / `syncMenu()` / `paintSettings()`: render distance, INFO HUD, VSYNC and VOLUME settings
+- `intro` / `maybeShowIntro()` / `openIntro()` / `closeIntro()`: one-time field-manual modal on the first survival load (points at the NEXT STEP card; reopenable from the pause overlay via `manualBtn`); seen state lives in `idte.intro.v1.<worldId>`
+- `World.save()` / `World.load()`: persistence (including `map`)
+- `MapSystem` / `revealAround()` / `addBookmark()` / `noteDeath()` / `drawMini()` / `drawFull()`: minimap and fullscreen map (B = bookmark, M = map)
+- `map.check.mjs`: pure coordinate/chunk-key assertions (`node assets/js/map.check.mjs`)
+
+### Terrain / climate
+- climateAt(): noise-driven climate values
+- biomeWeights(): land biome assignment (no ocean/shallow/beach IDs)
+- terrainTrend(): overall world heightfield (land plate only)
+- pondHere(): always `false`; surface water cannot seed
+- terrainDensity(): density field for solid/air decisions
+- caveSite() / buildCaveSite() / caveCarveAt(): deterministic sinkhole → tunnel → cavern caves plus buried noodle networks and hashed ceiling/floor spikes (tuning: `CAVE_CELL`, `CAVE_CHANCE`, `CAVE_SINK`, `NOODLE_CHANCE`, `NOODLE_DEPTH`)
+
+### Water (dormant)
+- WaterSim class: retained finite-volume sim, never seeded
+- step(): one relaxation pass for a water column set (unused)
+- update(): runs water settling while honoring budgets (no-op)
+- rebuildWater(): creates the visible water mesh (always empty)
+
+### World logic
+- World constructor
+- World.update(): streaming around the player
+- World.processDirty(): terrain mesh rebuild budget
+- World.processWaterDirty(): water rebuild budget (stays empty)
+- World.waterAt(), World.isUnderwater(): return 0 / false with no surface water
+
+### Render tuning
+- waterMaterial: transparent water shader (dormant)
+- material.onBeforeCompile: terrain surface shader and underwater fog blending (fog unreachable)
+
+## Design notes
+
+- The terrain is not handcrafted; it is generated from noise and climate functions.
+- The world uses chunk streaming so the game can stay open and performant.
+- Water is derived from terrain and pond rules rather than stored as a giant static ocean map.
+- The code is organized around a procedural terrain engine, not a conventional static level layout.
+
+## Practical workflow for editing
+If you want to change the world feel, the best places to start are:
+1. climateAt() / biomeWeights() for biome distribution
+2. terrainTrend() for coastline and world heights
+3. `CAVE_CELL` / `CAVE_CHANCE` / `CAVE_SINK` and `buildCaveSite()` for sinkhole frequency, tunnel shape and cavern size; `NOODLE_CHANCE` / `NOODLE_DEPTH` / `NOODLE_REACH` for the buried closed-off tunnel networks; the spike block in `buildCaveSite()` for stalactite counts/sizes; `terrainDensity()` for overhang/underwater volume behavior
+4. WaterSim.update() / step() for water performance and motion
+5. rebuildWater() for water edge shape and shoreline visibility
+
+For the survival/gameplay layer:
+1. `content.js` (`ITEM_DEFS` / `MACHINE_DEFS` / recipes / `TUNING`) for anything data-shaped — content, costs, radiation curve, day length
+2. `TABLE_OUTPUTS` + `CRAFT_RECIPES` to move a recipe between the pocket table and the crafting bench
+3. `LIQUID_DEFS` + `container` item fields to add liquid types or new containers; `liquids.js` holds the rules
+4. `ambientRad()` / `radStage()` / `doseRate()` for the radiation pressure curve; dose is in rad and the meter is scaled to `RAD_LETHAL_DOSE` (600 rad, with LD50 at 450)
+5. `machines.js` processor/reactor/excavator ticks for machine behaviour; tune reactor balance with `fuel.cool` and `rod.cool/absorb/mod` in content.js (targets must stay multiples of 10 reachable with 5 rods)
+5b. the late tier is data-driven too: blueprint recipes live in `research_lab`, the assembler recipes consume them, `fusion_fuel` is an ordinary `fuel` item and the scrubber is just a machine with `ambientCut` + `filter`
+6. machine JSON layouts (or `layoutFor()`) for a machine's panel — power is not a layout element; the meter is automatic and shows the machine's local buffer. Recipe machines keep their options in the fixed craft rail and render their ACTIVE/OUTPUTS/PROCESS/QUEUE card, so their layouts only need labels/progress, never input/output slots
+7. drop item art at `assets/models/items/<id>.glb` and it becomes both the icon and the held prop — no list to edit; add to `ITEM_MODEL_ICON_EXCLUDE` only to opt out, and bump `ICON_CACHE_KEY` after changing art. For a flat PNG instead, `assets/images/items/<id>.png` **must** be referenced via `icon:` in that item's `ITEM_DEFS` entry.
+8. always re-run `node assets/js/content.check.mjs` after touching the catalogue — it fails on unobtainable machine blocks, bad recipes, out-of-bounds layouts, or a model file that doesn't map to its item
+8b. `node assets/js/drag-drop.check.mjs` self-checks the shared slot adapter's take/merge/swap/restore rules
+9. a new light source is just `torch: true` + `light: { mount, range, power, color }` on an `ITEM_DEFS` entry (see torch/lantern/floodlight) — the placement, bake and machine-lighting paths pick it up automatically
+10. map visuals live in `assets/js/map.js`: `_renderTile()` owns land/water colouring and `drawFull()` owns markers/layers; new marker layers need a getter in the `MapSystem` options and a draw branch. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
+
+## Summary
+This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:
+
+1. **Engine** — procedural world generation, deterministic cave systems (surface sinkholes → tunnels → caverns), chunk streaming, terrain density, water sim and rendering (game.js), plus the main menu/world select (menu.js) and pipes (pipes.js).
+2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. The whole UI shares one black-alpha, borderless skin.
+
+Most important files:
+- [index.html](index.html)
+- [assets/css/styles.css](assets/css/styles.css)
+- [assets/js/game.js](assets/js/game.js) — engine + survival integration
+- [assets/js/content.js](assets/js/content.js) — all game content data
+- [assets/js/menu.js](assets/js/menu.js) — main menu, world select, settings
+- [assets/js/drag-drop.js](assets/js/drag-drop.js) — shared drag-and-drop for every item slot
+- [assets/js/liquids.js](assets/js/liquids.js) — global liquid/container rules
+- [assets/js/machines.js](assets/js/machines.js) — machine/power/reactor runtime
+- [assets/js/pipes.js](assets/js/pipes.js) — decorative pipe grid
+- [assets/js/map.js](assets/js/map.js) — minimap, fullscreen map, bookmarks and death spots
+- [assets/js/workbench-ui.js](assets/js/workbench-ui.js) — machine panel renderer
+- [WORKBENCHES.md](WORKBENCHES.md) — extension guide for content and layouts
+
+## Long-distance rendering plan (2000 chunks)
+
+The render-distance setting is measured in 16 m chunks. A value of 2000 means a
+32 km radius. Do not use this value to allocate interactive `Chunk` objects:
+the existing square streamer would otherwise request 16,008,001 XZ columns and
+over 64 million chunk meshes across the four vertical layers.
+
+### Target architecture
+
+Keep three distances separate:
+
+- **Interactive radius:** at most 6 chunks. These are existing editable,
+  collidable, fully shaded chunks, with vegetation and nearby site interaction.
+- **Terrain LOD radius:** a separately streamed coarse terrain representation.
+  It is visual only: no mining, collision, water simulation, lighting bake,
+  vegetation, or machine interaction.
+- **View horizon:** user setting, 2–2000 chunks (32 m–32 km), used for camera
+  clipping and atmospheric fog. This is not a promise of full detail.
+
+The far representation should be deterministic from world seed and the same
+terrain/biome functions as the near world. Build a quadtree or nested clipmap of
+terrain tiles: dense near the interactive boundary, progressively coarser with
+distance, and capped by a fixed vertex and memory budget. Keep tile edges
+stitched to avoid cracks, use terrain skirts where needed, and blend the far
+material into near terrain and sky fog. Rebuild only tiles affected by player
+movement; batch sampling and mesh creation across frames or workers. Cancel
+stale work after rapid movement, prioritize visible/near tiles, and evict distant
+tiles by budget. The seam must account for player edits: edited columns inside
+the LOD overlap need a small invalidation/update path, while edits outside the
+interactive region cannot occur.
+
+Industrial structures should remain fully streamed only nearby. At mid range,
+optionally show low-cost site impostors; omit vegetation at the far horizon.
+Keep far terrain out of collision and gameplay queries. Ensure fog and camera
+far planes are clamped to valid WebGL depth ranges and preserve underwater fog
+behavior. Do not make 2000 the default until the LOD path is profiled on ordinary
+integrated graphics; expose it as an opt-in maximum.
+
+### Build sequence
+
+1. Decouple the user horizon from the interactive chunk radius and guard all
+   allocations against the horizon value.
+2. Add a coarse deterministic terrain tile generator and bounded streamer with
+   near-to-far priorities, cancellation, cache limits, and disposal.
+3. Add LOD transitions, edge stitching, edit invalidation in the overlap, and
+   distance-based material/fog blending.
+4. Extend terrain visuals to distant industrial sites only if the cost fits the
+   budgets; keep gameplay systems on the existing near streamer.
+5. Profile generation time, draw calls, memory, and visual seams while moving
+   across chunk boundaries and changing settings from 6 to 2000.
+
+The first implementation milestone separates the setting from chunk allocation
+and establishes the 2000-chunk horizon controls. The far-terrain tile streamer
+and its visual transition are still required before 2000 yields a filled-in
+landscape rather than a long fog horizon.
+
+
+
+# Machines & workbench interfaces may be outdated.
+
+All content is data. `assets/js/content.js` holds the item catalogue, the machine
+definitions and their recipes. `assets/js/machines.js` is the runtime (placement,
+power networks, reactors, the excavator, persistence). `assets/js/workbench-ui.js`
+renders whatever layout a machine points at. `assets/js/game.js` supplies the
+world, player, inventory and radiation model through the machine system's `ctx`.
+
+## Add an item
+
+Add an entry to `ITEM_DEFS` in `content.js`:
+
+```js
+my_item: { code: 'MI', name: 'MY ITEM', stack: 99, rad: 0.2, block: false },
+```
+
+Useful fields: `block`, `tool`, `torch`, `plate` (`radShield`), `armor`
+(`slot`, `radShield`, `plateSlots`), `consumable` (`dose`, `shieldTime`),
+`fuel` (`power`, `heat`, `cool`, `lifetime`, `rad`), `rod` (`cool`, `absorb`,
+`mod`), `workbench` (makes it placeable as that machine), `icon` (real PNG
+path), `harvested`.
+
+`fuel.cool` is the reactor's ideal total cooling for that fuel; `rod.cool` is
+what the rod contributes per slot, `rod.absorb` is neutron poison (0..1) and
+`rod.mod` is moderation. Rod items are the only things accepted by the reactor's
+`rod0..rod4` slots.
+
+Icons: `assets/images/items/<id>.png`. Missing files fall back to a generated
+code tile, so the game runs before any art exists.
+
+## Add a machine
+
+1. Add a `MACHINE_DEFS` entry: `id`, `kind`, `name`, `model`, `layout`, `label`,
+   `height`, plus `energy` and `recipes` where relevant.
+2. Optionally drop a real model at `assets/models/workbenches/<id>.gltf` and a
+   layout at `assets/ui/<id>.json`. Both are optional: a missing model becomes a
+   placeholder box, a missing layout is generated by `layoutFor(def)`.
+3. Add the matching block item with `workbench: '<id>'` so it can be placed.
+
+`kind` drives the runtime: `crafting`, `armor`, `processor`, `reactor`,
+`generator`, `excavator`, `absorber`, `scrubber`, `cable`, `storage`, `geiger`.
+
+Recipes are shapeless maps:
+
+```js
+recipes: [ { in: { uranium: 1 }, out: { crushed_uranium: 2 }, time: 3, rad: 0.4 } ]
+```
+
+`time` is seconds, `rad` is emitted while running, `fuel: true` marks a fuel-burn
+recipe. Bag crafting recipes live in `CRAFT_RECIPES` (`{ out:{id:n}, needs:{id:n} }`)
+and are option-based: the recipe appears as a card the moment every ingredient is
+in the bag. Every `CRAFT_RECIPES` entry also gets a `time` at load (10 s when the
+output is a machine block, 2 s otherwise); the manufactory runs it as a timed job
+and drops the result into its output slots.
+
+The inventory's **pocket crafting table** (always available) matches the subset
+listed in `TABLE_OUTPUTS` — the bootstrap recipes: primitive smelting, torch,
+graphite, first tools/gloves, and the first machine blocks (manufactory, armor
+workbench, crusher, electric furnace, cable). Add an id there to make a
+`CRAFT_RECIPES` entry craftable from the inventory.
+
+Progression rule: a machine block is **never** only craftable inside another
+machine. The bootstrap blocks (and the assembler itself) live in `CRAFT_RECIPES`
+so they can always be made from the bag; the assembler handles the advanced tier.
+Bare hands can mine dirt/grass/stone, so a fresh world can gather the ore and
+carbon for the first ingots. `content.check.mjs` fails if any machine block
+becomes unobtainable.
+
+## Design a layout
+
+Open `ble.html` through the project's web server, place elements, export JSON into
+`assets/ui/<id>.json`. Element types are `label` (`text`, `size`), `slot` (`role`,
+`label`), `progress` (`label`, `color`), `power`, `recipes` and `arrow`. Slot roles
+the runtime understands: `armor`, `plate0..3`, `input0..3`, `fuel`, `output0..N`,
+`coolant` and `rod0..rod4` (reactor cooling rods). A reactor progress element with
+id `match` reads the cooling-match value instead of the process bar.
+A `recipes` element (e.g. `{ type: 'recipes', x: 0, y: 1, w: 12, h: 5 }`) renders
+the scrollable option-based crafting list for `kind: 'crafting'` benches.
+
+Crafting/processor panels ignore their layout `status`/`progress` elements and
+show the generated ACTIVE/OUTPUTS/PROCESS/QUEUE workflow card instead. Their
+outputs live in `output0..N` machine slots (4 by default) and are collected from
+the OUTPUTS card; layout `output` slots are only needed for machines that draw
+their own panel (e.g. the excavator).
+
+## Radiation model
+
+Carried hot items, running machines and the day-based ambient pressure add dose;
+armor, shielding plates and radiation absorbers remove it. The curve lives in
+`TUNING.RAD_STAGES` in `content.js` (slow → blur → death at 600). Death drops
+everything the player carried.
+
+## Check your content
+
+```
+node assets/js/content.check.mjs
+```
+
+Validates every recipe item, machine/block pairing, fuel depletion, layout bounds
+and the radiation curve.

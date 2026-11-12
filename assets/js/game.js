@@ -1,7 +1,8 @@
     import * as THREE from 'three';
     import { WorkbenchUI } from './workbench-ui.js';
     import { CraftOptions } from './craft-options.js';
-    import { ITEM_DEFS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate } from './content.js';
+    import { DragDrop, inventoryAdapter } from './drag-drop.js';
+    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES } from './content.js';
     import * as Liquid from './liquids.js';
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
@@ -19,6 +20,11 @@
 
 
     const CHUNK_SIZE = 16;
+    // The settings value controls the visible horizon in chunks. Interactive
+    // terrain remains tightly bounded until the far-terrain LOD streamer is
+    // available; never feed the horizon value directly into chunk allocation.
+    const MAX_RENDER_DISTANCE = 2000;
+    const DETAIL_CHUNK_RADIUS = 6;
     const SAMPLE_SIZE = CHUNK_SIZE + 2;
     const VERTEX_SIZE = CHUNK_SIZE + 1;
     const S2 = SAMPLE_SIZE * SAMPLE_SIZE;
@@ -37,7 +43,7 @@
     try {
       const s = JSON.parse(localStorage.getItem('idte.settings.v1')) || {};
       const v = +s.renderDistance;
-      if (Number.isFinite(v) && v >= 1) viewRadius = v;
+      if (Number.isFinite(v) && v >= 1) viewRadius = Math.min(MAX_RENDER_DISTANCE, v);
       showInfoHud = !!s.infoHud;
       const vol = +s.volume;
       if (Number.isFinite(vol)) masterVolume = Math.min(1, Math.max(0, vol));
@@ -201,22 +207,15 @@
       let w = _biomeCache.get(k);
       if (w) return w;
 
-      const { t, h, c } = climateAt(sx, sz);
+      const { t, h } = climateAt(sx, sz);
 
-
-      if (c < -0.72) w = [{ id: B.DEEP_OCEAN, w: 1 }];
-      else if (c < -0.46) w = [{ id: B.OCEAN, w: 1 }];
-      else if (c < -0.20) w = [{ id: B.SHALLOW, w: 1 }];
-      else if (c < -0.02) w = [{ id: B.BEACH, w: 1 }];
-      else {
-
-        const scored = LAND_ANCHORS.map(([id, at, ah]) => {
-          const dt = t - at, dh = h - ah;
-          return [id, 1 / (dt * dt + dh * dh + 0.02)];
-        }).sort((a, b) => b[1] - a[1]).slice(0, 3);
-        const sum = scored[0][1] + scored[1][1] + scored[2][1];
-        w = scored.map(([id, s]) => ({ id, w: s / sum }));
-      }
+      // No oceans or beaches: every column is land, chosen by climate only.
+      const scored = LAND_ANCHORS.map(([id, at, ah]) => {
+        const dt = t - at, dh = h - ah;
+        return [id, 1 / (dt * dt + dh * dh + 0.02)];
+      }).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const sum = scored[0][1] + scored[1][1] + scored[2][1];
+      w = scored.map(([id, s]) => ({ id, w: s / sum }));
       _biomeCache.set(k, w);
       return w;
     }
@@ -246,7 +245,7 @@
       let v = _trendCache.get(k);
       if (v !== undefined) return v;
 
-      const { c, e } = climateAt(sx, sz);
+      const { e } = climateAt(sx, sz);
       const w = biomeWeights(sx, sz);
 
       let base = 0, amp = 0, rough = 0, land = false;
@@ -260,26 +259,21 @@
       const detail = fbm3(sx * 0.018, 5.5, sz * 0.018, 3) * 2 - 1;
       const ridge = fbm3(sx * 0.009, 9.3, sz * 0.009, 3) * 2 - 1;
 
-
-
-      const shoreMix = THREE.MathUtils.clamp((c + 0.02) / 0.12, 0, 1);
-      const shoreSmooth = shoreMix * shoreMix * (3 - 2 * shoreMix);
-      const oceanPlate = SEA_LEVEL - 0.45 + base * 0.08;
       const raw = base + mountains
         + amp * 1.7 * hills
         + rough * 1.8 * detail
         + amp * 1.1 * (0.5 - Math.abs(ridge));
 
-      const landPlate = SEA_LEVEL + 26 * Math.tanh(raw / 26);
-      const coastalLift = (w[0] && w[0].id <= B.BEACH) ? 0.25 : 0;
-      v = THREE.MathUtils.lerp(oceanPlate, landPlate, shoreSmooth) + coastalLift;
+      // Dry world: no ocean plate or shore blend, every column is land.
+      v = SEA_LEVEL + 26 * Math.tanh(raw / 26);
       _trendCache.set(k, v);
       return v;
     }
 
 
 
-    function pondHere(x, z) { return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) < SEA_LEVEL; }
+    // Surface water is gone: groundwater is only reachable from tanks and pumps.
+    function pondHere() { return false; }
 
 
 
@@ -754,6 +748,23 @@
       return site;
     }
 
+    function industrialLootPoolForPlayer() {
+      const slots = allSlots();
+      const hasPick = slots.some((s) => s && s.id === 'pick');
+      const hasAxe = slots.some((s) => s && s.id === 'axe');
+
+      if (!hasPick && !hasAxe) {
+        return ['pick', 'pick', 'pick', 'axe', 'axe', 'wood', 'carbon', 'wood', 'carbon'];
+      }
+      if (!hasPick) {
+        return ['pick', 'pick', 'pick', 'pick', 'wood', 'carbon', 'axe', 'wood', 'carbon'];
+      }
+      if (!hasAxe) {
+        return ['axe', 'axe', 'axe', 'axe', 'wood', 'carbon', 'pick', 'wood', 'carbon'];
+      }
+      return ['wood', 'carbon', 'wood', 'carbon', 'wood', 'carbon'];
+    }
+
     function buildIndustrialSite(cx, cz, px, pz, y0) {
       const parts = [];
       let padX = 0, padZ = 0;
@@ -785,7 +796,6 @@
           padZ = Math.max(padZ, Math.abs(dz) + tz + 1.5);
         }
       } else {
-
         const ids = ['container_01', 'container_02', 'container_03'];
         const id = ids[Math.min(2, Math.floor(indHash(cx, cz, 15) * 3))];
         const dim = IND_DIMS[id];
@@ -804,7 +814,18 @@
 
         for (let i = 0; i < count; i++) {
           const [dx, dz] = slots[i];
-          parts.push({ id, dx, dz, yaw: yaw + (indHash(cx, cz, 20 + i) < 0.5 ? 0 : Math.PI), scale: 0.75 });
+          const partYaw = yaw + (indHash(cx, cz, 20 + i) < 0.5 ? 0 : Math.PI);
+          const itemPool = industrialLootPoolForPlayer();
+          const itemId = itemPool[Math.min(itemPool.length - 1, Math.floor(indHash(cx, cz, 25 + i) * itemPool.length))];
+          const countRoll = itemId === 'carbon' ? 1 + (indHash(cx, cz, 40 + i) < 0.5 ? 1 : 0) : itemId === 'pick' ? 1 : 1 + (indHash(cx, cz, 45 + i) < 0.35 ? 1 : 0);
+          parts.push({
+            id,
+            dx,
+            dz,
+            yaw: partYaw,
+            scale: 0.75,
+            loot: [{ id: itemId, n: countRoll }],
+          });
           padX = Math.max(padX, Math.abs(dx) + ex + 1.5);
           padZ = Math.max(padZ, Math.abs(dz) + ez + 1.5);
         }
@@ -1977,8 +1998,9 @@
         const pcz = Math.floor(pz / CHUNK_SIZE);
 
 
-        for (let dz = -viewRadius; dz <= viewRadius; dz++) {
-          for (let dx = -viewRadius; dx <= viewRadius; dx++) {
+        const detailRadius = Math.min(viewRadius, DETAIL_CHUNK_RADIUS);
+        for (let dz = -detailRadius; dz <= detailRadius; dz++) {
+          for (let dx = -detailRadius; dx <= detailRadius; dx++) {
             const cx = pcx + dx;
             const cz = pcz + dz;
             for (let cy = CHUNK_Y_MIN; cy <= CHUNK_Y_MAX; cy++) {
@@ -1996,7 +2018,7 @@
         }
 
 
-        const unloadR = viewRadius + 2;
+        const unloadR = detailRadius + 2;
         for (const [key, c] of this.chunks) {
           const dx = c.cx - pcx, dz = c.cz - pcz;
           if (Math.abs(dx) > unloadR || Math.abs(dz) > unloadR) {
@@ -2361,6 +2383,9 @@
             inv: { hot: inv.hot, main: inv.main, sel: inv.sel, dose: Math.round(inv.dose * 10) / 10, armor: inv.armor },
             vitals: { hp: vitals.hp, hunger: vitals.hunger, wounds: vitals.wounds, immunity: vitals.infectionImmunity },
             day: clock.day, dayT: +clock.t.toFixed(1),
+            playTime: +playTime.toFixed(1),
+            guide: GUIDE_STEPS[guideIndex]?.id ?? null,
+            achievements: ach,
             timeLock: timeLock !== null,
             machines: machineSystem ? machineSystem.serialize() : [],
             pipes: pipeSystem ? pipeSystem.serialize() : [],
@@ -2750,6 +2775,7 @@
     postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
     const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    window.__NUCLEARISM_GAME_CANVAS__ = renderer.domElement;
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -2761,6 +2787,16 @@
     camera.rotation.order = 'YXZ';
     scene.add(camera);
 
+    const flashlightLight = new THREE.SpotLight(0xf4f9ff, 0, 90, Math.PI / 7, 0.2, 2.0);
+    flashlightLight.position.set(0.18, -0.18, -0.12);
+    flashlightLight.target.position.set(0, 0, -16);
+    flashlightLight.castShadow = true;
+    flashlightLight.shadow.mapSize.set(1024, 1024);
+    flashlightLight.shadow.bias = -0.0005;
+    flashlightLight.shadow.normalBias = 0.05;
+    flashlightLight.visible = false;
+    camera.add(flashlightLight);
+    camera.add(flashlightLight.target);
 
     const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x4a4438, 0.75);
     scene.add(hemi);
@@ -3026,7 +3062,7 @@
 
     function initModelIcons() {
       const ids = [...new Set([...Object.keys(ITEMS), ...Object.keys(TOOL_MODELS)])]
-        .filter((id) => ITEMS[id] && modelIconSource(id) && !modelIconTried(id));
+        .filter((id) => ITEMS[id] && !ITEM_MODEL_ICON_EXCLUDE.has(id) && modelIconSource(id) && !modelIconTried(id));
       let i = 0;
       const next = () => {
         if (i >= ids.length) { syncBars(); return; }
@@ -3044,9 +3080,31 @@
       next();
     }
 
+    function tintCanvasToColor(canvas, tint) {
+      if (!tint) return;
+      const ctx = canvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const r = (tint >> 16) & 255;
+      const g = (tint >> 8) & 255;
+      const b = tint & 255;
+
+      for (let i = 0; i < data.data.length; i += 4) {
+        const a = data.data[i + 3];
+        if (a === 0) continue;
+        data.data[i] = (data.data[i] * r) / 255;
+        data.data[i + 1] = (data.data[i + 1] * g) / 255;
+        data.data[i + 2] = (data.data[i + 2] * b) / 255;
+      }
+
+      ctx.putImageData(data, 0, 0);
+    }
+
     function itemIconUrl(id) {
       const def = ITEMS[id];
       if (!def) return '';
+      if (ITEM_MODEL_ICON_EXCLUDE.has(id) && def.icon && def.icon.startsWith('assets/')) {
+        return def.icon;
+      }
       const modelIcon = cachedModelIcon(id);
       if (modelIcon) return modelIcon;
       if (itemIconCache.has(id)) return itemIconCache.get(id);
@@ -3065,6 +3123,7 @@
           const y = (c.height - h) / 2;
 
           g.drawImage(img, x, y, w, h);
+          tintCanvasToColor(c, def.tint);
           applyAlphaOutline(c);
           itemIconCache.set(id, c.toDataURL('image/png'));
         };
@@ -3097,6 +3156,7 @@
           const w = img.width * scale, h = img.height * scale;
           const x = (c.width - w) / 2, y = (c.height - h) / 2;
           g.drawImage(img, x, y, w, h);
+          tintCanvasToColor(c, def.tint);
           tex.needsUpdate = true;
         };
         img.src = def.icon;
@@ -3116,8 +3176,9 @@
       hot: Array(7).fill(null), main: Array(28).fill(null), sel: 0, dose: 0,
       armor: { head: null, chest: null, legs: null, feet: null, hands: null },
     };
-
-
+    if (!localStorage.getItem(SAVE_KEY)) {
+      inv.hot[0] = { id: 'flashlight', n: 1 };
+    }
 
 
 
@@ -3189,11 +3250,16 @@
       if (vitals.hunger <= 0) hurt(0.6 * dt, null);
       else if (!dps && vitals.hp < vitals.maxHp && vitals.hunger > 40) vitals.hp = Math.min(vitals.maxHp, vitals.hp + 0.6 * dt);
     }
-    let cursorStack = null;
     let invOpen = false;
     let cmdOpen = false;
     let timeLock = null;
     const workbenchUI = new WorkbenchUI();
+    workbenchUI.dragDrop = new DragDrop({
+      icon: (s) => itemIconUrl(s.id),
+      count: (s) => s.n || 1,
+      onChange: () => { syncBars(); workbenchUI.refresh(); },
+    });
+    const dragDrop = workbenchUI.dragDrop;
 
 
     function giveStack(stack) {
@@ -3211,6 +3277,27 @@
 
 
     const clock = { day: 1, t: 0 };
+    let playTime = 0;
+    let guideIndex = 0;
+    let guidePaintSig = '';
+    let guideTick = 0;
+
+    function freshAchievements() {
+      return {
+        mined: 0, placed: 0, crafted: 0, machines: 0, kills: 0,
+        dosePeak: 0, research: 0, fuel: 0, walked: 0,
+        built: Object.create(null), started: Object.create(null),
+      };
+    }
+    let ach = freshAchievements();
+    let achTick = 0;
+    let achPaintSig = '';
+    let achLastPos = null;
+    let achBuilt = false;
+    let achSelected = null;
+    let achieveOpen = false;
+    let achUnlocked = -1;
+    let starterUiTimer = 0;
     let armorShieldTimer = 0;
     let radIntakeTimer = 0;
     let radIntakeMult = 1;
@@ -3423,8 +3510,56 @@
     let propAngle = 0;
     let propItem = null;
 
+    // Items without a 3D model are still held: a flat icon shown low and centre,
+    // as if carried in both hands. It bobs with movement but never spins.
+    const vmHeld = new THREE.Group();
+    vmHeld.visible = false;
+    vmRig.add(vmHeld);
+    const heldIconGeo = new THREE.PlaneGeometry(1, 1);
+    const heldIconTex = new Map();
+    const heldIconMesh = new THREE.Mesh(heldIconGeo, new THREE.MeshBasicMaterial({
+      transparent: true, alphaTest: 0.05, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    heldIconMesh.scale.setScalar(0.34);
+    vmHeld.add(heldIconMesh);
+    let heldIconItem = null;
+    let heldIconBob = 0;
+
+    function heldIconTexture(id) {
+      if (heldIconTex.has(id)) return heldIconTex.get(id);
+      const url = itemIconUrl(id);
+      if (!url) return null;
+      const tex = new THREE.TextureLoader().load(url);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      heldIconTex.set(id, tex);
+      return tex;
+    }
+
+    function showHeldIcon(id, dt) {
+      if (id === 'flashlight') return;
+      const tex = heldIconTexture(id);
+      if (!tex) return;
+      if (heldIconItem !== id) {
+        heldIconItem = id;
+        heldIconBob = 0;
+        heldIconMesh.material.map = tex;
+        heldIconMesh.material.needsUpdate = true;
+      }
+      const speed = Math.hypot(player.vel.x, player.vel.z);
+      heldIconBob += dt * (speed > 0.3 ? 6.0 + speed * 0.7 : 1.6);
+      const bob = Math.sin(heldIconBob) * (0.006 + Math.min(speed, 9) * 0.0025);
+      const sway = Math.sin(heldIconBob * 0.5) * 0.0035;
+      vmHeld.visible = true;
+      vmHeld.position.set(sway, -0.17 + bob, -0.50);
+      vmHeld.rotation.set(0.14, 0, 0);
+    }
+
     function propModelUrl(id) {
+      if (id === 'flashlight') return null;
       if (TOOL_MODELS[id]) return null;
+      // The icon renderer already probes the model file; if it cached a miss,
+      // skip another failed GLB request and go straight to the hand icon.
+      if (modelIconTried(id) && !cachedModelIcon(id)) return null;
       return itemModelIcon(id);
     }
 
@@ -3497,6 +3632,7 @@
       drink.t += dt;
       const t = drink.t;
       vmRig.visible = !invOpen && !workbenchUI.opened && locked;
+      vmHeld.visible = false;
       for (const h of propModels.values()) h.visible = false;
       if (t >= DRINK_T5 || !vmRig.visible) { endDrink(); return; }
 
@@ -3561,10 +3697,33 @@
       return 1.10 * (1 - e);
     }
 
+    const TREE_CHOP_SOUND = 'assets/audio/axe-hit.mp3';
+    let treeChopSound = null;
+
+    function playTreeChopSound() {
+      if (!TREE_CHOP_SOUND) return;
+      if (!treeChopSound) {
+        treeChopSound = new Audio(TREE_CHOP_SOUND);
+        treeChopSound.preload = 'auto';
+        treeChopSound.volume = 0.75;
+      }
+      try {
+        treeChopSound.currentTime = 0;
+        treeChopSound.play().catch(() => {});
+      } catch (e) {
+        // Audio can fail on some browsers before user interaction; ignore quietly.
+      }
+    }
+
     function triggerSwing(dur) {
       const cfg = (TOOL_MODELS[vm.item] || {}).swing;
       vm.swingDur = (cfg && cfg.dur) || THREE.MathUtils.clamp(dur || 0.3, 0.22, 0.6);
       vm.swingT = 0;
+    }
+
+    function heldFlashlight() {
+      const s = inv.hot[inv.sel];
+      return !!(s && ITEMS[s.id]?.tool?.flashlight && !invOpen && !workbenchUI.opened && locked);
     }
 
     function updateViewmodel(dt) {
@@ -3572,7 +3731,14 @@
 
       const s = inv.hot[inv.sel];
       const held = s ? s.id : null;
-
+      vmHeld.visible = false;
+      flashlightLight.visible = heldFlashlight();
+      if (flashlightLight.visible) {
+        flashlightLight.intensity = 18;
+        flashlightLight.distance = 90;
+        flashlightLight.angle = Math.PI / 7;
+        flashlightLight.penumbra = 0.18;
+      }
 
       if (held && propModelUrl(held)) {
         if (propItem !== held) { propItem = held; loadPropModel(held); }
@@ -3582,7 +3748,13 @@
         if (!show) return;
         for (const m of propModels.values()) m.visible = false;
         const model = propModels.get(held);
-        if (!model) return;
+        if (!model) {
+          // Still loading, or this item has no model file: hold its icon instead.
+          vmRig.position.set(0, 0, 0);
+          vmRig.rotation.set(0, 0, 0);
+          showHeldIcon(held, dt);
+          return;
+        }
         const speed = Math.hypot(player.vel.x, player.vel.z);
         vm.bob += dt * (speed > 0.3 ? 6.0 + speed * 0.7 : 1.6);
         const bob = Math.sin(vm.bob) * (0.004 + Math.min(speed, 9) * 0.002);
@@ -3613,7 +3785,15 @@
       }
 
       vmRig.visible = !!vm.model && !invOpen && !workbenchUI.opened && locked;
-      if (!vm.model) return;
+      if (!vm.model) {
+        if (s && ITEMS[s.id] && !TOOL_MODELS[s.id] && !invOpen && !workbenchUI.opened && locked) {
+          vmRig.visible = true;
+          vmRig.position.set(0, 0, 0);
+          vmRig.rotation.set(0, 0, 0);
+          showHeldIcon(s.id, dt);
+        }
+        return;
+      }
 
 
       const speed = Math.hypot(player.vel.x, player.vel.z);
@@ -4222,6 +4402,60 @@
 
     const industrialPreload = Promise.all(Object.keys(INDUSTRIAL_MODELS).map((id) =>
       loadIndustrialTemplate(id).catch((e) => console.warn('industrial model failed', id, e))));
+    let starterContainerSpawned = false;
+
+    function spawnStarterContainerNearPlayer(x, z) {
+      if (starterContainerSpawned || !Number.isFinite(x) || !Number.isFinite(z)) return;
+      const baseX = x + 8;
+      const baseZ = z + 6;
+      const y0 = world.getSurfaceHeight(baseX, baseZ, 50);
+      const pack = [
+        { id: 'pick', n: 1 },
+        { id: 'wood', n: 2 },
+        { id: 'carbon', n: 3 },
+      ];
+      const t = _indTemplates.get('container_01');
+      if (!t) return;
+      const inst = t.clone(true);
+      inst.position.set(baseX, y0 + 0.02, baseZ);
+      inst.rotation.y = 0;
+      inst.scale.setScalar(0.75);
+      scene.add(inst);
+      addOutlineToMesh(inst, 1.04, 0xffffff);
+      const machine = {
+        x: baseX,
+        y: y0 + 1.5,
+        z: baseZ,
+        radius: 6.0,
+        label: 'OPEN CONTAINER',
+        mesh: inst,
+        activate() {
+          if (machine._opened) return;
+          machine._opened = true;
+          const dir = new THREE.Vector3(1, 0, 0);
+          for (let i = 0; i < pack.length; i++) {
+            const item = pack[i];
+            const left = give(item.id, item.n);
+            if (left > 0) {
+              const outX = baseX + dir.x * (2.4 + i * 0.7);
+              const outZ = baseZ + dir.z * (2.4 + i * 0.7);
+              const outY = world.getSurfaceHeight(outX, outZ, 12) + 0.5;
+              spawnDrop(item.id, left, { x: outX, y: outY, z: outZ });
+            }
+          }
+          notice('STARTER CONTAINER OPENED');
+          const root = inst.userData.outlineRoot;
+          if (root && root.parent) root.parent.remove(root);
+          const rIdx = outlineTargets.indexOf(root);
+          if (rIdx >= 0) outlineTargets.splice(rIdx, 1);
+          const idx = machineActivators.indexOf(machine);
+          if (idx >= 0) machineActivators.splice(idx, 1);
+          scene.remove(inst);
+        }
+      };
+      machineActivators.push(machine);
+      starterContainerSpawned = true;
+    }
 
     function industrialCreate(site, key) {
       const group = new THREE.Group();
@@ -4233,6 +4467,77 @@
         inst.rotation.y = p.yaw;
         if (p.scale) inst.scale.setScalar(p.scale);
         group.add(inst);
+
+        const isContainer = /^container_/.test(p.id);
+        if (isContainer && p.loot?.length) {
+          const dims = IND_DIMS[p.id];
+          const s = p.scale || 1;
+          const worldX = site.x + p.dx;
+          const worldZ = site.z + p.dz;
+          const centerY = site.y0 + (dims.h || 4.5) * s * 0.5;
+          const interactRadius = Math.max(4.0, Math.max(dims.hx, dims.hz) * s * 1.2);
+          addOutlineToMesh(inst, 1.03, 0xffffff);
+          const machine = {
+            x: worldX,
+            y: centerY,
+            z: worldZ,
+            radius: interactRadius,
+            label: 'OPEN CONTAINER',
+            mesh: inst,
+            activate() {
+              if (p._opened) return;
+              p._opened = true;
+              const loot = p.loot || [];
+              const dir = new THREE.Vector3(Math.cos(p.yaw), 0, Math.sin(p.yaw));
+              for (let i = 0; i < loot.length; i++) {
+                const item = loot[i];
+                const left = give(item.id, item.n);
+                if (left > 0) {
+                  const outX = worldX + dir.x * (2.5 + i * 0.7);
+                  const outZ = worldZ + dir.z * (2.5 + i * 0.7);
+                  const outY = world.getSurfaceHeight(outX, outZ, 12) + 0.5;
+                  spawnDrop(item.id, left, { x: outX, y: outY, z: outZ });
+                }
+              }
+              notice('CONTAINER OPENED');
+              const root = inst.userData.outlineRoot;
+              if (root && root.parent) root.parent.remove(root);
+              const rIdx = outlineTargets.indexOf(root);
+              if (rIdx >= 0) outlineTargets.splice(rIdx, 1);
+              const idx = machineActivators.indexOf(machine);
+              if (idx >= 0) machineActivators.splice(idx, 1);
+            },
+          };
+          machineActivators.push(machine);
+        }
+
+        if (p.id === 'liquid_tank') {
+          const dims = IND_DIMS[p.id];
+          const s = p.scale || 1;
+          const worldX = site.x + p.dx;
+          const worldZ = site.z + p.dz;
+          addOutlineToMesh(inst, 1.02, 0xffffff);
+          const tank = {
+            x: worldX,
+            y: site.y0 + (dims.h || 19) * s * 0.5,
+            z: worldZ,
+            radius: Math.max(4.0, Math.max(dims.hx, dims.hz) * s * 1.2),
+            label: 'FILL CONTAINER',
+            mesh: inst,
+            activate() {
+              const stack = inv.hot[inv.sel];
+              const def = stack && ITEMS[stack.id];
+              if (!def?.container) { notice('HOLD A JERRY CAN'); return; }
+              if (!Liquid.accepts(def, 'water')) { notice('CANNOT HOLD WATER'); return; }
+              const room = def.container.capacity - Liquid.volume(stack);
+              if (room <= 0) { notice('CONTAINER FULL'); return; }
+              Liquid.fill(stack, def, 'water', room);
+              notice(`${def.name} · ${Math.round(Liquid.volume(stack))}/${def.container.capacity} WATER`);
+              syncBars();
+            },
+          };
+          machineActivators.push(tank);
+        }
       }
       if (!group.children.length) return null;
       scene.add(group);
@@ -4245,7 +4550,7 @@
       if (gx === _indGX && gz === _indGZ) return;
       _indGX = gx; _indGZ = gz;
 
-      const reach = viewRadius * 16 + 24;
+      const reach = Math.min(viewRadius, DETAIL_CHUNK_RADIUS) * 16 + 24;
       const rc = Math.ceil((reach + IND_MAX_R) / IND_CELL);
       const ccx = Math.floor(px / IND_CELL), ccz = Math.floor(pz / IND_CELL);
       const keep = new Set();
@@ -4312,6 +4617,7 @@
     let vegReady = 0;
     const vegPreload = (async () => {
       const playBtnEl = document.getElementById('playBtn');
+      const introBtnEl = document.getElementById('introBegin');
       const total = VEG_SPECIES.length;
       let i = 0, active = 0;
       await new Promise((done) => {
@@ -4322,13 +4628,20 @@
             active++;
             loadVegModel(sp)
               .catch((e) => console.warn('veg model failed', sp.n, e))
-              .then(() => { active--; vegReady++; if (playBtnEl) playBtnEl.textContent = `LOADING ${Math.round(100 * vegReady / total)}%`; next(); });
+              .then(() => {
+                active--; vegReady++;
+                const pct = Math.round(100 * vegReady / total);
+                if (playBtnEl) playBtnEl.textContent = `LOADING ${pct}%`;
+                if (introBtnEl && introBtnEl.disabled) introBtnEl.textContent = `LOADING ${pct}%`;
+                next();
+              });
           }
         };
         next();
       });
       await industrialPreload;
       if (playBtnEl) { playBtnEl.textContent = 'RESUME'; playBtnEl.disabled = false; }
+      if (introBtnEl) { introBtnEl.textContent = 'ENTER THE ZONE'; introBtnEl.disabled = false; }
     })();
     {
       const pb = document.getElementById('playBtn');
@@ -4760,10 +5073,36 @@
 
     function despawnTree(pl, sp) {
       const key = `${pl.gx},${pl.gz}`;
+      treeChopState.delete('veg:' + key);
       _vegHarvested.add('canopy:' + key);
       _vegActive.canopy.delete(key);
       vegRemove(sp, key);
       vegRebuildTrunks();
+    }
+
+    const TREE_CHOP_RADIUS = 2.0;
+    const treeChopState = new Map();
+
+    function treeChopKey(t) {
+      if (t.pl) return `veg:${t.pl.gx},${t.pl.gz}`;
+      if (t.dyn) return `dyn:${t.dyn.group.uuid}`;
+      return `pos:${Math.round(t.pos.x * 10)},${Math.round(t.pos.y * 10)},${Math.round(t.pos.z * 10)}`;
+    }
+
+    function registerTreeChopHit(t, tool) {
+      const required = tool.chop.hits ?? 3;
+      const key = treeChopKey(t);
+      const record = treeChopState.get(key) || { hits: 0, pos: t.pos.clone() };
+      const sameArea = record.hits > 0 && record.pos.distanceTo(t.pos) <= TREE_CHOP_RADIUS;
+      record.hits = sameArea ? record.hits + 1 : 1;
+      record.pos.copy(t.pos);
+      treeChopState.set(key, record);
+
+      if (record.hits >= required) {
+        treeChopState.delete(key);
+        return true;
+      }
+      return false;
     }
 
     function chopTree(t, power = 1) {
@@ -4834,6 +5173,27 @@
 
     const TREE_FRUITS = ['apple', 'orange', 'pear'];
     const TREE_FRUIT_CHANCE = 0.10;
+    const TREE_SHAKE_SOUND = 'assets/audio/tree-shake.flac';
+    let treeShakeAudio = null;
+
+    function playTreeShakeSound() {
+      if (!TREE_SHAKE_SOUND) return;
+      try {
+        if (!treeShakeAudio) {
+          treeShakeAudio = new Audio(TREE_SHAKE_SOUND);
+          treeShakeAudio.preload = 'auto';
+          treeShakeAudio.volume = 0.5;
+        }
+        if (treeShakeAudio.paused) {
+          treeShakeAudio.currentTime = 0;
+          treeShakeAudio.play().catch(() => {});
+        } else {
+          treeShakeAudio.currentTime = 0;
+          treeShakeAudio.play().catch(() => {});
+        }
+      } catch (e) {}
+    }
+
     function shakeTreeForFruit() {
       _chopOrigin.set(player.pos.x, player.pos.y + player.eye, player.pos.z);
       _chopDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -4841,6 +5201,9 @@
       _chopRay.far = REACH;
       const t = chopTarget();
       if (!t) return false;
+
+      playTreeShakeSound();
+
       const owner = t.dyn || t.pl;
       owner.__fruit = owner.__fruit || TREE_FRUITS[(Math.random() * TREE_FRUITS.length) | 0];
       owner.__fruitDrops = owner.__fruitDrops || 0;
@@ -4860,8 +5223,13 @@
       _chopRay.far = tool.chop.reach;
       const t = chopTarget();
       if (!t) return false;
-      chopTree(t, tool.chop.power);
+
+      playTreeChopSound();
+      const canCut = registerTreeChopHit(t, tool);
       triggerSwing(Math.min(0.5, Math.max(0.26, tool.rate * 0.9)));
+      if (!canCut) return true;
+
+      chopTree(t, tool.chop.power);
       return true;
     }
 
@@ -5273,6 +5641,15 @@
 
 
     const saved = world.load();
+    if (saved && Number.isFinite(saved.playTime)) playTime = Math.max(0, saved.playTime);
+    if (saved && saved.guide !== undefined) {
+      if (saved.guide === null) guideIndex = GUIDE_STEPS.length;
+      else {
+        const i = GUIDE_STEPS.findIndex((s) => s.id === saved.guide);
+        if (i >= 0) guideIndex = i;
+      }
+    }
+    if (saved && saved.achievements) loadAchievements(saved.achievements);
     if (saved && saved.player && saved.seed !== undefined) {
       WORLD_SEED = saved.seed;
       player.pos.set(saved.player[0], saved.player[1], saved.player[2]);
@@ -5291,6 +5668,9 @@
       spawnOnGround(0.5, 0.5);
     }
 
+    industrialPreload.then(() => {
+      spawnStarterContainerNearPlayer(player.pos.x, player.pos.z);
+    });
 
     mapSystem = new MapSystem({
       player: () => ({ x: player.pos.x, z: player.pos.z, yaw: player.yaw }),
@@ -5308,7 +5688,7 @@
       notice: (msg) => notice(msg),
       save: () => { if (!wipeSave) world.save(player); },
       onShow: () => {
-        try { document.exitPointerLock(); } catch { }
+        unlockPointer();
         overlay.style.display = 'none';
       },
       onHide: (relock) => {
@@ -5323,16 +5703,18 @@
     machineSystem = new MachineSystem({
       THREE, scene, world, player, inv, ITEMS, give, giveStack,
       icon: (id) => itemIconUrl(id),
+      onCraft: (id, n) => achCraft(id, n),
       showTip: (s, x, y) => showTip(s, x, y),
       hideTip: () => hideTip(),
       syncBars,
       bagRoomFor,
       notice: (msg) => notice(msg),
+      mineDrops, groundBand,
       defs: MACHINE_DEFS, byId: MACHINE_BY_ID, craftRecipes: CRAFT_RECIPES, layoutFor,
       GLTFLoader, registerMachine, machineActivators, patchMachineMaterial,
       ui: workbenchUI,
       isDay,
-      onOpen: () => { try { document.exitPointerLock(); } catch { } overlay.style.display = 'none'; },
+      onOpen: () => { unlockPointer(); overlay.style.display = 'none'; },
       onClosed: () => { lockPointer(); },
       explode: (x, y, z, r) => {
 
@@ -5343,6 +5725,8 @@
     });
     machineSystem.load().then(() => {
       if (saved && saved.machines && saved.machines.length) machineSystem.restore(saved.machines);
+      if (saved && saved.guide === undefined) migrateGuideFromMachines();
+      backfillAchievements();
     }).catch((e) => console.warn('machine load failed', e));
 
     const pipeSystem = new PipeSystem({ THREE, scene, GLTFLoader, give });
@@ -5358,14 +5742,83 @@
 
     const keys = Object.create(null);
     let locked = false;
+    // Browsers emit a synthetic mousemove with a huge movement delta when
+    // pointer lock is entered or exited. Swallow look input briefly around
+    // every transition so the camera never snaps to a random angle.
+    let lookBlockedUntil = 0;
+    let lookSkipEvents = 0;
+    function blockLook(ms = 150, events = 1) {
+      lookBlockedUntil = Math.max(lookBlockedUntil, performance.now() + ms);
+      lookSkipEvents = Math.max(lookSkipEvents, events);
+    }
     let wireframe = false;
     let wipeSave = false;
 
     const overlay = document.getElementById('overlay');
 
+    const introEl = document.getElementById('intro');
+    const introBtn = document.getElementById('introBegin');
+    let introOpen = false;
+    let introFirstRun = false;
+
+    function introSeenKey() {
+      return MENU_WORLD ? `idte.intro.v1.${MENU_WORLD.id}` : 'idte.intro.v1';
+    }
+
+    function markIntroSeen() {
+      try { localStorage.setItem(introSeenKey(), '1'); } catch (e) { }
+    }
+
+    function flashGuideCard() {
+      if (!objectiveEl) return;
+      objectiveEl.classList.remove('intro-pulse');
+      void objectiveEl.offsetWidth;
+      objectiveEl.classList.add('intro-pulse');
+      setTimeout(() => objectiveEl.classList.remove('intro-pulse'), 5000);
+    }
+
+    function openIntro(firstRun) {
+      if (!introEl) return;
+      introOpen = true;
+      introFirstRun = !!firstRun;
+      introEl.classList.remove('hidden');
+      overlay.style.display = 'none';
+      unlockPointer();
+      if (introBtn) introBtn.textContent = introBtn.disabled ? 'LOADING' : 'ENTER THE ZONE';
+    }
+
+    function closeIntro() {
+      if (!introOpen) return;
+      introOpen = false;
+      introEl.classList.add('hidden');
+      markIntroSeen();
+      const first = introFirstRun;
+      introFirstRun = false;
+      if (first) {
+        flashGuideCard();
+        lockPointer();
+      } else {
+        overlay.style.display = 'flex';
+      }
+    }
+
+    function maybeShowIntro() {
+      if (!introEl || WORLD_MODE !== 'survival') return;
+      let seen = false;
+      try { seen = localStorage.getItem(introSeenKey()) === '1'; } catch (e) { }
+      if (!seen) openIntro(true);
+    }
+
+    introBtn?.addEventListener('click', () => { if (!introBtn.disabled) closeIntro(); });
+
     document.getElementById('playBtn').addEventListener('click', () => {
       lockPointer();
     });
+
+    document.getElementById('manualBtn')?.addEventListener('click', () => {
+      openIntro(false);
+    });
+    if (WORLD_MODE === 'sandbox') document.getElementById('manualBtn')?.remove();
 
     document.getElementById('menuBtn').addEventListener('click', () => {
       if (!wipeSave) world.save(player);
@@ -5383,7 +5836,6 @@
       settingsView.classList.add('hidden');
       mainView.classList.remove('hidden');
     });
-
 
     function syncMenu() {
       document.querySelectorAll('#overlay .row').forEach(row => {
@@ -5406,7 +5858,7 @@
             if (setting === 'hud') { showInfoHud = val > 0; s.infoHud = showInfoHud; }
             else if (setting === 'vsync') { vsync = val > 0; s.vsync = vsync; }
             else if (setting === 'volume') { masterVolume = val; s.volume = val; }
-            else { viewRadius = val; s.renderDistance = viewRadius; }
+            else { viewRadius = Math.min(MAX_RENDER_DISTANCE, Math.max(1, val)); s.renderDistance = viewRadius; }
             localStorage.setItem('idte.settings.v1', JSON.stringify(s));
           } catch {                   }
           syncMenu();
@@ -5417,7 +5869,8 @@
 
     document.addEventListener('pointerlockchange', () => {
       locked = document.pointerLockElement === renderer.domElement;
-      overlay.style.display = (!locked && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened) ? 'flex' : 'none';
+      blockLook();
+      overlay.style.display = (!locked && !introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) ? 'flex' : 'none';
       if (!locked) {
         settingsView.classList.add('hidden');
         mainView.classList.remove('hidden');
@@ -5426,7 +5879,7 @@
     });
 
     document.addEventListener('pointerlockerror', () => {
-      if (!invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened) overlay.style.display = 'flex';
+      if (!introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) overlay.style.display = 'flex';
     });
 
 
@@ -5440,12 +5893,20 @@
       } catch (e) {                                    }
     }
 
+    // Every pointer-lock release goes through here: block look input before
+    // the unlock mousemove can arrive, then actually release the cursor.
+    function unlockPointer() {
+      blockLook();
+      try {
+        if (document.pointerLockElement) document.exitPointerLock();
+      } catch (e) { }
+    }
+
     const hotbarEl = document.getElementById('hotbar');
     hotbarEl.style.display = 'flex';
     const invPanel = document.getElementById('invPanel');
     const invMainEl = document.getElementById('invMain');
     const invHotEl = document.getElementById('invHot');
-    const ghostEl = document.getElementById('cursorGhost');
     const tipEl = document.getElementById('tip');
     const tipTitle = tipEl.querySelector('.t');
     const tipBody = tipEl.querySelector('.b');
@@ -5458,6 +5919,47 @@
     const hungerFill = document.getElementById('hungerFill');
     const hungerNum = document.getElementById('hungerNum');
     const woundsEl = document.getElementById('wounds');
+    const objectiveEl = document.getElementById('objective');
+    const objectiveStepEl = document.getElementById('objectiveStep');
+    const objectiveTitleEl = document.getElementById('objectiveTitle');
+    const objectiveHintEl = document.getElementById('objectiveHint');
+    const objectiveNeedsEl = document.getElementById('objectiveNeeds');
+    const achievePanelEl = document.getElementById('achievePanel');
+    const achieveGridEl = document.getElementById('achieveGrid');
+    const achieveCountEl = document.getElementById('achieveCount');
+    const achieveDetailEl = document.getElementById('achieveDetail');
+    const achieveNameEl = document.getElementById('achieveName');
+    const achieveReqEl = document.getElementById('achieveReq');
+    const achieveProgEl = document.getElementById('achieveProg');
+    const achieveTipEl = document.getElementById('achieveTip');
+
+    document.getElementById('achievementsBtn').addEventListener('click', openAchievements);
+    document.getElementById('achieveClose').addEventListener('click', closeAchievements);
+
+    function achievementCellAt(e) {
+      return e.target.closest ? e.target.closest('.achCell') : null;
+    }
+
+    achieveGridEl.addEventListener('click', (e) => {
+      const cell = achievementCellAt(e);
+      if (!cell) return;
+      achSelected = { type: cell.dataset.type, tier: +cell.dataset.tier };
+      paintAchievements(true);
+    });
+
+    achieveGridEl.addEventListener('mousemove', (e) => {
+      const cell = achievementCellAt(e);
+      if (!cell) { achieveTipEl.classList.add('hidden'); return; }
+      const type = ACHIEVEMENT_TYPES.find((t) => t.id === cell.dataset.type);
+      const tier = type?.tiers[+cell.dataset.tier];
+      if (!type || !tier) return;
+      achieveTipEl.textContent = `${type.name} · ${tier.name}`;
+      achieveTipEl.classList.remove('hidden');
+      achieveTipEl.style.left = `${Math.max(8, Math.min(innerWidth - 280, e.clientX + 14))}px`;
+      achieveTipEl.style.top = `${Math.max(8, Math.min(innerHeight - 32, e.clientY + 16))}px`;
+    });
+
+    achieveGridEl.addEventListener('mouseleave', () => achieveTipEl.classList.add('hidden'));
 
     let hoverSlot = -1;
 
@@ -5465,29 +5967,18 @@
       return gi < 7 ? [inv.hot, gi] : [inv.main, gi - 7];
     }
 
-    function onSlotClick(e) {
-      if (!invOpen) return;
-      const gi = +e.currentTarget.dataset.idx;
+    function quickMove(gi) {
       const [grid, i] = slotOf(gi);
       const s = grid[i];
-      if (e.shiftKey && !cursorStack) {
-        const def = s && ITEMS[s.id];
-        if (def?.armor && !inv.armor[def.armor.slot]) {
-          inv.armor[def.armor.slot] = { id: s.id, n: 1, plates: s.plates ? s.plates.slice() : [] };
-          grid[i] = null; syncBars(); return;
-        }
-        shiftMove(gi); return;
+      if (!s) return;
+      const def = ITEMS[s.id];
+      if (def?.armor && !inv.armor[def.armor.slot]) {
+        inv.armor[def.armor.slot] = { id: s.id, n: 1, plates: s.plates ? s.plates.slice() : [] };
+        grid[i] = null;
+        syncBars();
+        return;
       }
-      if (!cursorStack && s) { cursorStack = s; grid[i] = null; }
-      else if (cursorStack && !s) { grid[i] = cursorStack; cursorStack = null; }
-      else if (cursorStack && s) {
-        if (s.id === cursorStack.id && s.n < ITEMS[s.id].stack) {
-          const mv = Math.min(ITEMS[s.id].stack - s.n, cursorStack.n);
-          s.n += mv; cursorStack.n -= mv;
-          if (cursorStack.n <= 0) cursorStack = null;
-        } else { grid[i] = cursorStack; cursorStack = s; }
-      }
-      syncBars();
+      shiftMove(gi);
     }
 
 
@@ -5657,9 +6148,10 @@
         d.className = 'slot';
         d.dataset.idx = base + i;
         if (el === hotbarEl) d.dataset.key = String(i + 1);
+        dragDrop.bind(d, inventoryAdapter(grid, i, ITEMS));
         d.addEventListener('click', (event) => {
-          if (el === hotbarEl && !invOpen) { inv.sel = i; syncBars(); return; }
-          onSlotClick(event);
+          if (invOpen && event.shiftKey) { quickMove(base + i); return; }
+          if (el === hotbarEl || el === invHotEl) { inv.sel = i; syncBars(); }
         });
         d.addEventListener('mouseenter', (e) => {
           hoverSlot = base + i;
@@ -5679,6 +6171,283 @@
       const c = {};
       for (const g of [inv.hot, inv.main]) for (const s of g) if (s) c[s.id] = (c[s.id] || 0) + s.n;
       return c;
+    }
+
+    function guideNeedCount(id, counts) {
+      if (id === 'fruit') {
+        return ['apple', 'orange', 'pear'].reduce((sum, fruitId) => sum + (counts[fruitId] || 0), 0);
+      }
+      return counts[id] || 0;
+    }
+
+    function hasGuideMachine(id) {
+      return !!machineSystem && machineSystem.instances.some((m) => m.def?.id === id);
+    }
+
+    function guideMachineActive(id) {
+      return !!machineSystem && machineSystem.instances.some((m) => m.def?.id === id
+        && (m.state.burning || (m.def.kind === 'reactor' && m.state.heat > 1)));
+    }
+
+    function guideStepDone(step, counts) {
+      if (step.place) return hasGuideMachine(step.place);
+      if (step.active) return guideMachineActive(step.active);
+      if (step.need) return Object.entries(step.need).every(([id, n]) => guideNeedCount(id, counts) >= n);
+      return false;
+    }
+
+    function guideNeedSignature(step, counts) {
+      if (!step?.need) return '';
+      return Object.entries(step.need)
+        .map(([id, n]) => `${id}:${Math.min(guideNeedCount(id, counts), n)}/${n}`)
+        .join(',');
+    }
+
+    function paintGuide(force = false) {
+      if (!objectiveEl) return;
+      if (WORLD_MODE === 'sandbox' || guideIndex >= GUIDE_STEPS.length) {
+        objectiveEl.hidden = true;
+        guidePaintSig = '';
+        return;
+      }
+      const step = GUIDE_STEPS[guideIndex];
+      const counts = invCounts();
+      const sig = `${guideIndex}|${guideNeedSignature(step, counts)}`;
+      if (!force && sig === guidePaintSig) return;
+      guidePaintSig = sig;
+      objectiveEl.hidden = false;
+      objectiveStepEl.textContent = `${guideIndex + 1} / ${GUIDE_STEPS.length}`;
+      objectiveTitleEl.textContent = step.title;
+      objectiveHintEl.textContent = step.hint || '';
+      if (step.need) {
+        objectiveNeedsEl.innerHTML = Object.entries(step.need).map(([id, n]) => {
+          const have = Math.min(guideNeedCount(id, counts), n);
+          const label = id === 'fruit' ? 'FRUIT' : (ITEMS[id]?.name || id);
+          return `<span class="${have >= n ? 'ok' : ''}">${label} <b>${have}/${n}</b></span>`;
+        }).join('');
+      } else {
+        objectiveNeedsEl.innerHTML = '';
+      }
+    }
+
+    function updateGuide(dt) {
+      if (!objectiveEl) return;
+      guideTick -= dt;
+      if (guideTick > 0) return;
+      guideTick = 0.2;
+      const counts = invCounts();
+      let advanced = false;
+      while (guideIndex < GUIDE_STEPS.length && guideStepDone(GUIDE_STEPS[guideIndex], counts)) {
+        guideIndex++;
+        advanced = true;
+      }
+      paintGuide(advanced);
+      if (advanced && !wipeSave) world.save(player);
+    }
+
+    function migrateGuideFromMachines() {
+      if (!machineSystem) return;
+      let next = 0;
+      for (let i = 0; i < GUIDE_STEPS.length; i++) {
+        const step = GUIDE_STEPS[i];
+        if (step.place && hasGuideMachine(step.place)) next = i + 1;
+      }
+      guideIndex = next;
+      paintGuide(true);
+    }
+
+    function loadAchievements(data) {
+      if (!data || typeof data !== 'object') return;
+      const next = freshAchievements();
+      for (const key of ['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked']) {
+        if (Number.isFinite(data[key])) next[key] = Math.max(0, data[key]);
+      }
+      if (data.built && typeof data.built === 'object') {
+        for (const id of Object.keys(data.built)) if (data.built[id]) next.built[id] = true;
+      }
+      if (data.started && typeof data.started === 'object') {
+        for (const id of Object.keys(data.started)) if (data.started[id]) next.started[id] = true;
+      }
+      ach = next;
+    }
+
+    function backfillAchievements() {
+      if (!machineSystem) return;
+      ach.machines = Math.max(ach.machines, machineSystem.instances.length);
+      for (const m of machineSystem.instances) {
+        const id = m.def?.id;
+        if (!id) continue;
+        ach.built[id] = true;
+        if (id === 'fission_reactor' && (m.state.burning || m.state.heat > 1)) ach.started.fission = true;
+        if (id === 'fusion_reactor' && (m.state.burning || m.state.heat > 1)) ach.started.fusion = true;
+      }
+      achUnlocked = countUnlockedAchievements();
+    }
+
+    function achBump(key, n = 1) {
+      if (typeof ach[key] === 'number') ach[key] += n;
+    }
+
+    function achCraft(id, n = 1) {
+      if (!id || n <= 0) return;
+      achBump('crafted', n);
+      if (id.startsWith('blueprint_')) achBump('research', n);
+      if (/_fuel$/.test(id)) achBump('fuel', n);
+    }
+
+    function achievementValue(tier) {
+      if (!tier) return 0;
+      if (tier.stat === 'days') return clock.day;
+      if (tier.stat) return Number(ach[tier.stat]) || 0;
+      return 0;
+    }
+
+    function achievementDone(tier) {
+      if (!tier) return false;
+      if (tier.built) return !!ach.built[tier.built];
+      if (tier.started) return !!ach.started[tier.started];
+      if (tier.stat) return achievementValue(tier) >= tier.need;
+      return false;
+    }
+
+    function achievementProgress(tier) {
+      if (!tier) return 0;
+      if (tier.built) return ach.built[tier.built] ? 1 : 0;
+      if (tier.started) return ach.started[tier.started] ? 1 : 0;
+      if (!tier.stat || tier.need <= 0) return 0;
+      return Math.max(0, Math.min(1, achievementValue(tier) / tier.need));
+    }
+
+    function countUnlockedAchievements() {
+      let n = 0;
+      for (const type of ACHIEVEMENT_TYPES) for (const tier of type.tiers) if (achievementDone(tier)) n++;
+      return n;
+    }
+
+    function buildAchievements() {
+      if (achBuilt || !achieveGridEl) return;
+      const frag = document.createDocumentFragment();
+      for (const type of ACHIEVEMENT_TYPES) {
+        const col = document.createElement('div');
+        col.className = 'achCol';
+        type.tiers.forEach((tier, tierIndex) => {
+          const cell = document.createElement('button');
+          cell.type = 'button';
+          cell.className = 'achCell';
+          cell.dataset.type = type.id;
+          cell.dataset.tier = String(tierIndex);
+          cell.setAttribute('aria-label', `${type.name} · ${tier.name}`);
+          const img = document.createElement('img');
+          img.src = itemIconUrl(tier.icon) || '';
+          img.alt = '';
+          img.draggable = false;
+          cell.appendChild(img);
+          col.appendChild(cell);
+        });
+        frag.appendChild(col);
+      }
+      achieveGridEl.appendChild(frag);
+      achBuilt = true;
+    }
+
+    function paintAchievementDetail() {
+      if (!achieveDetailEl) return;
+      const kicker = achieveDetailEl.querySelector('.adKicker');
+      if (!achSelected) {
+        achieveDetailEl.classList.add('empty');
+        if (kicker) kicker.textContent = 'SELECT AN ACHIEVEMENT';
+        achieveNameEl.textContent = '';
+        achieveReqEl.textContent = '';
+        achieveProgEl.textContent = '';
+        return;
+      }
+      const type = ACHIEVEMENT_TYPES.find((t) => t.id === achSelected.type);
+      const tier = type?.tiers[achSelected.tier];
+      if (!type || !tier) return;
+      achieveDetailEl.classList.remove('empty');
+      if (kicker) kicker.textContent = `${type.name} · TIER ${achSelected.tier + 1} / ${type.tiers.length}`;
+      achieveNameEl.textContent = tier.name;
+      achieveReqEl.textContent = tier.req;
+      if (achievementDone(tier)) {
+        achieveProgEl.textContent = 'COMPLETE';
+      } else if (tier.stat) {
+        const value = Math.min(achievementValue(tier), tier.need);
+        achieveProgEl.textContent = `PROGRESS ${value.toLocaleString()} / ${tier.need.toLocaleString()}`;
+      } else {
+        achieveProgEl.textContent = 'NOT YET COMPLETE';
+      }
+    }
+
+    function paintAchievements(force = false) {
+      if (!achievePanelEl || achievePanelEl.classList.contains('hidden')) return;
+      const sig = ACHIEVEMENT_TYPES.map((type) => type.tiers.map((tier) =>
+        `${achievementDone(tier) ? 1 : 0}${Math.round(achievementProgress(tier) * 20)}`).join('.')).join('|')
+        + `#${achSelected ? `${achSelected.type}:${achSelected.tier}` : ''}`;
+      if (!force && sig === achPaintSig) return;
+      achPaintSig = sig;
+      for (const cell of achieveGridEl.querySelectorAll('.achCell')) {
+        const type = ACHIEVEMENT_TYPES.find((t) => t.id === cell.dataset.type);
+        const tier = type?.tiers[+cell.dataset.tier];
+        if (!tier) continue;
+        const done = achievementDone(tier);
+        const prog = achievementProgress(tier);
+        cell.classList.toggle('done', done);
+        cell.classList.toggle('partial', !done && prog > 0);
+        cell.classList.toggle('selected', !!achSelected && achSelected.type === type.id && achSelected.tier === +cell.dataset.tier);
+        cell.style.setProperty('--p', String(done ? 1 : prog));
+      }
+      const total = ACHIEVEMENT_TYPES.reduce((n, t) => n + t.tiers.length, 0);
+      achieveCountEl.textContent = `${countUnlockedAchievements()} / ${total} UNLOCKED`;
+      paintAchievementDetail();
+    }
+
+    function updateAchievements(dt) {
+      if (!achievePanelEl) return;
+      achTick -= dt;
+      if (achTick > 0) return;
+      achTick = 0.2;
+
+      if (inv.dose > ach.dosePeak) ach.dosePeak = inv.dose;
+      if (achLastPos) {
+        const d = Math.hypot(player.pos.x - achLastPos.x, player.pos.z - achLastPos.z);
+        if (d < 8) ach.walked += d;
+      }
+      achLastPos = { x: player.pos.x, z: player.pos.z };
+
+      if (machineSystem) {
+        for (const m of machineSystem.instances) {
+          const id = m.def?.id;
+          if (!id) continue;
+          if (id === 'fission_reactor' && (m.state.burning || m.state.heat > 1)) ach.started.fission = true;
+          if (id === 'fusion_reactor' && (m.state.burning || m.state.heat > 1)) ach.started.fusion = true;
+        }
+      }
+
+      const unlocked = countUnlockedAchievements();
+      if (unlocked !== achUnlocked) {
+        achUnlocked = unlocked;
+        if (!wipeSave) world.save(player);
+      }
+      if (achieveOpen) paintAchievements();
+    }
+
+    function openAchievements() {
+      if (!achievePanelEl) return;
+      buildAchievements();
+      unlockPointer();
+      overlay.style.display = 'none';
+      achievePanelEl.classList.remove('hidden');
+      achieveOpen = true;
+      paintAchievements(true);
+    }
+
+    function closeAchievements() {
+      if (!achievePanelEl) return;
+      achievePanelEl.classList.add('hidden');
+      achieveTipEl.classList.add('hidden');
+      achieveOpen = false;
+      if (!wipeSave) world.save(player);
+      overlay.style.display = 'flex';
     }
 
     function takeInv(id, n) {
@@ -5757,7 +6526,7 @@
         give(outId, outN);
         made++;
       }
-      if (made) syncBars();
+      if (made) { achCraft(outId, made); syncBars(); }
     }
 
     const tableCraftUI = new CraftOptions({
@@ -5777,33 +6546,43 @@
     const ARMOR_ORDER = ['head', 'chest', 'legs', 'feet', 'hands'];
     const ARMOR_SLOT_NAME = { head: 'HELMET', chest: 'CHEST', legs: 'LEGS', feet: 'BOOTS', hands: 'GLOVES' };
 
-    function armorClick(e) {
-      if (!invOpen) return;
-      const slot = e.currentTarget.dataset.armor;
-      const cur = inv.armor[slot];
-      if (!cursorStack) {
-        if (cur) { cursorStack = cur; inv.armor[slot] = null; }
-        syncBars(); return;
-      }
-      const def = ITEMS[cursorStack.id];
-      if (def?.plate) {
-        const worn = cur && ITEMS[cur.id]?.armor;
-        const cap = worn ? (ITEMS[cur.id].armor.plateSlots || 0) : 0;
-        if (worn && (cur.plates || []).length < cap) {
-          cur.plates = cur.plates || [];
-          cur.plates.push(cursorStack.id);
-          cursorStack.n--;
-          if (cursorStack.n <= 0) cursorStack = null;
-        } else if (!worn && def.plate.standalone) {
-
-          inv.armor[slot] = cursorStack; cursorStack = null;
-        }
-      } else if (def?.armor && def.armor.slot === slot) {
-        const prev = cur;
-        inv.armor[slot] = { id: cursorStack.id, n: 1, plates: cursorStack.plates ? cursorStack.plates.slice() : [] };
-        cursorStack = prev;
-      }
-      syncBars();
+    function armorAdapter(slot) {
+      return {
+        stack: () => inv.armor[slot] || null,
+        accepts: (st) => {
+          const def = ITEMS[st.id];
+          if (!def) return false;
+          if (def.armor) return def.armor.slot === slot;
+          if (!def.plate) return false;
+          const cur = inv.armor[slot];
+          const worn = cur && ITEMS[cur.id]?.armor;
+          const cap = worn ? (ITEMS[cur.id].armor.plateSlots || 0) : 0;
+          return (worn && (cur.plates || []).length < cap) || (!worn && !!def.plate.standalone);
+        },
+        take: () => { const s = inv.armor[slot]; inv.armor[slot] = null; return s || null; },
+        put: (st) => {
+          const def = ITEMS[st.id];
+          const cur = inv.armor[slot] || null;
+          if (def?.plate) {
+            const worn = cur && ITEMS[cur.id]?.armor;
+            const cap = worn ? (ITEMS[cur.id].armor.plateSlots || 0) : 0;
+            if (worn && (cur.plates || []).length < cap) {
+              cur.plates = cur.plates || [];
+              cur.plates.push(st.id);
+              st.n--;
+              return st.n > 0 ? st : null;
+            }
+            if (!worn && def.plate.standalone) { inv.armor[slot] = st; return cur; }
+            return st;
+          }
+          if (def?.armor && def.armor.slot === slot) {
+            inv.armor[slot] = { id: st.id, n: 1, plates: st.plates ? st.plates.slice() : [] };
+            return cur;
+          }
+          return st;
+        },
+        restore: (st) => { inv.armor[slot] = st; },
+      };
     }
 
     function buildArmorSlots() {
@@ -5812,7 +6591,15 @@
         const d = document.createElement('div');
         d.className = 'slot armorSlot';
         d.dataset.armor = slot;
-        d.addEventListener('click', armorClick);
+        dragDrop.bind(d, armorAdapter(slot));
+        d.addEventListener('click', (e) => {
+          if (!invOpen) return;
+          if (e.shiftKey && inv.armor[slot]) {
+            if (giveStack(inv.armor[slot])) { inv.armor[slot] = null; syncBars(); }
+            return;
+          }
+          syncBars();
+        });
         d.addEventListener('mouseenter', (e) => { const s = inv.armor[slot]; if (invOpen && s) showTip(s, e.clientX, e.clientY); });
         d.addEventListener('mouseleave', hideTip);
         invArmorEl.appendChild(d);
@@ -5859,10 +6646,6 @@
         paintRad();
       }
       paintVitals();
-      ghostEl.innerHTML = cursorStack
-        ? `<div style="width:100%;height:100%;background:url('${itemIconUrl(cursorStack.id)}') center/contain no-repeat;border-radius:6px;box-sizing:border-box;"></div><span class="n">${cursorStack.n > 1 ? cursorStack.n : ''}</span>`
-        : '';
-      ghostEl.style.display = cursorStack ? 'flex' : 'none';
       hideTip();
     }
 
@@ -5915,6 +6698,7 @@
     }
 
     function showTip(s, x, y) {
+      if (document.body.classList.contains('dd-dragging')) return;
       tipTitle.textContent = ITEMS[s.id].name;
       tipBody.innerHTML = tipLines(s).join('<br>');
       tipEl.style.display = 'block';
@@ -5930,8 +6714,6 @@
     function hideTip() { tipEl.style.display = 'none'; }
 
     document.addEventListener('mousemove', (e) => {
-      ghostEl.style.left = (e.clientX - 23) + 'px';
-      ghostEl.style.top = (e.clientY - 23) + 'px';
       if (tipEl.style.display === 'block') moveTip(e.clientX, e.clientY);
     });
 
@@ -5948,25 +6730,20 @@
     function toggleInv(force, relink = true) {
       invOpen = force !== undefined ? force : !invOpen;
       if (!invOpen) {
+        dragDrop.cancel();
         if (recipeOpen) toggleRecipes(false);
-        if (cursorStack) {
-          const stack = cursorStack;
-          const stored = stack.liquid ? giveStack(stack) : (give(stack.id, stack.n) === 0);
-          if (!stored) spawnDrop(stack.id, stack.n, null, stack.liquid || null);
-          cursorStack = null;
-        }
       }
       hoverSlot = -1;
       invPanel.classList.toggle('hidden', !invOpen);
       if (invOpen) {
-        if (document.pointerLockElement) document.exitPointerLock();
+        unlockPointer();
         overlay.style.display = 'none';
         syncBars();
       } else {
 
         if (relink) lockPointer();
         overlay.style.display = 'none';
-        setTimeout(() => { if (!locked && !invOpen && !recipeOpen) overlay.style.display = 'flex'; }, 350);
+        setTimeout(() => { if (!locked && !invOpen && !recipeOpen && !achieveOpen) overlay.style.display = 'flex'; }, 350);
       }
     }
 
@@ -5986,6 +6763,9 @@
     const recipeSearchEl = document.getElementById('recipeSearch');
     const recipeHintEl = document.getElementById('recipeHint');
     const recipeFiltersEl = document.getElementById('recipeFilters');
+    const recipeStartEl = document.getElementById('recipeStart');
+    const recipeStartItemsEl = document.getElementById('recipeStartItems');
+    const recipeStartLeftEl = document.getElementById('recipeStartLeft');
     let recipeOpen = false;
     let recipeSel = null;
     let recipeFilter = 'all';
@@ -6081,6 +6861,21 @@
       return src;
     }
 
+    function starterGuideVisible() { return playTime < STARTER_GUIDE_SECONDS; }
+
+    function paintStarterGuide() {
+      const show = starterGuideVisible();
+      recipeStartEl.hidden = !show;
+      if (!show) return;
+      const left = Math.max(0, Math.ceil((STARTER_GUIDE_SECONDS - playTime) / 60));
+      recipeStartLeftEl.textContent = `${left} MIN LEFT`;
+      recipeStartItemsEl.innerHTML = STARTER_GUIDE.map((id, i) => {
+        const name = ITEMS[id]?.name || id;
+        return `<button type="button" class="rstartItem${id === recipeSel ? ' sel' : ''}" data-id="${id}" title="${name}" aria-label="${name}">`
+          + `<b>${i + 1}</b><div style="background:url('${itemIconUrl(id)}') center/contain no-repeat"></div></button>`;
+      }).join('');
+    }
+
     function paintRecipeList() {
       const q = recipeSearchEl.value.trim().toLowerCase();
       const ids = Object.keys(ITEMS)
@@ -6092,6 +6887,7 @@
         return `<div class="ritem${id === recipeSel ? ' sel' : ''}" data-id="${id}">`
           + `<div style="background:url('${itemIconUrl(id)}') center/contain no-repeat"></div>${src}</div>`;
       }).join('');
+      paintStarterGuide();
     }
 
     function selectRecipe(id) {
@@ -6114,12 +6910,17 @@
       }
       recipePanelEl.classList.toggle('hidden', !recipeOpen);
       if (recipeOpen) {
-        if (document.pointerLockElement) document.exitPointerLock();
+        unlockPointer();
         paintRecipeFilters(); paintRecipeList(); paintRecipeDetail(); recipeSearchEl.focus();
       } else {
         lockPointer();
       }
     }
+
+    recipeStartEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.rstartItem');
+      if (btn) selectRecipe(btn.dataset.id);
+    });
 
     recipeItemsEl.addEventListener('click', (e) => {
       const el = e.target.closest('.ritem');
@@ -6272,7 +7073,9 @@
       if (machineSystem) carried *= 1 - machineSystem.carryShield();
       let r = carried - (machineSystem ? machineSystem.totalArmorRadShield() : 0);
       if (armorShieldTimer > 0) r -= 3;
-      r += ambientRad();
+      let amb = ambientRad();
+      if (machineSystem?.ambientCut) amb *= 1 - machineSystem.ambientCut();
+      r += amb;
       if (biomeAt(player.pos.x, player.pos.z) === B.WASTELAND) r += TUNING.WASTELAND_RAD;
       if (machineSystem) {
         r += machineSystem.localRad(player.pos.x, player.pos.y + 1, player.pos.z);
@@ -6349,7 +7152,6 @@
       inv.hot.fill(null);
       inv.main.fill(null);
       inv.armor = { head: null, chest: null, legs: null, feet: null, hands: null };
-      cursorStack = null;
       inv.dose = 60;
       vitals.hp = vitals.maxHp;
       vitals.hunger = vitals.maxHunger;
@@ -6377,6 +7179,8 @@
 
     document.addEventListener('mousemove', (e) => {
       if (!locked) return;
+      if (lookSkipEvents > 0) { lookSkipEvents--; return; }
+      if (performance.now() < lookBlockedUntil) return;
       player.yaw -= e.movementX * 0.0022;
       player.pitch -= e.movementY * 0.0022;
       const lim = Math.PI / 2 - 0.02;
@@ -6387,6 +7191,13 @@
     let panoRequested = false;
     document.addEventListener('keydown', (e) => {
       const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+
+      if (introOpen) return;
+
+      if (achieveOpen) {
+        if (e.code === 'Escape') { e.preventDefault(); closeAchievements(); }
+        return;
+      }
 
       if (mapSystem?.isOpen()) {
         if (e.code === 'Escape' || (e.code === 'KeyM' && !typing)) {
@@ -6420,7 +7231,7 @@
         if (visibleTree() && treeRootId === recipeSel) { treePanelEl.classList.add('hidden'); return; }
         treeRootId = recipeSel;
         openTree(recipeSel);
-        if (!recipeOpen && document.pointerLockElement) document.exitPointerLock();
+        if (!recipeOpen && document.pointerLockElement) unlockPointer();
         return;
       }
       if (cmdOpen) return;
@@ -6633,7 +7444,7 @@
       cmdEl.classList.remove('hidden');
       cmdInput.value = '';
       renderSuggest('');
-      if (document.pointerLockElement) document.exitPointerLock();
+      if (document.pointerLockElement) unlockPointer();
       overlay.style.display = 'none';
       cmdInput.focus();
     }
@@ -6644,7 +7455,7 @@
       cmdInput.blur();
       lockPointer();
       overlay.style.display = 'none';
-      setTimeout(() => { if (!locked && !invOpen && !cmdOpen) overlay.style.display = 'flex'; }, 350);
+      setTimeout(() => { if (!locked && !invOpen && !cmdOpen && !achieveOpen) overlay.style.display = 'flex'; }, 350);
     }
 
     function resolveItem(q) {
@@ -6873,6 +7684,8 @@
     document.addEventListener('keydown', (e) => {
       if (!cmdOpen) {
         if (WORLD_MODE !== 'sandbox') return;
+        const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+        if (typing) return;
         if (e.code === 'KeyL' || e.code === 'Backquote') { e.preventDefault(); openCmd(); }
         return;
       }
@@ -6957,7 +7770,7 @@
         if (best) {
           triggerSwing(Math.min(0.5, Math.max(0.2, tool.rate * 0.9)));
           best.hurtBy(22 + (tool.chop ? 18 : 0));
-          if (best.dying > 0) notice('WRAPPER DOWN');
+          if (best.dying > 0) { achBump('kills', 1); notice('WRAPPER DOWN'); }
           return;
         }
       }
@@ -6991,6 +7804,7 @@
       const hy = hit.y, yy = tool.yield;
       const stoneMult = tool.stone || 1;
       world.mineAnimated(hit.x, hit.y, hit.z, tool.radius, match ? 1 : (tool.weak || 0.3), () => {
+        achBump('mined', 1);
         if (match && yy > 0) {
           const bonus = yy - 1;
           for (const [id, n] of mineDrops(band, hy, hit.x, hit.z)) {
@@ -7067,7 +7881,7 @@
 
     function coverageSpacing(def) {
       if (!def) return 0;
-      if (def.kind === 'cable') return 22.5;
+      if (def.kind === 'cable' || def.kind === 'starter_cable') return 22.5;
       if (def.absorbRadius) return def.absorbRadius * 1.5;
       return 0;
     }
@@ -7077,11 +7891,11 @@
     function uncoveredMachineNear(x, z, r) {
       if (!machineSystem) return false;
       for (const m of machineSystem.instances) {
-        if (m.def.kind === 'cable') continue;
+        if (m.def.kind === 'cable' || m.def.kind === 'starter_cable') continue;
         if (Math.hypot(m.x - x, m.z - z) > r) continue;
         let covered = false;
         for (const p of machineSystem.instances) {
-          if (p.def.kind === 'cable' && Math.hypot(p.x - m.x, p.z - m.z) <= 6) { covered = true; break; }
+          if ((p.def.kind === 'cable' || p.def.kind === 'starter_cable') && Math.hypot(p.x - m.x, p.z - m.z) <= 6) { covered = true; break; }
         }
         if (!covered) return true;
       }
@@ -7163,6 +7977,7 @@
         }
         holdPlace.lastCell = [gx, gz];
         if (!placed) return null;
+        achBump('placed', 1);
         triggerSwing(0.26);
         syncBars();
         return { type: 'pipe' };
@@ -7182,6 +7997,9 @@
             && !(def.kind === 'cable' && uncoveredMachineNear(x, z, 6))) return null;
         }
         if (!machineSystem.place(ITEMS[s.id].workbench, x, z, { rot: placeRot })) return null;
+        achBump('machines', 1);
+        achBump('placed', 1);
+        ach.built[ITEMS[s.id].workbench] = true;
         holdPlace.lastPos = { x, z };
         triggerSwing(0.26);
         if (--s.n <= 0) inv.hot[inv.sel] = null;
@@ -7194,6 +8012,7 @@
       const r = Math.min(6, heldTool().radius * 2.2);
       const p = hit.clone().addScaledVector(dir, r * 0.75);
       world.placeAnimated(p, r, dir);
+      achBump('placed', 1);
       triggerSwing(0.26);
       if (--s.n <= 0) inv.hot[inv.sel] = null;
       syncBars();
@@ -7573,6 +8392,23 @@
 
 
 
+    function useBweController() {
+      const s = inv.hot[inv.sel];
+      if (!s || s.id !== 'bwe_controller') return false;
+      if (!machineSystem) return true;
+      let best = null, bestD = Infinity;
+      for (const m of machineSystem.instances) {
+        if (m.def.kind !== 'bwe') continue;
+        const d = Math.hypot(m.x - player.pos.x, m.z - player.pos.z);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+      if (!best) { notice('NO BWE FOUND'); return true; }
+      if (bestD > 128) { notice(`NEAREST BWE ${Math.round(bestD)}m AWAY`); return true; }
+      notice(`BWE LINKED · ${Math.round(bestD)}m`);
+      machineSystem.open(best);
+      return true;
+    }
+
     function useLiquidContainer() {
       const s = inv.hot[inv.sel];
       if (!s) return false;
@@ -7599,7 +8435,7 @@
       const id = s.liquid.id;
       const L = LIQUID_DEFS[id] || {};
       const amt = Liquid.drain(s, vol);
-      if (id === 'water') { world.addWater(cx, cz, amt, 1.6); notice(`POURED ${Math.round(amt)} WATER`); }
+      if (id === 'water') { notice(`DISCARDED ${Math.round(amt)} WATER`); }
       else if (L.acidic) {
         inv.dose += (L.rad || 0) * 10;
         hurt(6, 'burn');
@@ -7644,10 +8480,11 @@
         pickUnderCrosshair();
       }
       else if (e.button === 2) {
+        if (useBweController()) return;
         if (useConsumable()) return;
+        if (useInteractable()) return;
         if (useLiquidContainer()) return;
         if (useC4()) return;
-        if (useInteractable()) return;
         resetHoldPlace();
         doPlace();
         const s = inv.hot[inv.sel];
@@ -7691,18 +8528,22 @@
       const p = player.pos;
       const r = player.radius;
       const h = player.height;
+      // Sample the full body, including eye level and the very top of the head.
+      // The old 0.55 m spacing stopped at 1.35 m, so a cave ceiling could sit
+      // inside the head while the camera (at 1.62 m) poked through the world.
+      const ys = [0.25, 0.6, 0.95, 1.3, Math.min(player.eye, h - 0.02), h - 0.02];
 
 
       for (let a = 0; a < 8; a++) {
         const ang = (a / 8) * Math.PI * 2;
         const dx = Math.cos(ang) * r;
         const dz = Math.sin(ang) * r;
-        for (let y = 0.25; y <= h; y += 0.55) {
+        for (const y of ys) {
           if (world.field.sample(p.x + dx, p.y + y, p.z + dz) > 0) return true;
         }
       }
 
-      for (let y = 0.25; y <= h; y += 0.55) {
+      for (const y of ys) {
         if (world.field.sample(p.x, p.y + y, p.z) > 0) return true;
       }
       return false;
@@ -7739,9 +8580,26 @@
       return !b;
     }
 
+    // Steep ground is not walkable on foot: the ground may not rise faster than
+    // this over a 1 m look-ahead, and a walk can only step over a small lip.
+    // Jump to get up anything steeper.
+    const MAX_WALK_SLOPE = Math.tan(50 * Math.PI / 180);
+    const SLOPE_PROBE = 1.0;
+    const STEP_UP_MAX = 0.6;
+
+    function slopeBlocked(dx, dz) {
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-6) return false;
+      const reach = Math.max(SLOPE_PROBE, len);
+      const from = player.pos.y + 3;
+      const y0 = world.surfaceY(player.pos.x, player.pos.z, from);
+      const y1 = world.surfaceY(player.pos.x + dx / len * reach, player.pos.z + dz / len * reach, from);
+      return y1 - y0 > reach * MAX_WALK_SLOPE;
+    }
+
     function tryStepUp(dx, dz) {
       let lift = -1;
-      for (let s = 0.12; s <= 1.08; s += 0.12) {
+      for (let s = 0.12; s <= STEP_UP_MAX; s += 0.12) {
         if (fits(dx, dz, s)) { lift = s; break; }
       }
       if (lift < 0) return false;
@@ -7837,6 +8695,7 @@
 
     function movePlayer(dt) {
       if (mapSystem?.isOpen()) return;
+      landingCooldown = Math.max(0, landingCooldown - dt);
 
       const inWater = world.waterAt(player.pos.x, player.pos.y + 0.4, player.pos.z) > 0;
 
@@ -7920,26 +8779,34 @@
 
       player.onGround = false;
 
+      // Refuse horizontal movement into ground steeper than a walkable slope
+      // (checked per axis, so you still slide along the contour of a hill).
+      let mx = dx, mz = dz;
+      if (wasGrounded) {
+        if (dx !== 0 && slopeBlocked(dx, 0)) { mx = 0; player.vel.x = 0; }
+        if (dz !== 0 && slopeBlocked(0, dz)) { mz = 0; player.vel.z = 0; }
+      }
+
 
       const bx = structureBlockedAt(player.pos.x, player.pos.z);
-      player.pos.x += dx;
+      player.pos.x += mx;
       if (!bx && structureBlockedAt(player.pos.x, player.pos.z)) {
-        player.pos.x -= dx;
+        player.pos.x -= mx;
         player.vel.x = 0;
       } else if (playerCollides()) {
-        player.pos.x -= dx;
-        if (!(dx !== 0 && player.vel.y <= 0.5 && tryStepUp(dx, 0))) player.vel.x = 0;
+        player.pos.x -= mx;
+        if (!(mx !== 0 && player.vel.y <= 0.5 && tryStepUp(mx, 0))) player.vel.x = 0;
       }
 
 
       const bz = structureBlockedAt(player.pos.x, player.pos.z);
-      player.pos.z += dz;
+      player.pos.z += mz;
       if (!bz && structureBlockedAt(player.pos.x, player.pos.z)) {
-        player.pos.z -= dz;
+        player.pos.z -= mz;
         player.vel.z = 0;
       } else if (playerCollides()) {
-        player.pos.z -= dz;
-        if (!(dz !== 0 && player.vel.y <= 0.5 && tryStepUp(0, dz))) player.vel.z = 0;
+        player.pos.z -= mz;
+        if (!(mz !== 0 && player.vel.y <= 0.5 && tryStepUp(0, mz))) player.vel.z = 0;
       }
 
 
@@ -7948,7 +8815,7 @@
         player.pos.y -= dy;
         if (player.vel.y < 0) player.onGround = true;
         player.vel.y = 0;
-      } else if (wasGrounded && player.vel.y <= 0 && (dx !== 0 || dz !== 0)) {
+      } else if (wasGrounded && player.vel.y <= 0 && (mx !== 0 || mz !== 0)) {
 
         const gy = groundY();
         if (gy !== null) {
@@ -7984,11 +8851,16 @@
 
 
       if (!wasGrounded && player.onGround) {
-        if (fallPeak > 15) {
-          const dmg = (fallPeak - 15) * 3;
-          hurt(dmg, 'pain');
-          if (dmg > 20) addWound('bleeding');
-          notice(`FALL · -${Math.round(dmg)} HP`);
+        if (landingCooldown <= 0) {
+          if (fallPeak > 15) {
+            const dmg = (fallPeak - 15) * 3;
+            hurt(dmg, 'pain');
+            if (dmg > 20) addWound('bleeding');
+            notice(`FALL · -${Math.round(dmg)} HP`);
+          }
+          if (!inWater) footsteps.land(footstepCategory(), Math.min(0.9, 0.62 + fallPeak * 0.012) * masterVolume);
+          landingVelocity -= Math.min(2.8, 0.9 + fallPeak * 0.035);
+          landingCooldown = 0.22;
         }
         fallPeak = 0;
         if (slideQueued) {
@@ -8007,7 +8879,7 @@
 
       const steppedDist = Math.hypot(player.pos.x - stepPrev.x, player.pos.z - stepPrev.z);
       stepPrev.copy(player.pos);
-      if (player.onGround && !inWater && Math.hypot(player.vel.x, player.vel.z) > 0.6) {
+      if (player.onGround && !sliding && !inWater && Math.hypot(player.vel.x, player.vel.z) > 0.6) {
         stepAccum += steppedDist;
       } else {
         stepAccum = 0;
@@ -8147,7 +9019,8 @@
         `<span class="k">hp</span> ${vitals.hp.toFixed(0)} <span class="k">food</span> ${vitals.hunger.toFixed(0)} ` +
         `<span class="k">wounds</span> ${Object.keys(vitals.wounds).join(',') || '--'}<br>` +
         `<span class="k">machines</span> ${machineSystem ? machineSystem.instances.length : 0}` +
-        `${machineSystem && machineSystem.instances.some((m) => m.def.kind === 'reactor') ? ` <span class="k">reactors</span> ${machineSystem.instances.filter((m) => m.def.kind === 'reactor').length}` : ''}<br>` +
+        `${machineSystem && machineSystem.instances.some((m) => m.def.kind === 'reactor') ? ` <span class="k">reactors</span> ${machineSystem.instances.filter((m) => m.def.kind === 'reactor').length}` : ''}` +
+        `${machineSystem && machineSystem.ambientCut && machineSystem.ambientCut() > 0 ? ` <span class="k">scrub</span> ${Math.round(machineSystem.ambientCut() * 100)}%` : ''}<br>` +
         `<span class="k">pos</span> ${p.x.toFixed(1)} / ${p.y.toFixed(1)} / ${p.z.toFixed(1)}<br>` +
         `<span class="k">chunk</span> ${Math.floor(p.x / CHUNK_SIZE)}, ` +
         `${Math.floor(p.y / CHUNK_SIZE)}, ${Math.floor(p.z / CHUNK_SIZE)}<br>` +
@@ -8284,6 +9157,11 @@
     let eyeCur = 1.62;
     let camY = null;
     let slidePitch = 0;
+    let cameraRoll = 0;
+    let cameraBob = 0;
+    let landingOffset = 0;
+    let landingVelocity = 0;
+    let landingCooldown = 0;
     let uwT = 0;
     let drinkT = 0;
     let shakeT = 0;
@@ -8394,6 +9272,7 @@
 
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+      playTime += dt;
       fpsSmooth += ((1 / Math.max(dt, 1e-4)) - fpsSmooth) * 0.08;
 
 
@@ -8422,6 +9301,8 @@
       machineSystem?.update(dt);
       if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
       updateVitals(dt);
+      updateGuide(dt);
+      updateAchievements(dt);
       const inWaste = biomeAt(player.pos.x, player.pos.z) === B.WASTELAND;
       if (inWaste !== wasInWaste) {
         wasInWaste = inWaste;
@@ -8436,15 +9317,26 @@
 
       eyeCur += ((sliding ? 1.02 : player.eye) - eyeCur) * Math.min(1, dt * 10);
       slidePitch += ((sliding ? 0.14 : 0) - slidePitch) * Math.min(1, dt * 8);
+      const speed = Math.hypot(player.vel.x, player.vel.z);
+      const localRight = player.vel.x * Math.cos(player.yaw) - player.vel.z * Math.sin(player.yaw);
+      const moveLean = Math.max(-1, Math.min(1, localRight / 5.5));
+      const leanTarget = -moveLean * (sliding ? 0.16 : 0.12);
+      cameraRoll += (leanTarget - cameraRoll) * (1 - Math.exp(-dt * 3.8));
+      const movingGrounded = player.onGround && !sliding && speed > 0.65;
+      if (movingGrounded) cameraBob += dt * (keys.ShiftLeft || keys.ShiftRight ? 13 : 9);
+      const landingSpring = -landingOffset * 88 - landingVelocity * 17;
+      landingVelocity += landingSpring * dt;
+      landingOffset += landingVelocity * dt;
+      if (Math.abs(landingOffset) < 0.0005 && Math.abs(landingVelocity) < 0.005) { landingOffset = 0; landingVelocity = 0; }
       const camTargetY = player.pos.y + eyeCur;
       camY = camY === null ? camTargetY : camY + (camTargetY - camY) * Math.min(1, dt * 22);
       const shake = shakeT > 0 ? shakeT * 0.12 : 0;
       camera.position.set(
         player.pos.x + (Math.random() - 0.5) * shake,
-        camY + (Math.random() - 0.5) * shake,
+        camY + (movingGrounded ? Math.abs(Math.sin(cameraBob)) * 0.035 : 0) + landingOffset + (Math.random() - 0.5) * shake,
         player.pos.z + (Math.random() - 0.5) * shake);
       camera.rotation.y = player.yaw + (Math.random() - 0.5) * shake * 0.5;
-      camera.rotation.x = player.pitch + slidePitch + (Math.random() - 0.5) * shake * 0.5;
+      camera.rotation.x = player.pitch + slidePitch - landingOffset * 0.24 + (Math.random() - 0.5) * shake * 0.5;
 
 
       const _pJobs = performance.now();
@@ -8456,6 +9348,10 @@
       pumpDeathSpill();
       updateDrops(dt, now);
       workbenchUI.update(dt);
+      if (recipeOpen) {
+        starterUiTimer += dt;
+        if (starterUiTimer >= 1) { starterUiTimer = 0; paintStarterGuide(); }
+      }
 
       perf.drops += performance.now() - _pDrops;
 
@@ -8533,7 +9429,8 @@
 
 
       const _pMisc = performance.now();
-      const baseFar = viewRadius * 16, baseNear = baseFar * 0.6;
+      const baseFar = viewRadius * CHUNK_SIZE, baseNear = baseFar * 0.6;
+      camera.far = Math.max(400, baseFar * 1.1);
 
 
       uwT += ((submerged ? 1 : 0) - uwT) * Math.min(1, dt * 6);
@@ -8541,7 +9438,7 @@
       scene.fog.far = baseFar + (22 - baseFar) * uwT;
       scene.fog.color.copy(skyNow).lerp(UNDERWATER_COL, uwT);
       scene.background.copy(skyNow).lerp(UNDERWATER_COL, uwT);
-      camera.rotation.z = Math.sin(now * 0.0011) * 0.05 * uwT;
+      camera.rotation.z = cameraRoll + Math.sin(now * 0.0011) * 0.05 * uwT;
       clouds.visible = uwT < 0.85;
       sunDisc.material.opacity = 0.95 * (1 - uwT) * sunVis;
       sunGlow.material.opacity = 0.25 * (1 - uwT) * sunVis;
@@ -8629,6 +9526,7 @@
       updateHud(dt);
     }
 
+    maybeShowIntro();
     scheduleNextFrame();
 
 

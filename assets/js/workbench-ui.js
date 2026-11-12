@@ -39,6 +39,23 @@ export class WorkbenchUI {
     this.root.hidden = true;
     this.root.innerHTML = '<div class="workbench-frame"><section id="powerMeter" aria-label="Machine power level" hidden><header>POWER</header><div class="track"><div id="powerFill"></div></div><span id="powerNum">0 / 0</span></section><aside class="workbench-craft-rail" hidden><header>CRAFTING</header><div class="workbench-craft-list"></div></aside><div class="workbench-window"><section class="workbench-work-area"><header class="workbench-heading"><div><h1></h1></div><button type="button" class="workbench-close">ESC&nbsp; / &nbsp;CLOSE</button></header><div class="workbench-layout"></div></section><aside class="workbench-inventory"><header><h2>INVENTORY</h2></header><div class="workbench-inventory-grid"></div></aside></div></div>';
     document.body.appendChild(this.root);
+    this.compact = false;
+    this.mini = document.createElement('section');
+    this.mini.className = 'bwe-mini';
+    this.mini.hidden = true;
+    this.mini.setAttribute('aria-label', 'Bucket wheel excavator controls');
+    this.mini.innerHTML = `<header class="bwe-mini-head"><span>BWE CONTROL</span><b class="bwe-mini-status">WHEEL OFF</b><button type="button" data-mini="expand">EXPAND</button><button type="button" class="bwe-mini-close" data-mini="close" aria-label="Close BWE controls">×</button></header>
+      <div class="bwe-mini-body">
+        <div class="bwe-mini-group"><span>YAW</span><button type="button" data-bwe-action="yawLeft" aria-label="Rotate left">◀</button><button type="button" data-bwe-action="yawRight" aria-label="Rotate right">▶</button></div>
+        <div class="bwe-mini-group"><span>BOOM</span><button type="button" data-bwe-action="boomUp" aria-label="Raise boom">▲</button><button type="button" data-bwe-action="boomDown" aria-label="Lower boom">▼</button></div>
+        <div class="bwe-mini-group"><span>WHEEL</span><button type="button" class="bwe-wheel" data-bwe-action="wheel">SPIN</button></div>
+      </div>
+      <footer class="bwe-mini-foot"><span data-mini="yaw">YAW 0°</span><span data-mini="boom">BOOM 0°</span><span data-mini="hold">HOLD 0 / 64</span></footer>`;
+    document.body.appendChild(this.mini);
+    this._miniStops = [];
+    this.wireBweActions(this.mini, this._miniStops);
+    this.mini.querySelector('[data-mini="expand"]').addEventListener('click', () => this.expandBwe());
+    this.mini.querySelector('[data-mini="close"]').addEventListener('click', () => this.close());
     this.workArea = this.root.querySelector('.workbench-layout');
     this.inventoryGrid = this.root.querySelector('.workbench-inventory-grid');
     this.powerPanel = document.getElementById('powerMeter');
@@ -64,70 +81,26 @@ export class WorkbenchUI {
     this.root.querySelector('.workbench-close').addEventListener('click', () => this.close());
     this._key = (e) => { if (this.opened && e.code === 'Escape') { e.preventDefault(); this.close(); } };
     window.addEventListener('keydown', this._key);
-
-
-
-    this._drag = null;
-    this._ghost = document.createElement('div');
-    this._ghost.className = 'workbench-drag-ghost';
-    this._ghost.hidden = true;
-    document.body.appendChild(this._ghost);
-    this._onMove = (e) => this.dragMove(e);
-    this._onUp = (e) => this.dragEnd(e);
+    this.dragDrop = null;
   }
 
-  dragStart(e, index, stack) {
-    if (e.button !== 0) return;
-    this._drag = { index, stack, x: e.clientX, y: e.clientY, active: false, over: null };
-    window.addEventListener('pointermove', this._onMove);
-    window.addEventListener('pointerup', this._onUp);
-  }
-
-  dragMove(e) {
-    const d = this._drag;
-    if (!d) return;
-    if (!d.active) {
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) return;
-      d.active = true;
-      const icon = this.bridge.icon?.(d.stack.id);
-      this._ghost.innerHTML = `${icon ? `<img src="${icon}" alt="">` : ''}<b>${d.stack.n}</b>`;
-      this._ghost.hidden = false;
-      document.body.classList.add('workbench-dragging');
-      this.bridge.hideTip?.();
+  findDepositRole(index) {
+    if (!this.layout?.elements || !this.bridge.drop) return null;
+    for (const el of this.layout.elements) {
+      if (el.type !== 'slot' || !el.role || el.role.startsWith('output') || el.role === 'craftOutput') continue;
+      if (this.bridge.drop(index, el.role)) return el.role;
     }
-    this._ghost.style.transform = `translate(${e.clientX + 8}px, ${e.clientY + 8}px)`;
-    const el = this.dropTarget(e.clientX, e.clientY);
-    if (d.over && d.over !== el) d.over.classList.remove('drag-over');
-    d.over = el;
-    if (el) el.classList.add('drag-over');
-  }
-
-  dragEnd(e) {
-    const d = this._drag;
-    if (!d) return;
-    window.removeEventListener('pointermove', this._onMove);
-    window.removeEventListener('pointerup', this._onUp);
-    this._drag = null;
-    this._suppressClick = d.active;
-    if (d.active) setTimeout(() => { this._suppressClick = false; }, 0);
-    if (d.over) d.over.classList.remove('drag-over');
-    this._ghost.hidden = true;
-    document.body.classList.remove('workbench-dragging');
-    const el = this.dropTarget(e.clientX, e.clientY);
-    if (d.active && el) {
-      this.bridge.drop?.(d.index, el.dataset.role);
-      this.renderInventory();
-      this.renderDynamic();
-    }
-  }
-
-  dropTarget(x, y) {
-    const el = document.elementFromPoint(x, y)?.closest('.workbench-slot');
-    const role = el?.dataset.role || '';
-    return role && role !== 'craftOutput' && !role.startsWith('output') ? el : null;
+    return null;
   }
 
   setBridge(bridge) { this.bridge = bridge || {}; }
+
+  refresh() {
+    if (!this.opened) return;
+    this.inventorySignature = '';
+    this.renderInventory();
+    this.renderDynamic();
+  }
 
   open(machine, onClose) {
     this.machine = machine;
@@ -147,15 +120,13 @@ export class WorkbenchUI {
 
   close() {
     if (!this.opened) return;
-    if (this._drag) {
-      window.removeEventListener('pointermove', this._onMove);
-      window.removeEventListener('pointerup', this._onUp);
-      if (this._drag.over) this._drag.over.classList.remove('drag-over');
-      this._drag = null;
-      this._ghost.hidden = true;
-      document.body.classList.remove('workbench-dragging');
-    }
+    this.dragDrop?.cancel();
     this.setActive(false);
+    if (this._bweStops) { for (const stop of this._bweStops) stop(); this._bweStops = []; }
+    if (this._miniStops) { for (const stop of this._miniStops) stop(); }
+    this.compact = false;
+    if (this.mini) this.mini.hidden = true;
+    this.bridge.onCompact?.(false);
     this.opened = false;
     this.root.hidden = true;
     this.bridge.hideTip?.();
@@ -173,7 +144,7 @@ export class WorkbenchUI {
   slotView(role) { return this.bridge.slotView?.(role) || null; }
 
   renderLayout() {
-    const isWorkflowOnly = !!this.machine && (this.machine.def.kind === 'processor' || this.machine.def.kind === 'crafting');
+    const isWorkflowOnly = !!this.machine && (this.machine.def.kind === 'processor' || this.machine.def.kind === 'crafting' || this.machine.def.kind === 'bwe');
     const { cols } = this.layout.grid;
     if (isWorkflowOnly) {
       this.workArea.style.display = 'flex';
@@ -182,12 +153,15 @@ export class WorkbenchUI {
       this.workArea.style.gridTemplateRows = '';
       this.workArea.style.gridAutoRows = '';
       this.workArea.style.alignContent = '';
+      this.workArea.style.justifyContent = '';
     } else {
+      const slotSize = 56;
       this.workArea.style.display = 'grid';
-      this.workArea.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      this.workArea.style.gridTemplateColumns = `repeat(${cols}, ${slotSize}px)`;
       this.workArea.style.gridTemplateRows = 'auto';
-      this.workArea.style.gridAutoRows = 'minmax(48px, auto)';
+      this.workArea.style.gridAutoRows = `${slotSize}px`;
       this.workArea.style.alignContent = 'start';
+      this.workArea.style.justifyContent = 'start';
       this.workArea.style.flexDirection = '';
     }
     this.workArea.replaceChildren();
@@ -200,6 +174,15 @@ export class WorkbenchUI {
         && (el.type === 'label' && (el.id === 'info' || el.id === 'status'))
         || ((this.machine?.def?.kind === 'crafting' || this.machine?.def?.kind === 'processor')
           && el.type === 'progress')) {
+        continue;
+      }
+
+      if (el.type === 'bwe') {
+        const node = document.createElement('div');
+        node.className = 'workbench-bwe';
+        node.dataset.id = el.id;
+        this.buildBwe(node);
+        this.workArea.appendChild(node);
         continue;
       }
 
@@ -218,7 +201,7 @@ export class WorkbenchUI {
       } else if (el.type === 'slot') {
         node.type = 'button';
         node.dataset.role = el.role || '';
-        node.innerHTML = `<span class="workbench-slot-label">${el.label || el.role || 'SLOT'}</span><span class="workbench-slot-content"><img alt=""><b class="workbench-slot-count"></b></span>`;
+        node.innerHTML = `<span class="workbench-slot-label">${el.label ?? ''}</span><span class="workbench-slot-content"><img alt=""><b class="workbench-slot-count"></b></span>`;
         const role = el.role || '';
         node.addEventListener('mouseenter', (e) => {
           const view = this.slotView(role);
@@ -230,6 +213,7 @@ export class WorkbenchUI {
           else this.bridge.take?.(role);
           this.renderInventory(); this.renderDynamic();
         });
+        this.dragDrop?.bind(node, this.bridge.slotAdapter?.(role));
       } else if (el.type === 'progress') {
         node.innerHTML = `<span>${el.label || 'PROCESS'}</span><div class="workbench-progress-track"><i></i></div>`;
       } else if (el.type === 'arrow') node.setAttribute('aria-label', 'Flow direction');
@@ -237,6 +221,189 @@ export class WorkbenchUI {
     }
     this.renderMachineWorkflow();
     this.applyTheme();
+  }
+
+  buildBwe(node) {
+    const total = this.machine?.def?.outputs || 64;
+    node.innerHTML = `
+      <section class="bwe-controls">
+        <div class="bwe-readout">
+          <div class="bwe-status" data-on="0">WHEEL OFF</div>
+          <div class="bwe-metrics">
+            <div><span>YAW</span><b data-bwe="yaw">0°</b></div>
+            <div><span>BOOM</span><b data-bwe="boom">0°</b></div>
+            <div><span>HOLD</span><b data-bwe="used">0 / ${total}</b></div>
+          </div>
+        </div>
+        <div class="bwe-keys">
+          <div class="bwe-keygroup">
+            <span>YAW</span>
+            <button type="button" data-bwe-action="yawLeft" aria-label="Rotate left">◀</button>
+            <button type="button" data-bwe-action="yawRight" aria-label="Rotate right">▶</button>
+          </div>
+          <div class="bwe-keygroup">
+            <span>BOOM</span>
+            <button type="button" data-bwe-action="boomUp" aria-label="Raise boom">▲</button>
+            <button type="button" data-bwe-action="boomDown" aria-label="Lower boom">▼</button>
+          </div>
+          <div class="bwe-keygroup">
+            <span>WHEEL</span>
+            <button type="button" class="bwe-wheel" data-bwe-action="wheel">SPIN</button>
+          </div>
+          <div class="bwe-keygroup">
+            <span>VIEW</span>
+            <button type="button" class="bwe-mini-toggle" title="Hide the panel and keep a compact control card on screen">MINIMIZE</button>
+          </div>
+        </div>
+      </section>
+      <section class="bwe-storage">
+        <header><span>BWE HOLD</span><b data-bwe="slots">0 / ${total}</b></header>
+        <div class="bwe-grid"></div>
+      </section>
+    `;
+    const grid = node.querySelector('.bwe-grid');
+    for (let i = 0; i < total; i++) {
+      const role = `output${i}`;
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      slot.className = 'workbench-slot bwe-slot';
+      slot.dataset.role = role;
+      slot.innerHTML = '<span class="workbench-slot-content"><img alt=""><b class="workbench-slot-count"></b></span>';
+      slot.addEventListener('mouseenter', (e) => {
+        const view = this.slotView(role);
+        if (view?.item) this.bridge.showTip?.({ id: view.item, n: view.count || 1 }, e.clientX, e.clientY);
+      });
+      slot.addEventListener('mouseleave', () => this.bridge.hideTip?.());
+      slot.addEventListener('click', () => {
+        this.bridge.collect?.(role);
+        this.renderInventory();
+        this.renderBweDynamic();
+      });
+      this.dragDrop?.bind(slot, this.bridge.slotAdapter?.(role));
+      grid.appendChild(slot);
+    }
+
+    this._bweStops = [];
+    this.wireBweActions(node, this._bweStops);
+    node.querySelector('.bwe-mini-toggle')?.addEventListener('click', () => this.minimizeBwe());
+    this.renderBweDynamic();
+  }
+
+  wireBweActions(root, stops) {
+    root.querySelectorAll('[data-bwe-action]').forEach((btn) => {
+      const action = btn.dataset.bweAction;
+      const fire = () => { this.bridge.bweControl?.(action); this.updateBweUi(); };
+      if (action === 'wheel') {
+        btn.addEventListener('click', fire);
+        return;
+      }
+      let timer = null;
+      const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+      const start = (e) => {
+        e.preventDefault();
+        if (timer) return;
+        fire();
+        timer = setInterval(fire, 70);
+      };
+      btn.addEventListener('pointerdown', start);
+      btn.addEventListener('pointerup', stop);
+      btn.addEventListener('pointerleave', stop);
+      btn.addEventListener('pointercancel', stop);
+      // Keyboard activation does not emit pointerdown; detail === 0 marks it.
+      btn.addEventListener('click', (e) => { if (e.detail === 0) fire(); });
+      stops.push(stop);
+    });
+  }
+
+  updateBweUi() {
+    if (this.compact) this.renderBweMini();
+    else this.renderBweDynamic();
+  }
+
+  minimizeBwe() {
+    if (!this.opened || !this.machine || this.machine.def.kind !== 'bwe') return;
+    this.compact = true;
+    this.root.hidden = true;
+    if (this.powerPanel) this.powerPanel.hidden = true;
+    this.bridge.hideTip?.();
+    if (this._bweStops) { for (const stop of this._bweStops) stop(); this._bweStops = []; }
+    this.mini.hidden = false;
+    this.renderBweMini();
+    this.bridge.onCompact?.(true);
+  }
+
+  expandBwe() {
+    if (!this.compact) return;
+    this.compact = false;
+    this.mini.hidden = true;
+    if (this._miniStops) { for (const stop of this._miniStops) stop(); }
+    this.root.hidden = false;
+    this.renderLayout();
+    this.renderInventory();
+    this.renderDynamic();
+    this.bridge.onCompact?.(false);
+  }
+
+  renderBweMini() {
+    if (!this.compact || !this.mini) return;
+    const state = this.bridge.bweState?.();
+    if (!state) return;
+    const status = this.mini.querySelector('.bwe-mini-status');
+    if (status) {
+      status.textContent = state.status || 'IDLE';
+      status.dataset.on = state.wheel ? '1' : '0';
+    }
+    const yaw = this.mini.querySelector('[data-mini="yaw"]');
+    const boom = this.mini.querySelector('[data-mini="boom"]');
+    const hold = this.mini.querySelector('[data-mini="hold"]');
+    if (yaw) yaw.textContent = `YAW ${Math.round((state.yaw || 0) * 180 / Math.PI)}°`;
+    if (boom) boom.textContent = `BOOM ${Math.round((state.boom || 0) * 180 / Math.PI)}°`;
+    if (hold) hold.textContent = `HOLD ${state.used} / ${state.total}`;
+    const wheel = this.mini.querySelector('[data-bwe-action="wheel"]');
+    if (wheel) {
+      wheel.classList.toggle('active', !!state.wheel);
+      wheel.textContent = state.wheel ? 'STOP' : 'SPIN';
+    }
+  }
+
+  renderBweDynamic() {
+    if (!this.opened) return;
+    const node = this.workArea.querySelector('.workbench-bwe');
+    if (!node) return;
+    for (const slot of node.querySelectorAll('.bwe-slot')) {
+      const role = slot.dataset.role || '';
+      const view = this.slotView(role);
+      const count = slot.querySelector('.workbench-slot-count');
+      const icon = slot.querySelector('img');
+      const n = view?.count || 0;
+      if (count) count.textContent = n > 0 ? `×${n}` : '';
+      if (icon) {
+        const url = view?.item ? (this.bridge.icon?.(view.item) || '') : '';
+        icon.hidden = !url;
+        if (url) icon.src = url;
+      }
+      slot.classList.toggle('filled', !!view?.item);
+    }
+    const state = this.bridge.bweState?.();
+    if (!state) return;
+    const status = node.querySelector('.bwe-status');
+    if (status) {
+      status.textContent = state.status || 'IDLE';
+      status.dataset.on = state.wheel ? '1' : '0';
+    }
+    const yaw = node.querySelector('[data-bwe="yaw"]');
+    const boom = node.querySelector('[data-bwe="boom"]');
+    const used = node.querySelector('[data-bwe="used"]');
+    const slots = node.querySelector('[data-bwe="slots"]');
+    if (yaw) yaw.textContent = `${Math.round((state.yaw || 0) * 180 / Math.PI)}°`;
+    if (boom) boom.textContent = `${Math.round((state.boom || 0) * 180 / Math.PI)}°`;
+    if (used) used.textContent = `${state.used} / ${state.total}`;
+    if (slots) slots.textContent = `${state.used} / ${state.total}`;
+    const wheel = node.querySelector('[data-bwe-action="wheel"]');
+    if (wheel) {
+      wheel.classList.toggle('active', !!state.wheel);
+      wheel.textContent = state.wheel ? 'STOP' : 'SPIN';
+    }
   }
 
   recipeIconEntry(recipe) {
@@ -278,6 +445,24 @@ export class WorkbenchUI {
         </section>
       `;
       this.workArea.appendChild(panel);
+      const grid = panel.querySelector('.workbench-output-grid');
+      const slotAt = (e) => {
+        const cell = e.target.closest?.('[data-role]');
+        return cell ? { cell, slot: this.machine?.state.slots[cell.dataset.role] } : null;
+      };
+      grid.addEventListener('click', (e) => {
+        const hit = slotAt(e);
+        if (!hit) return;
+        this.bridge.collect?.(hit.cell.dataset.role);
+        this.bridge.hideTip?.();
+        this.renderInventory();
+        this.renderDynamic();
+      });
+      grid.addEventListener('mouseover', (e) => {
+        const hit = slotAt(e);
+        if (hit?.slot) this.bridge.showTip?.({ id: hit.slot.id, n: hit.slot.n || 1 }, e.clientX, e.clientY);
+      });
+      grid.addEventListener('mouseout', () => this.bridge.hideTip?.());
     }
 
     const currentGrid = panel.querySelector('.workbench-current-grid');
@@ -314,29 +499,30 @@ export class WorkbenchUI {
     }
 
     outputGrid.replaceChildren();
-    const outputs = [];
+    let shown = 0;
     for (let i = 0; i < 8; i++) {
-      const a = m.state.slots[`output${i}`] || m.state.slots[`o${i}`];
-      if (a) outputs.push(a);
+      const role = m.state.slots[`output${i}`] ? `output${i}` : (m.state.slots[`o${i}`] ? `o${i}` : null);
+      const slot = role ? m.state.slots[role] : null;
+      if (!slot) continue;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'workbench-work-cell';
+      cell.dataset.role = role;
+      const img = document.createElement('img');
+      const url = slot.id ? (this.bridge.icon?.(slot.id) || '') : '';
+      if (url) { img.src = url; img.alt = slot.id; }
+      const count = document.createElement('b');
+      count.textContent = `×${slot.n || 1}`;
+      cell.append(img, count);
+      this.dragDrop?.bind(cell, this.bridge.slotAdapter?.(role));
+      outputGrid.appendChild(cell);
+      shown++;
     }
-    if (!outputs.length) {
+    if (!shown) {
       const empty = document.createElement('div');
       empty.className = 'workbench-work-cell empty';
       empty.textContent = 'NONE';
       outputGrid.appendChild(empty);
-    } else {
-      for (const slot of outputs) {
-        const cell = document.createElement('div');
-        cell.className = 'workbench-work-cell';
-        const img = document.createElement('img');
-        const url = slot?.id ? (this.bridge.icon?.(slot.id) || '') : '';
-        if (url) { img.src = url; img.alt = slot.id; }
-        const count = document.createElement('b');
-        count.textContent = `×${slot.n || 1}`;
-        cell.appendChild(img);
-        cell.appendChild(count);
-        outputGrid.appendChild(cell);
-      }
     }
 
     const pct = Math.max(0, Math.min(1, this.bridge.progressValue?.() ?? 0)) * 100;
@@ -365,53 +551,6 @@ export class WorkbenchUI {
         queueList.appendChild(row);
       }
     }
-  }
-
-  renderDynamic() {
-    if (!this.opened) return;
-    this.renderPower();
-    for (const el of this.layout.elements) {
-      if (el.type === 'slot') {
-        const node = this.slotNode(el.role || '');
-        if (!node) continue;
-        const view = this.slotView(el.role || '');
-        const count = node.querySelector('.workbench-slot-count');
-        const icon = node.querySelector('.workbench-slot-content img');
-        const item = view?.item || null;
-        const n = view?.count || 0;
-        if (count) count.textContent = n > 0 ? `× ${n}` : '';
-        if (icon) {
-          const url = item && this.bridge.icon ? this.bridge.icon(item) : '';
-          icon.hidden = !url;
-          if (url) icon.src = url;
-        }
-        node.classList.toggle('synthetic', !!(view?.synthetic && item));
-      }
-      if (el.type === 'label' && el.id === 'status') {
-        const node = this.workArea.querySelector(`[data-id="${CSS.escape(el.id)}"]`);
-        if (node) node.textContent = this.bridge.statusText?.() ?? '';
-      }
-      if (el.type === 'progress') {
-        const bar = this.workArea.querySelector(`[data-id="${CSS.escape(el.id)}"] i`);
-        if (bar) {
-          let v = null;
-          if (el.id === 'heat') v = this.bridge.heatValue?.();
-          else if (el.id === 'match') v = this.bridge.matchValue?.();
-          else v = this.bridge.progressValue?.();
-          const pct = Math.max(0, Math.min(1, v ?? 0)) * 100;
-          bar.style.width = `${pct}%`;
-        }
-      }
-      if (el.type === 'power') {
-        const bar = this.workArea.querySelector(`[data-id="${CSS.escape(el.id)}"] i`);
-        const v = this.bridge.powerValue?.();
-        if (bar) bar.style.width = `${Math.max(0, Math.min(1, v ?? 0)) * 100}%`;
-      }
-    }
-    this.renderMachineWorkflow();
-    if (!this.craftRail.hidden) this.renderCraftRail();
-    const anyProgress = this.bridge.progressValue?.() ?? 0;
-    this.setActive(anyProgress > 0 && anyProgress < 1);
   }
 
   applyTheme() {
@@ -501,6 +640,8 @@ export class WorkbenchUI {
         if (bar) bar.style.width = `${Math.max(0, Math.min(1, v ?? 0)) * 100}%`;
       }
     }
+    this.renderMachineWorkflow();
+    this.renderBweDynamic();
     if (!this.craftRail.hidden) this.renderCraftRail();
     const anyProgress = this.bridge.progressValue?.() ?? 0;
     this.setActive(anyProgress > 0 && anyProgress < 1);
@@ -525,15 +666,28 @@ export class WorkbenchUI {
         slot.classList.add('has-item');
         slot.addEventListener('mouseenter', (e) => this.bridge.showTip?.(stack, e.clientX, e.clientY));
         slot.addEventListener('mouseleave', () => this.bridge.hideTip?.());
-        slot.addEventListener('pointerdown', (e) => this.dragStart(e, index, stack));
       } else slot.innerHTML = '<span class="item-code"></span>';
-      if (index < 7) slot.addEventListener('click', () => { if (this._suppressClick) return; this.bridge.selectHotbar?.(index); this.renderInventory(); });
+      this.dragDrop?.bind(slot, this.bridge.invAdapter?.(index));
+      if (index < 7) slot.addEventListener('click', (e) => {
+        if (e.shiftKey && stack) {
+          e.preventDefault();
+          const deposited = this.findDepositRole(index);
+          if (deposited !== null) {
+            this.renderInventory();
+            this.renderDynamic();
+          }
+          return;
+        }
+        this.bridge.selectHotbar?.(index);
+        this.renderInventory();
+      });
       this.inventoryGrid.appendChild(slot);
     }
   }
 
   update() {
     if (!this.opened) return;
+    if (this.compact) { this.renderBweMini(); return; }
     this.renderInventory();
     this.renderDynamic();
   }

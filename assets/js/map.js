@@ -45,12 +45,12 @@ export function screenToWorld(sx, sy, view, w, h) {
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const LAYER_DEFAULTS = {
-  terrain: true, water: true, sites: true, machines: true,
+  terrain: true, sites: true, machines: true,
   deaths: true, bookmarks: true,
 };
 
 const LAYER_NAMES = {
-  terrain: 'TERRAIN', water: 'WATER', sites: 'SITES', machines: 'MACHINES',
+  terrain: 'TERRAIN', sites: 'SITES', machines: 'MACHINES',
   deaths: 'DEATHS', bookmarks: 'MARKS',
 };
 
@@ -511,19 +511,9 @@ export class MapSystem {
         const band = bandOf(h);
         const contour = band !== bandOf(hL) || band !== bandOf(hU);
 
+        // No surface water exists any more; the water layer stays empty.
         if (h < sea) {
-          const depth = clamp((sea - h) / 26, 0, 1);
-          const d = Math.pow(depth, 0.72);
-          let r = 88 + (18 - 88) * d;
-          let g = 118 + (34 - 118) * d;
-          let b = 120 + (58 - 120) * d;
-          const wc = this.opts.waterColor?.(depth);
-          if (wc) { r = wc[0]; g = wc[1]; b = wc[2]; }
-          if (contour) { r += 9; g += 11; b += 12; }
-          wimg.data[o] = clamp(Math.round(r), 0, 255);
-          wimg.data[o + 1] = clamp(Math.round(g), 0, 255);
-          wimg.data[o + 2] = clamp(Math.round(b), 0, 255);
-          wimg.data[o + 3] = 250;
+          wimg.data[o + 3] = 0;
           continue;
         }
 
