@@ -6175,6 +6175,7 @@
       industrialDims: IND_DIMS,
       industrialSite,
       machines: () => (machineSystem ? machineSystem.instances : []),
+      walls: () => (buildingSystem ? buildingSystem.pieces.values() : []),
       notice: (msg) => notice(msg),
       save: () => { if (!wipeSave) world.save(player); },
       onShow: () => {

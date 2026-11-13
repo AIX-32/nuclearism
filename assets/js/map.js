@@ -45,6 +45,14 @@ const MACHINE_COLORS = {
   storage: '#cfcfcf',
 };
 
+// Base building pieces, coloured by material tier.
+const WALL_COLORS = {
+  wood: '#8a5a33',
+  brick: '#9a4a3a',
+  concrete: '#9a9a96',
+  shielded: '#6e7a86',
+};
+
 
 export function gridStep(scale, minPx = 44) {
   const steps = [8, 16, 32, 64, 128, 256, 512, 1024, 2048];
@@ -70,12 +78,12 @@ export function screenToWorld(sx, sy, view, w, h) {
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const LAYER_DEFAULTS = {
-  terrain: true, sites: true, machines: true,
+  terrain: true, sites: true, machines: true, walls: true,
   deaths: true, bookmarks: true,
 };
 
 const LAYER_NAMES = {
-  terrain: 'TERRAIN', sites: 'SITES', machines: 'MACHINES',
+  terrain: 'TERRAIN', sites: 'SITES', machines: 'MACHINES', walls: 'WALLS',
   deaths: 'DEATHS', bookmarks: 'MARKS',
 };
 
@@ -625,6 +633,7 @@ export class MapSystem {
     ctx.stroke();
 
     if (this.layers.sites) this._drawSites(ctx, view, css, css);
+    if (this.layers.walls) this._drawWalls(ctx, view, css, css, true);
     if (this.layers.machines) this._drawMachines(ctx, view, css, css, true);
     if (this.layers.deaths) this._drawMarkers(ctx, view, css, css, this.deaths, 'death', true);
     if (this.layers.bookmarks) this._drawMarkers(ctx, view, css, css, this.bookmarks, 'bookmark', true);
@@ -717,6 +726,7 @@ export class MapSystem {
 
     if (this.layers.sites) this._drawSites(ctx, view, w, h);
     this._drawSelectionLine(ctx, view, w, h);
+    if (this.layers.walls) this._drawWalls(ctx, view, w, h);
     if (this.layers.machines) this._drawMachines(ctx, view, w, h);
     if (this.layers.deaths) this._drawMarkers(ctx, view, w, h, this.deaths, 'death');
     if (this.layers.bookmarks) this._drawMarkers(ctx, view, w, h, this.bookmarks, 'bookmark');
@@ -793,6 +803,31 @@ export class MapSystem {
           }
         }
       }
+    }
+  }
+
+  // Base building: every piece is a flat block in its material colour.
+  _drawWalls(ctx, view, w, h, mini = false) {
+    const list = this.opts.walls?.() || [];
+    for (const p of list) {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const [key] of p.cells) {
+        const [cx, , cz] = key.split(',').map(Number);
+        if (cx < minX) minX = cx;
+        if (cx + 1 > maxX) maxX = cx + 1;
+        if (cz < minZ) minZ = cz;
+        if (cz + 1 > maxZ) maxZ = cz + 1;
+      }
+      if (!isFinite(minX)) continue;
+      const a = worldToScreen(minX, minZ, view, w, h);
+      const b = worldToScreen(maxX, maxZ, view, w, h);
+      if (Math.max(b.x, a.x) < 0 || Math.min(b.x, a.x) > w) continue;
+      if (Math.max(b.y, a.y) < 0 || Math.min(b.y, a.y) > h) continue;
+      const px = Math.round(Math.min(a.x, b.x)), py = Math.round(Math.min(a.y, b.y));
+      const pw = Math.max(1, Math.round(Math.abs(b.x - a.x)));
+      const ph = Math.max(1, Math.round(Math.abs(b.y - a.y)));
+      ctx.fillStyle = WALL_COLORS[p.tier] || '#cfcfcf';
+      ctx.fillRect(px, py, pw, ph);
     }
   }
 
