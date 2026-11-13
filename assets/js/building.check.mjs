@@ -62,11 +62,17 @@ for (const kind of Object.keys(KINDS)) {
 // The footprint of a kind inside its cell, for every rotation.
 function footprint(kind, rot) {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-  for (const [, b] of kind.cells(0, 0, 0, rot)) {
+  let cx0 = Infinity, cx1 = -Infinity, cz0 = Infinity, cz1 = -Infinity;
+  const ys = new Set();
+  for (const [key, b] of kind.cells(0, 0, 0, rot)) {
+    const [cx, cy, cz] = key.split(',').map(Number);
     x0 = Math.min(x0, b.minX); x1 = Math.max(x1, b.maxX);
     z0 = Math.min(z0, b.minZ); z1 = Math.max(z1, b.maxZ);
+    cx0 = Math.min(cx0, cx); cx1 = Math.max(cx1, cx);
+    cz0 = Math.min(cz0, cz); cz1 = Math.max(cz1, cz);
+    ys.add(cy);
   }
-  return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0 };
+  return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0, cx0, cx1, cz0, cz1, layers: ys.size };
 }
 const fps = (kind) => Array.from({ length: kind.rot }, (_, r) => ({ rot: r, ...footprint(kind, r) }));
 const union = (kind, x, y, z, rot) => {
@@ -121,6 +127,23 @@ for (const kind of Object.keys(KINDS)) {
   check(plan.every((c) => Number.isInteger(c.x) && Number.isInteger(c.z)),
     `a ${kind} always snaps to whole cells`);
 }
+
+// A roof aimed at the top edge of a wall lies over it and reaches out in the
+// direction that is looked at.
+const wallRun = union(WALL, 10, 20, 30, 0);          // a wall along x
+const wallCells = { x0: 10, x1: 13, y0: 20, y1: 23, z0: 30.75, z1: 31, cx0: 10, cx1: 12, cz0: 30, cz1: 30 };
+const overWall = snapPlan(fps(FLOOR), wallCells,
+  { x: 11.5, y: 23, z: 30.875 }, { x: 0, y: 0, z: -1 }, 0);
+check(overWall.length > 0, 'a roof aimed at the top of a wall finds a place to go');
+// looking from +z, so the roof reaches out towards -z, over the wall's row
+check(overWall[0].z === 28, `the roof reaches out past the wall (z=${overWall[0]?.z})`);
+check(overWall[0].x === 10, 'the roof lines up with the wall');
+check(overWall[0].z <= 30 && overWall[0].z + 2 >= 30, 'the roof still lies over the wall');
+// and the other way round
+const overWall2 = snapPlan(fps(FLOOR), wallCells,
+  { x: 11.5, y: 23, z: 30.875 }, { x: 0, y: 0, z: 1 }, 0);
+check(overWall2.length > 0 && overWall2[0].z === 30,
+  `looking from the other side, the roof reaches out the other way (z=${overWall2[0]?.z})`);
 
 // --- the attenuation law ---------------------------------------------------
 const blocked = (tier) => 1 - Math.pow(BUILD_TIERS[tier].transmission, TH);

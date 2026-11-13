@@ -94,10 +94,20 @@ export const KIND = {
   scale() {
     return { x: W, y: TH, z: D };
   },
-  // The roof drops onto the top of whatever stands in the aimed column.
+  // The roof drops onto the top of whatever stands under it. It looks at the
+  // whole 3 x 3 footprint, not just its own column: a roof that hangs over a
+  // wall has to rest on that wall, which stands at the edge of its footprint.
   base(sys, x, z) {
-    const top = sys.topAt(x, z);
-    return top !== null ? top : sys.surfaceHeight(x, z);
+    let top = null;
+    for (let i = 0; i < W; i++) {
+      for (let k = 0; k < D; k++) {
+        const piece = sys.topAt(x + i, z + k);
+        const ground = sys.surfaceHeight(x + i, z + k);
+        const h = piece === null ? ground : Math.max(piece, ground);
+        if (top === null || h > top) top = h;
+      }
+    }
+    return top === null ? 0 : top;
   },
   // A panel may overhang the base it caps, but it must never float: one whole
   // row or column of the panel has to rest on the wall or floor below it.

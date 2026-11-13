@@ -342,13 +342,16 @@ The piece you aim at is the **anchor**, and the new piece is laid flush against 
 
 - `snapPlan(fps, af, p, dir, wantRot)` (building.js) is the pure planner: it takes the anchor's footprint, the aim point and the ray, and returns the candidate cells in order of preference. `BuildingSystem.snap()` adds the raycast against the placed meshes and the placement checks.
 - the **abutment axis** comes from the ray: looking at a face puts the new piece flush against that face, on the side the player stands on; looking down puts it **on top** of the anchor, hugging the edge that is looked at.
+- a **flat piece aimed at the top of a wall lies over it**: a roof or a floor looked at along the top edge of a wall rests on that wall and reaches out in the direction that is looked at (the wall's own cells carry its edge). The roof's `base()` therefore looks at its whole 3 × 3 footprint, not just its own column, or it would drop to the ground.
 - the **rotation** is picked so the new piece is as wide as the anchor along the other axis (a panel lies along a floor's edge, a panel continues a panel run), and so it lands exactly on a cell boundary — that is what makes the joint flush instead of a quarter metre off.
 - `kindFootprint()` / `pieceFootprint()` give the offset and the size of a kind inside its cell, so the planner needs nothing from the kind module but its `cells()`.
 - on bare ground (no anchor) the placement falls back to the old world grid.
 
 **Flush sides**: the wall and door kinds have four rotations — two directions × the side of the cell the panel hugs — and the panel always ends exactly on a cell boundary (`wall.js` / `door.js`). That is what lets a wall sit flush against the edge of a deck.
 
-**One mesh per kind**: `meshKey(piece)` is `tier|kind`, so a wall and a floor of the same tier are drawn in **different** `InstancedMesh`es. A mesh draws every instance with the shape of its first piece, so a shared mesh would draw a wall flat like a floor — and the raycast the snapping depends on would hit the wrong geometry. `node assets/js/building.mesh.check.mjs` guards this.
+**One mesh per kind**: `meshKey(piece)` is `tier|kind`, so a wall and a floor of the same tier are drawn in **different** `InstancedMesh`es. A mesh draws every instance with the shape of its first piece, so a shared mesh would draw a wall flat like a floor — and the raycast the snapping depends on would hit the wrong geometry.
+
+**Checks**: `node assets/js/building.check.mjs` (the planner), `node assets/js/building.mesh.check.mjs` (one mesh per kind) and `node assets/js/building.snap.check.mjs` (the pieces really placed: a roof over a wall, its base and its support). `assets/js/three-stub.mjs` is the tiny three.js stand in the last two use.
 
 **Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge). The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
 

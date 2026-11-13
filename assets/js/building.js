@@ -73,17 +73,31 @@ export function snapPlan(fps, af, p, dir, wantRot = 0) {
     const offA = axis === 'x' ? fp.ox : fp.oz;
     const offB = other === 'x' ? fp.ox : fp.oz;
     const sizeB = other === 'x' ? fp.sx : fp.sz;
+    const cellsA = (axis === 'x' ? fp.cx1 - fp.cx0 : fp.cz1 - fp.cz0) + 1;
+    const aMin = axis === 'x' ? af.cx0 : af.cz0;
+    const aMax = axis === 'x' ? af.cx1 : af.cz1;
     // The cell origin the piece needs to sit flush against the anchor.
-    let idealA;
-    if (fromAbove) {
-      idealA = side < 0 ? af[axis + '0'] - offA : af[axis + '1'] - offA - sizeA;
+    let idealA, idealB;
+    // A flat piece (a roof, a floor) aimed at the top of a wall lies over it:
+    // it rests on the wall and reaches out in the direction that is looked at.
+    const overTop = fp.layers <= 1 && af.y1 - af.y0 > 1.2 && p.y >= af.y1 - 0.9;
+    if (overTop) {
+      const look = dir[axis] || 0;
+      const ext = look !== 0 ? Math.sign(look) : (side < 0 ? 1 : -1);
+      idealA = ext > 0 ? aMin : aMax - cellsA + 1;
+      // The piece lies over the anchor, so it starts on the anchor's cells.
+      idealB = other === 'x' ? af.cx0 : af.cz0;
     } else {
-      const F = side < 0 ? af[axis + '0'] : af[axis + '1'];
-      // The piece goes on the side the player is standing on, flush with the
-      // face that is looked at.
-      idealA = F - offA - (side < 0 ? sizeA : 0);
+      if (fromAbove) {
+        idealA = side < 0 ? af[axis + '0'] - offA : af[axis + '1'] - offA - sizeA;
+      } else {
+        const F = side < 0 ? af[axis + '0'] : af[axis + '1'];
+        // The piece goes on the side the player is standing on, flush with
+        // the face that is looked at.
+        idealA = F - offA - (side < 0 ? sizeA : 0);
+      }
+      idealB = af[other + '0'] - offB;
     }
-    const idealB = af[other + '0'] - offB;
     const err = Math.abs(idealA - Math.round(idealA)) + Math.abs(idealB - Math.round(idealB));
     const fit = Math.abs(sizeB - anchorW) < 0.01 ? 0 : 1;
     const x = axis === 'x' ? Math.round(idealA) : Math.round(idealB);
@@ -338,29 +352,42 @@ export class BuildingSystem {
   // the anchor, and the new piece is laid flush against it, on the anchor's
   // own lattice, so a base comes out as one perfect grid.
 
-  // The mesh footprint of a placed piece, in world space.
+  // The mesh footprint of a placed piece, in world space, plus the cells it
+  // stands on and how tall it is.
   pieceFootprint(piece) {
-    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const [, box] of piece.cells) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    let z0 = Infinity, z1 = -Infinity;
+    let cx0 = Infinity, cx1 = -Infinity, cz0 = Infinity, cz1 = -Infinity;
+    for (const [key, box] of piece.cells) {
+      const [cx, cy, cz] = key.split(',').map(Number);
       x0 = Math.min(x0, box.minX); x1 = Math.max(x1, box.maxX);
+      y0 = Math.min(y0, box.minY); y1 = Math.max(y1, box.maxY);
       z0 = Math.min(z0, box.minZ); z1 = Math.max(z1, box.maxZ);
+      cx0 = Math.min(cx0, cx); cx1 = Math.max(cx1, cx);
+      cz0 = Math.min(cz0, cz); cz1 = Math.max(cz1, cz);
     }
     if (!isFinite(x0)) return null;
-    return { x0, x1, z0, z1 };
+    return { x0, x1, y0, y1, z0, z1, cx0, cx1, cz0, cz1 };
   }
 
   // Where a kind sits inside its cell for one rotation: the offset of its
-  // footprint and its size.
+  // footprint, its size, the cells it takes and how many layers high it is.
   kindFootprint(kindName, rot) {
     const kind = this.kind(kindName);
     if (!kind) return null;
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-    for (const [, box] of kind.cells(0, 0, 0, rot)) {
+    let cx0 = Infinity, cx1 = -Infinity, cz0 = Infinity, cz1 = -Infinity;
+    const ys = new Set();
+    for (const [key, box] of kind.cells(0, 0, 0, rot)) {
+      const [cx, cy, cz] = key.split(',').map(Number);
       x0 = Math.min(x0, box.minX); x1 = Math.max(x1, box.maxX);
       z0 = Math.min(z0, box.minZ); z1 = Math.max(z1, box.maxZ);
+      cx0 = Math.min(cx0, cx); cx1 = Math.max(cx1, cx);
+      cz0 = Math.min(cz0, cz); cz1 = Math.max(cz1, cz);
+      ys.add(cy);
     }
     if (!isFinite(x0)) return null;
-    return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0 };
+    return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0, cx0, cx1, cz0, cz1, layers: ys.size };
   }
 
   // Where a new piece would land if it snapped to the piece the player aims

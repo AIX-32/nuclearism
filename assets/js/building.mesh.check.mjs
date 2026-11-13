@@ -7,55 +7,12 @@
 // would stand up like a wall.
 
 import { BuildingSystem, meshKey } from './building.js';
-
-// A tiny three.js stand in: just enough for the runtime to build meshes.
-function stubThree() {
-  class Vector3 {
-    constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
-    set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
-  }
-  class Quaternion { setFromEuler(e) { this.euler = e; return this; } }
-  class Euler { set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } }
-  class Matrix4 { compose(pos, rot, scl) { this.pos = pos; this.rot = rot; this.scl = scl; return this; } }
-  class Group { constructor() { this.children = []; } add(c) { this.children.push(c); } }
-  class BoxGeometry {
-    constructor() {
-      const n = 24;
-      this.attributes = { uv: { count: n, getX: () => 0, getY: () => 0, setXY() {}, needsUpdate: false } };
-    }
-  }
-  class InstancedMesh {
-    constructor(geometry, material, count) {
-      this.geometry = geometry; this.material = material; this.count = count;
-      this.instanceMatrix = { count, needsUpdate: false };
-      this.matrices = []; this.userData = {};
-    }
-    setMatrixAt(i, m) { this.matrices[i] = m; }
-    computeBoundingSphere() { }
-  }
-  class MeshLambertMaterial { constructor() { this.color = { setHex() { } }; this.map = null; } }
-  class TextureLoader { load() { return {}; } }
-  class BufferGeometry {
-    constructor() { this.attributes = {}; }
-    setAttribute(n, a) { this.attributes[n] = a; return this; }
-    setIndex(i) { this.index = i; return this; }
-    computeVertexNormals() { }
-  }
-  class Float32BufferAttribute { constructor(array, itemSize) { this.array = Array.from(array); this.itemSize = itemSize; } }
-  return {
-    Vector3, Quaternion, Euler, Matrix4, Group, BoxGeometry, InstancedMesh,
-    MeshLambertMaterial, TextureLoader, BufferGeometry, Float32BufferAttribute,
-  };
-}
+import { stubThree, flatWorld } from './three-stub.mjs';
 
 const ok = [];
 function check(cond, msg) { ok.push([!!cond, msg]); }
 
-const world = {
-  field: { get: (x, y, z) => (y <= 0 ? 1 : 0) },   // solid ground up to y = 0
-  getSurfaceHeight: () => 0,
-};
-const B = new BuildingSystem({ THREE: stubThree(), scene: { add() { } }, world });
+const B = new BuildingSystem({ THREE: stubThree(), scene: { add() { } }, world: flatWorld() });
 
 B.place('floor', 'wood', 0, 0, 0, 0);
 B.place('wall', 'wood', 0, 0, 6, 0);
