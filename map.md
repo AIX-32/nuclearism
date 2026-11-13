@@ -13,7 +13,7 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 - `assets/js/content.js` is the data catalogue: `ITEM_DEFS` (items), `LIQUID_DEFS` (liquid types), `MACHINE_DEFS` (machines), `MACHINE_BY_ID`, `CRAFT_RECIPES`, `TABLE_RECIPES` / `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor(def)` fallback layouts, `STARTER_GUIDE` / `GUIDE_STEPS` (opening build order), `ACHIEVEMENT_TYPES` (achievement categories/tiers), and `TUNING`.
 - `assets/js/liquids.js` is the global liquid/container system: pure helpers over `stack.liquid` (`fill`, `drain`, `transfer`, `accepts`, `sanitize`, `volume`). Acid liquids require an acid-proof container.
 - `assets/js/radiation.js` is the directional radiation model: `sourcePoint()` (the world's fallout spot), `transmission()` (near-field shadow march), `relativeBearing()` / `compass()` (HUD direction). `radiation.check.mjs` self-checks it.
-- `assets/js/building.js` is the base building system: `BuildingSystem` (wall panels, placement, upgrades, collision, radiation shadow) plus the pure helpers `wallCells()` / `shadowCells()`. `building.check.mjs` self-checks the geometry and the attenuation law.
+- `assets/js/building.js` is the base building system: `BuildingSystem` (wall panels, placement, upgrades, collision, radiation shadow, snapping) plus the pure helpers `wallCells()` / `shadowCells()` / `snapPlan()` / `meshKey()`. `building.check.mjs` self-checks the geometry, the attenuation law and the snapping; `building.mesh.check.mjs` and `building.snap.check.mjs` cover the meshes and the placements (both run on the tiny three.js stand in `assets/js/three-stub.mjs`).
 - `assets/js/machines.js` is the machine runtime: placement, power networks and auto-linking cables, reactors and meltdowns, the excavator, bucket wheel excavator, radiation emission, save/restore.
 - `assets/js/workbench-ui.js` renders JSON-described machine panels as an HTML overlay with a fixed power meter mirroring the RAD bar (bridge-driven, works for every machine).
 - `assets/js/craft-options.js` is the shared option-based crafting widget: a small scrollable list of recipe cards (title left, icon right, inventory tooltip on hover) used by both the pocket table and the manufactory.
@@ -301,19 +301,19 @@ What this does:
 ### 12d. Base building: wall panels that shield radiation
 
 Relevant parts:
-- `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march) plus the pure helper `shadowCells()`
+- `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march, snapping) plus the pure helpers `shadowCells()`, `snapPlan()` and `meshKey()`
 - `assets/js/build-tiers.js` — `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier)
 - `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds, and each kind has its own `pieces/<name>.check.mjs`
 - `assets/js/pieces/registry.js` — `KINDS`, the name → kind table the runtime uses
 - content.js spreads the piece `ITEMS` into `ITEM_DEFS` and the piece `RECIPES` into `CRAFT_RECIPES`, so **a kind module never edits content.js**; an item with `table: true` joins the pocket table automatically
-- items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: { kind, tier }`) and the `hammer`
+- items: `{wall,floor,roof,door,triangle}_{wood,brick,concrete,shielded}` (field `building: { kind, tier }`) and the `hammer`
 - game.js: the `building` branch of `doPlace()`, `buildingTarget()` (the snapped target, shared by the ghost and the placement), `useBuildingUpgrade()`, the wall branch of `doMine()`, `updateWallPreview()`, `playerCollides()`, `radTransmission()`, the `buildings` save field
 - textures: `assets/textures/buildings/{wood,brick,concrete,shielded}.jpg` (missing file = flat tier colour)
 - map.js: a **WALLS** layer draws every piece in its tier colour on the minimap and the fullscreen map
-- `assets/js/building.check.mjs` (`node assets/js/building.check.mjs`)
+- checks: `assets/js/building.check.mjs` (the planner), `assets/js/building.mesh.check.mjs` (one mesh per kind), `assets/js/building.snap.check.mjs` (the pieces really placed) — all `node` only, no browser; `assets/js/three-stub.mjs` is the three.js stand in the last two use
 
 What this does:
-- a **wall panel** is a 3 m × 3 m × 0.25 m slab that snaps to the pieces around it (`R` rotates through the four flush layouts), not to the world grid. It is its own geometry, not terrain: one `InstancedMesh` per (tier, geometry) pair, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
+- a **wall panel** is a 3 m × 3 m × 0.25 m slab that snaps to the pieces around it (`R` rotates through the four flush layouts), not to the world grid. It is its own geometry, not terrain: one `InstancedMesh` per (tier, **kind**) pair, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
 - a piece owns a block of grid cells and every cell carries a **slice of the piece's box**, so the shadow march can attenuate per slice instead of stepping over a 25 cm panel
 - **the attenuation law** is exponential per metre of material (`BUILD_TIERS[tier].transmission`): wood 0.55, brick 0.25, concrete 0.06, shielded 1e-8 (lead lined). One 0.25 m panel therefore blocks 14% / 29% / 50% / 99% of the field
 - because the law is exponential the *fraction* blocked is constant while the absolute rad saved scales with the field — shielding buys margin, it never switches radiation off, and `TUNING.RAD_OCCL_FLOOR` still applies
@@ -330,11 +330,15 @@ Each kind is one module in `assets/js/pieces/`, and each is its own shape, suppo
 |---|---|---|---|
 | `wall` | `wall.js` | 3 m × 3 m × 0.25 m slab, runs along X or Z (`rot: 4`) | the reference implementation; one `InstancedMesh` per tier. The four rotations are two directions × two sides to hug, and the panel always ends on a cell boundary so it sits flush |
 | `floor` | `floor.js` | 3 m × 3 m deck, **one whole cell thick** (9 cells) | its walking surface is the top of its cell, so a wall on a deck and a deck on a deck are flush. `base()` snaps onto the highest support under the 3×3 footprint; `support()` refuses a floating deck |
-| `roof` | `roof.js` | 3 m × 3 m **barn roof** (flat soffit, eaves, flat ridge strip) | custom geometry `geom: 'roof_gable'` + `rotY(rot)` (ridge along X or Z); a whole row or column of the panel must rest on something below, so it may overhang but never float |
+| `roof` | `roof.js` | 3 m × 3 m **barn roof** (flat soffit, eaves, flat ridge strip) | custom geometry `geom: 'roof_gable'` + `rotY(rot)` (ridge along X or Z); a whole row or column of the panel must rest on something below, so it may overhang but never float. `base()` takes the highest thing under its whole 3 × 3 footprint, so a roof that hangs over a wall rests on that wall |
 | `door` | `door.js` | 1 m wide × 3 m tall × 0.25 m thick | `dynamicSolid: true`: solid while shut, passable while open, and it only shields radiation while shut. Own geometry key `door` so the swing can be animated on its own mesh |
 | `triangle` | `triangle.js` | **half** of a 3 m × 3 m square, 0.25 m thick | a real triangular prism (`geom: 'triangle'`), the right angle walks through the four corners as `rot` goes 0..3 (`rot: 4`, `rotY(rot)`). Cell boxes come from the same local frame as the mesh, so they cannot drift apart |
 
 Item ids: `wall_*`, `floor_*`, `roof_*`, `door_*`, `triangle_*` × the four tiers. The wood one of each is `table: true` (pocket table); the rest are manufactory crafts.
+
+**Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge) and updating its bounding sphere so the raycast still finds it. The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
+
+**Triangle collision** is an approximation: the diagonal cuts three cells corner to corner and no axis-aligned box can follow it, so a cut cell gets a half-cell rectangle — the solid half is fully covered (the player cannot walk into the wedge) at the price of over-covering a sliver of the open half.
 
 ### 12d-b-b. Snapping: pieces line up with each other, not with the world grid
 
@@ -352,10 +356,6 @@ The piece you aim at is the **anchor**, and the new piece is laid flush against 
 **One mesh per kind**: `meshKey(piece)` is `tier|kind`, so a wall and a floor of the same tier are drawn in **different** `InstancedMesh`es. A mesh draws every instance with the shape of its first piece, so a shared mesh would draw a wall flat like a floor — and the raycast the snapping depends on would hit the wrong geometry.
 
 **Checks**: `node assets/js/building.check.mjs` (the planner), `node assets/js/building.mesh.check.mjs` (one mesh per kind) and `node assets/js/building.snap.check.mjs` (the pieces really placed: a roof over a wall, its base and its support). `assets/js/three-stub.mjs` is the tiny three.js stand in the last two use.
-
-**Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge). The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
-
-**Triangle collision** is an approximation: the diagonal cuts three cells corner to corner and no axis-aligned box can follow it, so a cut cell gets a half-cell rectangle — the solid half is fully covered (the player cannot walk into the wedge) at the price of over-covering a sliver of the open half.
 
 ### 12d-c. Adding a new piece kind
 
@@ -920,8 +920,9 @@ For the survival/gameplay layer:
 8b. `node assets/js/drag-drop.check.mjs` self-checks the shared slot adapter's take/merge/swap/restore rules
 8c. `node assets/js/settings.check.mjs` self-checks the settings store (defaults, legacy stores, clamping, persistence, reset) — add a new setting to `SETTING_DEFS` in `assets/js/settings.js` and both the menu and the pause overlay pick it up
 8d. `node assets/js/radiation.check.mjs` self-checks the directional radiation helpers (source point, shadow march, bearing, compass) — shielding tuning lives in `RAD_OCCL` in `assets/js/radiation.js` and the floors in `TUNING`
-8e. `node assets/js/building.check.mjs` self-checks the wall geometry (a 3×3 cell panel), the attenuation law per tier and the DDA shadow march — wall tuning lives in `BUILD_TIERS` (content.js), panel size in `TUNING.BUILD_WALL_*`
+8e. `node assets/js/building.check.mjs` self-checks the wall geometry (a 3×3 cell panel), the attenuation law per tier, the DDA shadow march and the snapping planner — wall tuning lives in `BUILD_TIERS` (content.js), panel size in `TUNING.BUILD_WALL_*`
 8f. every piece kind has its own check: `node assets/js/pieces/{wall,floor,roof,door,triangle}.check.mjs` — pure geometry and support assertions, `node` only, no browser
+8g. the runtime has two more: `node assets/js/building.mesh.check.mjs` (one `InstancedMesh` per kind — a shared mesh would draw a wall flat like a floor) and `node assets/js/building.snap.check.mjs` (pieces really placed on the tiny three.js stand in `assets/js/three-stub.mjs`)
 9. a new light source is just `torch: true` + `light: { mount, range, power, color }` on an `ITEM_DEFS` entry (see torch/lantern/floodlight) — the placement, bake and machine-lighting paths pick it up automatically
 10. map visuals live in `assets/js/map.js`: `_renderTile()` owns the flat terrain colouring (`BAND_SHADE` height steps, `surfaceColor()` from the game's context) and `drawFull()` owns markers/layers; `SITE_COLORS` / `MACHINE_COLORS` hold the pixel palette and `industrialDims` in the `MapSystem` options sizes the structure blocks. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
 
@@ -929,7 +930,7 @@ For the survival/gameplay layer:
 This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:
 
 1. **Engine** — procedural world generation, deterministic cave systems (surface sinkholes → tunnels → caverns), chunk streaming, terrain density, water sim and rendering (game.js), plus the main menu/world select (menu.js) and pipes (pipes.js).
-2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. On top of that sits **base building**: Rust-like placeable pieces (walls, floors, gable roofs, openable doors and triangular wedges) in four material tiers, each piece its own module behind a small kind contract, built cheaply and upgraded in place with a hammer, and every piece shades the radiation that comes from its direction (wood 14%, brick 29%, concrete 50%, shielded concrete 99% of one panel). The whole UI shares one black-alpha, borderless skin.
+2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. On top of that sits **base building**: Rust-like placeable pieces (walls, floors, gable roofs, openable doors and triangular wedges) in four material tiers, each piece its own module behind a small kind contract, built cheaply and upgraded in place with a hammer, and every piece shades the radiation that comes from its direction (wood 14%, brick 29%, concrete 50%, shielded concrete 99% of one panel). The pieces snap to **each other**, not to the world grid: the piece you aim at is the anchor and the new one is laid flush against it on the anchor's own lattice — a wall sits exactly against the edge of a deck, a deck butts up to a deck, and a roof laid over a wall's top edge hangs out in the direction you are looking. The whole UI shares one black-alpha, borderless skin.
 
 Most important files:
 - [index.html](index.html)
@@ -940,7 +941,7 @@ Most important files:
 - [assets/js/drag-drop.js](assets/js/drag-drop.js) — shared drag-and-drop for every item slot
 - [assets/js/liquids.js](assets/js/liquids.js) — global liquid/container rules
 - [assets/js/radiation.js](assets/js/radiation.js) — radiation source spot, shadowing, direction readouts
-- [assets/js/building.js](assets/js/building.js) — wall panels, tiers, upgrades and the radiation shadow
+- [assets/js/building.js](assets/js/building.js) — wall panels, tiers, upgrades, the radiation shadow and the piece-to-piece snapping
 - [assets/js/pieces/README.md](assets/js/pieces/README.md) — the piece-kind contract (wall, floor, roof, door, triangle)
 - [assets/js/machines.js](assets/js/machines.js) — machine/power/reactor runtime
 - [assets/js/pipes.js](assets/js/pipes.js) — decorative pipe grid
