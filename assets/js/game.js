@@ -3393,7 +3393,7 @@
 
 
 
-    const ICON_CACHE_KEY = 'idte.icon.v7.';
+    const ICON_CACHE_KEY = 'idte.icon.v9.';
     const modelIconCache = new Map();
 
 
