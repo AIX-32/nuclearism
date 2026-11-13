@@ -300,22 +300,33 @@ What this does:
 ### 12d. Base building: wall panels that shield radiation
 
 Relevant parts:
-- `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march) plus the pure helpers `wallCells()` and `shadowCells()`
-- content.js `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier), `TUNING.BUILD_WALL_W/H/T` (3 m × 3 m × 0.25 m panels)
-- items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: '<tier>'`) and the `hammer`
+- `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march) plus the pure helper `shadowCells()`
+- `assets/js/build-tiers.js` — `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier)
+- `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds
+- `assets/js/pieces/registry.js` — `KINDS`, the name → kind table the runtime uses
+- content.js spreads the piece `ITEMS` into `ITEM_DEFS` and the piece `RECIPES` into `CRAFT_RECIPES`, so **a kind module never edits content.js**; an item with `table: true` joins the pocket table automatically
+- items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: { kind, tier }`) and the `hammer`
 - game.js: the `building` branch of `doPlace()`, `useBuildingUpgrade()`, the wall branch of `doMine()`, `updateWallPreview()`, `playerCollides()`, `radTransmission()`, the `buildings` save field
 - textures: `assets/textures/buildings/{wood,brick,concrete,shielded}.jpg` (missing file = flat tier colour)
+- map.js: a **WALLS** layer draws every piece in its tier colour on the minimap and the fullscreen map
 - `assets/js/building.check.mjs` (`node assets/js/building.check.mjs`)
 
 What this does:
-- a **wall panel** is a 3 m × 3 m × 0.25 m slab snapped to the 1 m world grid, running along X or Z (`R` rotates). It is its own geometry, not terrain: one `InstancedMesh` per tier, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
-- a piece owns a 3×3 block of grid cells and every cell carries a **1 m slice of the slab**, so the shadow march can attenuate per slice instead of stepping over a 25 cm panel
+- a **wall panel** is a 3 m × 3 m × 0.25 m slab snapped to the 1 m world grid, running along X or Z (`R` rotates). It is its own geometry, not terrain: one `InstancedMesh` per (tier, geometry) pair, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
+- a piece owns a block of grid cells and every cell carries a **slice of the piece's box**, so the shadow march can attenuate per slice instead of stepping over a 25 cm panel
 - **the attenuation law** is exponential per metre of material (`BUILD_TIERS[tier].transmission`): wood 0.55, brick 0.25, concrete 0.06, shielded 1e-8 (lead lined). One 0.25 m panel therefore blocks 14% / 29% / 50% / 99% of the field
 - because the law is exponential the *fraction* blocked is constant while the absolute rad saved scales with the field — shielding buys margin, it never switches radiation off, and `TUNING.RAD_OCCL_FLOOR` still applies
 - **honeycomb is free**: stacked layers multiply, so two concrete layers block 75% and three shielded layers block 99.99%
-- `shadowCells()` is a 3D-DDA over the cell grid that intersects the ray with each wall slab and multiplies `transmission ^ length`. `radTransmission()` multiplies it with the terrain march, so **walls shield the ambient field and every machine emitter alike**
-- the Rust-like verbs: **build** (hold a wall item, a ghost panel snaps to the target cell, red where refused), **upgrade in place** (right-click a wall with the `hammer`, the next tier's materials are taken from the bag, never downgrade), **demolish** (hammer left-click removes it and refunds the item). Walls stack on other walls; a wall on the ground needs solid ground under it
-- walls are saved with the world (`buildings` in the save file) and restored on load
+- `shadowCells()` is a 3D-DDA over the cell grid that intersects the ray with each piece's box and multiplies `transmission ^ length`. `radTransmission()` multiplies it with the terrain march, so **pieces shield the ambient field and every machine emitter alike**
+- the Rust-like verbs: **build** (hold a piece item, a ghost preview snaps to the target cell, red where refused), **upgrade in place** (right-click a piece with the `hammer`, the next tier's materials are taken from the bag, never downgrade), **demolish** (hammer left-click removes it and refunds the item). Pieces stack on other pieces; a piece on the ground needs solid ground under it
+- pieces are saved with the world (`buildings` in the save file) and restored on load
+
+### 12d-b. Adding a new piece kind
+
+1. write `assets/js/pieces/<name>.js` exporting `KIND`, `ITEMS` and `RECIPES` (the contract is `assets/js/pieces/README.md`)
+2. add it to `assets/js/pieces/registry.js` (one import, one entry)
+3. write `assets/js/pieces/<name>.check.mjs` — pure geometry assertions, `node` only
+4. never touch `building.js` or `content.js`: the runtime is kind-agnostic
 
 ### 12c. Directional radiation (a source spot, and walls in the way)
 
