@@ -8793,9 +8793,10 @@
       for (const m of placeGhost.mats) { m.opacity = op; m.color.setHex(tint); }
     }
 
-    let wallGhost = null;
+    let wallGhost = null, wallGhostKey = '';
     function hideWallGhost() {
       if (wallGhost) { scene.remove(wallGhost); wallGhost = null; }
+      wallGhostKey = '';
     }
     function updateWallPreview(now, itemId) {
       if (!buildingSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) { hideWallGhost(); return; }
@@ -8808,17 +8809,24 @@
       const gz = Math.floor(hit.z + dir.z * 1.5);
       const rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
       const base = kind.base(buildingSystem, gx, gz, rot);
-      if (!wallGhost) {
+      if (!wallGhost || wallGhostKey !== b.kind) {
+        hideWallGhost();
+        // A kind with its own shape (a gable roof, a wedge) previews as that
+        // shape, not as a box.
+        const geo = (kind.geom && kind.geom !== 'box' && kind.geometry)
+          ? kind.geometry(THREE) : new THREE.BoxGeometry(1, 1, 1);
         wallGhost = new THREE.Mesh(
-          new THREE.BoxGeometry(1, 1, 1),
+          geo,
           new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false })
         );
+        wallGhostKey = b.kind;
         scene.add(wallGhost);
       }
       const c = kind.center(gx, base, gz, rot);
       const s = kind.scale(gx, base, gz, rot);
       wallGhost.position.set(c.x, c.y, c.z);
       wallGhost.scale.set(s.x, s.y, s.z);
+      wallGhost.rotation.y = kind.rotY ? kind.rotY(rot) : 0;
       let blocked = !buildingSystem.canPlace(b.kind, gx, base, gz, rot);
       if (!blocked && kind.support && !kind.support(buildingSystem, gx, base, gz, rot)) blocked = true;
       const pr = player.radius, ph = player.height;

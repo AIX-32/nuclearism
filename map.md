@@ -302,7 +302,7 @@ What this does:
 Relevant parts:
 - `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march) plus the pure helper `shadowCells()`
 - `assets/js/build-tiers.js` — `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier)
-- `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds
+- `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds, and each kind has its own `pieces/<name>.check.mjs`
 - `assets/js/pieces/registry.js` — `KINDS`, the name → kind table the runtime uses
 - content.js spreads the piece `ITEMS` into `ITEM_DEFS` and the piece `RECIPES` into `CRAFT_RECIPES`, so **a kind module never edits content.js**; an item with `table: true` joins the pocket table automatically
 - items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: { kind, tier }`) and the `hammer`
@@ -321,7 +321,25 @@ What this does:
 - the Rust-like verbs: **build** (hold a piece item, a ghost preview snaps to the target cell, red where refused), **upgrade in place** (right-click a piece with the `hammer`, the next tier's materials are taken from the bag, never downgrade), **demolish** (hammer left-click removes it and refunds the item). Pieces stack on other pieces; a piece on the ground needs solid ground under it
 - pieces are saved with the world (`buildings` in the save file) and restored on load
 
-### 12d-b. Adding a new piece kind
+### 12d-b. The piece kinds (wall, floor, roof, door, triangle)
+
+Each kind is one module in `assets/js/pieces/`, and each is its own shape, support rule and mesh:
+
+| kind | file | shape | notes |
+|---|---|---|---|
+| `wall` | `wall.js` | 3 m × 3 m × 0.25 m slab, runs along X or Z (`rot: 2`) | the reference implementation; one `InstancedMesh` per tier |
+| `floor` | `floor.js` | 3 m × 3 m deck, **one whole cell thick** (9 cells) | its walking surface is the top of its cell, so a wall on a deck and a deck on a deck are flush. `base()` snaps onto the highest support under the 3×3 footprint; `support()` refuses a floating deck |
+| `roof` | `roof.js` | 3 m × 3 m **barn roof** (flat soffit, eaves, flat ridge strip) | custom geometry `geom: 'roof_gable'` + `rotY(rot)` (ridge along X or Z); a whole row or column of the panel must rest on something below, so it may overhang but never float |
+| `door` | `door.js` | 1 m wide × 3 m tall × 0.25 m thick | `dynamicSolid: true`: solid while shut, passable while open, and it only shields radiation while shut. Own geometry key `door` so the swing can be animated on its own mesh |
+| `triangle` | `triangle.js` | **half** of a 3 m × 3 m square, 0.25 m thick | a real triangular prism (`geom: 'triangle'`), the right angle walks through the four corners as `rot` goes 0..3 (`rot: 4`, `rotY(rot)`). Cell boxes come from the same local frame as the mesh, so they cannot drift apart |
+
+Item ids: `wall_*`, `floor_*`, `roof_*`, `door_*`, `triangle_*` × the four tiers. The wood one of each is `table: true` (pocket table); the rest are manufactory crafts.
+
+**Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge). The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
+
+**Triangle collision** is an approximation: the diagonal cuts three cells corner to corner and no axis-aligned box can follow it, so a cut cell gets a half-cell rectangle — the solid half is fully covered (the player cannot walk into the wedge) at the price of over-covering a sliver of the open half.
+
+### 12d-c. Adding a new piece kind
 
 1. write `assets/js/pieces/<name>.js` exporting `KIND`, `ITEMS` and `RECIPES` (the contract is `assets/js/pieces/README.md`)
 2. add it to `assets/js/pieces/registry.js` (one import, one entry)
@@ -784,6 +802,8 @@ What this does:
 - `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
 - `sourcePoint()` / `transmission()` / `RAD_OCCL` (radiation.js): the fallout spot and the near-field shadow march that lets walls block radiation
 - `BuildingSystem` / `wallCells()` / `shadowCells()` (building.js): wall panels, their per-slice attenuation and the DDA shadow march; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
+- `KINDS` / `pieces/*.js` (pieces/registry.js): the five piece kinds (wall, floor, roof, door, triangle) — geometry, support rules, items and recipes, one module each
+- `doorHit()` / `toggleDoor()` / `updateDoorSwings()` / `swingFrame()` (game.js + pieces/door.js): opening and shutting a door, and the swing animation
 - `radField()` / `radTransmission()` / `radFactor()`: directional field rate, the source the HUD arrow points at, and the per-voxel transmission hook
 - `BARE_HANDS` / `mineOreDrop()` / `hasGardeningGloves()`: mining and gating
 - `torches` / `lightAt()` / `addTorch()` / `tryTorchPlace()`: placeable lights (torch, lantern, floodlight)
@@ -883,6 +903,7 @@ For the survival/gameplay layer:
 8c. `node assets/js/settings.check.mjs` self-checks the settings store (defaults, legacy stores, clamping, persistence, reset) — add a new setting to `SETTING_DEFS` in `assets/js/settings.js` and both the menu and the pause overlay pick it up
 8d. `node assets/js/radiation.check.mjs` self-checks the directional radiation helpers (source point, shadow march, bearing, compass) — shielding tuning lives in `RAD_OCCL` in `assets/js/radiation.js` and the floors in `TUNING`
 8e. `node assets/js/building.check.mjs` self-checks the wall geometry (a 3×3 cell panel), the attenuation law per tier and the DDA shadow march — wall tuning lives in `BUILD_TIERS` (content.js), panel size in `TUNING.BUILD_WALL_*`
+8f. every piece kind has its own check: `node assets/js/pieces/{wall,floor,roof,door,triangle}.check.mjs` — pure geometry and support assertions, `node` only, no browser
 9. a new light source is just `torch: true` + `light: { mount, range, power, color }` on an `ITEM_DEFS` entry (see torch/lantern/floodlight) — the placement, bake and machine-lighting paths pick it up automatically
 10. map visuals live in `assets/js/map.js`: `_renderTile()` owns the flat terrain colouring (`BAND_SHADE` height steps, `surfaceColor()` from the game's context) and `drawFull()` owns markers/layers; `SITE_COLORS` / `MACHINE_COLORS` hold the pixel palette and `industrialDims` in the `MapSystem` options sizes the structure blocks. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
 
@@ -890,7 +911,7 @@ For the survival/gameplay layer:
 This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:
 
 1. **Engine** — procedural world generation, deterministic cave systems (surface sinkholes → tunnels → caverns), chunk streaming, terrain density, water sim and rendering (game.js), plus the main menu/world select (menu.js) and pipes (pipes.js).
-2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. The whole UI shares one black-alpha, borderless skin.
+2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. On top of that sits **base building**: Rust-like placeable pieces (walls, floors, gable roofs, openable doors and triangular wedges) in four material tiers, each piece its own module behind a small kind contract, built cheaply and upgraded in place with a hammer, and every piece shades the radiation that comes from its direction (wood 14%, brick 29%, concrete 50%, shielded concrete 99% of one panel). The whole UI shares one black-alpha, borderless skin.
 
 Most important files:
 - [index.html](index.html)
@@ -902,6 +923,7 @@ Most important files:
 - [assets/js/liquids.js](assets/js/liquids.js) — global liquid/container rules
 - [assets/js/radiation.js](assets/js/radiation.js) — radiation source spot, shadowing, direction readouts
 - [assets/js/building.js](assets/js/building.js) — wall panels, tiers, upgrades and the radiation shadow
+- [assets/js/pieces/README.md](assets/js/pieces/README.md) — the piece-kind contract (wall, floor, roof, door, triangle)
 - [assets/js/machines.js](assets/js/machines.js) — machine/power/reactor runtime
 - [assets/js/pipes.js](assets/js/pipes.js) — decorative pipe grid
 - [assets/js/settings.js](assets/js/settings.js) — shared settings schema, store and UI
