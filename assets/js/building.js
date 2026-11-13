@@ -227,13 +227,24 @@ export class BuildingSystem {
   }
 
   // True when the point is inside a solid piece.
+  // A piece's box reaches the far edge of its cell, so a point sitting exactly
+  // on that edge belongs to the next cell: the neighbours are checked too, or
+  // a player standing on a deck would fall through it.
   solidAt(x, y, z) {
-    const cell = this.cells.get(KEY(Math.floor(x), Math.floor(y), Math.floor(z)));
-    if (!cell) return false;
-    const kind = this.kind(cell.piece.kind);
-    if (kind?.dynamicSolid && cell.piece.open) return false;
-    const b = cell.box;
-    return x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY && z >= b.minZ && z <= b.maxZ;
+    const fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z);
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        for (let k = 0; k < 2; k++) {
+          const cell = this.cells.get(KEY(fx - i, fy - j, fz - k));
+          if (!cell) continue;
+          const kind = this.kind(cell.piece.kind);
+          if (kind?.dynamicSolid && cell.piece.open) continue;
+          const b = cell.box;
+          if (x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY && z >= b.minZ && z <= b.maxZ) return true;
+        }
+      }
+    }
+    return false;
   }
 
   // Directional shadow: 1 = clear line, ~0 = fully behind shielding.
