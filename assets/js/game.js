@@ -7,6 +7,7 @@
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
     import { BuildingSystem } from './building.js';
+    import { swingFrame } from './pieces/door.js';
     import { MapSystem } from './map.js';
     import { createFootsteps, surfToCategory } from './footsteps.js';
     import { sourcePoint, transmission, relativeBearing, compass, RAD_OCCL } from './radiation.js';
@@ -5997,6 +5998,22 @@
         }
       }
 
+      if (buildingSystem) {
+        const origin2 = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+        const dir2 = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const hit2 = doorHit(origin2, dir2);
+        if (hit2) {
+          const scored = scoreCandidate(hit2.t);
+          const door = hit2.piece;
+          const cand = {
+            ...scored, target: door, type: 'door', label: 'DOOR',
+            activate: () => (handFreeForDoor() ? toggleDoor(door) : false),
+          };
+          nearest = choose(cand, nearest);
+          if (scored.screenDist <= 340) best = choose(cand, best);
+        }
+      }
+
       return best || nearest;
     }
 
@@ -6058,7 +6075,9 @@
       }
       activeInteractTarget = target;
       tipTitle.textContent = target.label.toUpperCase();
-      tipBody.innerHTML = 'RIGHT CLICK<br>ACTIVATE / OPEN';
+      tipBody.innerHTML = target.type === 'door'
+        ? 'RIGHT CLICK<br>OPEN / CLOSE DOOR'
+        : 'RIGHT CLICK<br>ACTIVATE / OPEN';
       tipEl.style.display = 'block';
       moveTip(innerWidth * 0.5, innerHeight * 0.72);
     }
@@ -6066,7 +6085,10 @@
     function useInteractable() {
       const target = resolveInteractTarget();
       if (!target) return false;
-      target.activate();
+      const done = target.activate();
+      // A door that could not be swung (the hand was not empty) must not
+      // swallow the click.
+      if (target.type === 'door' && done === false) return false;
       activeInteractTarget = null;
       hideTip();
       return true;
@@ -8480,6 +8502,122 @@
       return true;
     }
 
+    // --- doors ---------------------------------------------------------------
+    // Right-click a door with an empty hand and it swings. The hammer never
+    // opens a door: it upgrades and demolishes, so it goes first.
+
+    // Distance along the ray to an axis aligned box, or null when it misses.
+    function rayBoxT(origin, dir, b) {
+      const o = [origin.x, origin.y, origin.z], d = [dir.x, dir.y, dir.z];
+      const mn = [b.minX, b.minY, b.minZ], mx = [b.maxX, b.maxY, b.maxZ];
+      let t0 = 0, t1 = Infinity;
+      for (let i = 0; i < 3; i++) {
+        if (Math.abs(d[i]) < 1e-9) { if (o[i] < mn[i] || o[i] > mx[i]) return null; continue; }
+        let a = (mn[i] - o[i]) / d[i], c = (mx[i] - o[i]) / d[i];
+        if (a > c) { const t = a; a = c; c = t; }
+        if (a > t0) t0 = a;
+        if (c < t1) t1 = c;
+        if (t1 <= t0) return null;
+      }
+      return t0;
+    }
+
+    // The nearest door the ray runs into. A shut door is hit by its panel, an
+    // open one by the whole doorway, so it can always be shut again.
+    function doorHit(origin, dir) {
+      if (!buildingSystem) return null;
+      let best = null, bestT = REACH;
+      for (const p of buildingSystem.pieces.values()) {
+        if (p.kind !== 'door') continue;
+        const boxes = p.open
+          ? [[{
+            minX: p.x, maxX: p.x + 1, minY: p.y, maxY: p.y + 3, minZ: p.z, maxZ: p.z + 1,
+          }]]
+          : p.cells.map(([, b]) => b);
+        for (const b of boxes) {
+          const t = rayBoxT(origin, dir, b);
+          if (t !== null && t < bestT) { bestT = t; best = p; }
+        }
+      }
+      return best ? { piece: best, t: bestT } : null;
+    }
+
+    function doorUnderCrosshair() {
+      if (!buildingSystem) return null;
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      const hit = doorHit(origin, dir);
+      if (!hit) return null;
+      // anything solid in front of the door wins
+      const pick = buildingSystem.pick(origin, dir, REACH);
+      if (pick && pick.piece.kind !== 'door' && pick.distance < hit.t - 0.02) return null;
+      const { hit: terr } = mineAim();
+      if (terr && origin.distanceTo(terr) < hit.t - 0.02) return null;
+      return hit.piece;
+    }
+
+    // An empty hand: nothing consumable and no tool. The hammer is a tool, so
+    // it never opens a door.
+    function handFreeForDoor() {
+      const s = inv.hot[inv.sel];
+      if (!s) return true;
+      const d = ITEMS[s.id] || {};
+      return !d.consumable && !d.tool;
+    }
+
+    function toggleDoor(piece) {
+      if (!piece || piece.kind !== 'door' || !buildingSystem) return false;
+      if (!buildingSystem.toggle(piece)) return false;
+      triggerSwing(0.25);
+      notice(piece.open ? 'DOOR OPEN' : 'DOOR CLOSED');
+      return true;
+    }
+
+    function useDoorToggle() {
+      if (!handFreeForDoor()) return false;
+      const piece = doorUnderCrosshair();
+      if (!piece) return false;
+      return toggleDoor(piece);
+    }
+
+    // The runtime draws one box per piece, so the swing is applied here: the
+    // door mesh turns about its hinge edge while it opens.
+    const doorAngles = new Map();
+    function updateDoorSwings(dt) {
+      if (!buildingSystem) return;
+      const k = Math.min(1, dt * 9);
+      const m = new THREE.Matrix4();
+      const pos = new THREE.Vector3();
+      const scl = new THREE.Vector3();
+      const q = new THREE.Quaternion();
+      const e = new THREE.Euler();
+      const off = new THREE.Vector3();
+      const kind = buildingSystem.kind('door');
+      if (!kind) return;
+      for (const [key, mesh] of buildingSystem.meshes) {
+        if (!key.endsWith('|door')) continue;
+        const list = buildingSystem.meshPieces.get(key) || [];
+        list.forEach((p, i) => {
+          const fr = swingFrame(p.x, p.y, p.z, p.rot);
+          const target = p.open ? fr.sign * Math.PI / 2 : 0;
+          const cur = doorAngles.has(p.id) ? doorAngles.get(p.id) : target;
+          const a = cur + (target - cur) * k;
+          doorAngles.set(p.id, a);
+          const c = fr.center;
+          const s = kind.scale(p.x, p.y, p.z, p.rot);
+          q.setFromEuler(e.set(0, a, 0));
+          off.set(c.x - fr.hinge.x, c.y - fr.hinge.y, c.z - fr.hinge.z).applyQuaternion(q);
+          pos.set(fr.hinge.x + off.x, fr.hinge.y + off.y, fr.hinge.z + off.z);
+          scl.set(s.x, s.y, s.z);
+          m.compose(pos, q, scl);
+          mesh.setMatrixAt(i, m);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+      }
+      // forget doors that were mined away
+      for (const id of [...doorAngles.keys()]) if (!buildingSystem.pieces.has(id)) doorAngles.delete(id);
+    }
+
     function pickItemToHand(id) {
       if (!id || !ITEMS[id]) return false;
       const hot = inv.hot.findIndex((s) => s && s.id === id);
@@ -9121,6 +9259,7 @@
         if (useBweController()) return;
         if (useBuildingUpgrade()) return;
         if (useConsumable()) return;
+        if (useDoorToggle()) return;
         if (useInteractable()) return;
         if (useLiquidContainer()) return;
         if (useC4()) return;
@@ -10139,6 +10278,7 @@
 
 
       updateTorches(dt, now);
+      updateDoorSwings(dt);
       updateC4(dt);
 
 
