@@ -12,7 +12,7 @@
 
 
 
-import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate } from './content.js';
+import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate, TUNING } from './content.js';
 import { inventoryAdapter } from './drag-drop.js';
 import { accepts, drain, fill } from './liquids.js';
 
@@ -1569,6 +1569,25 @@ export class MachineSystem {
     let f = this.ITEMS[it.id]?.armor?.carry || 0;
     for (const p of (it.plates || [])) f += (this.ITEMS[p]?.plate?.carry || 0);
     return Math.min(0.95, f);
+  }
+
+  // Worn armor's flat radShield becomes an ambient/field reduction fraction:
+  // a full suit is ~50%, plates push it higher, and it never reaches 100%.
+  radProtect() {
+    const s = this.totalArmorRadShield();
+    return Math.min(0.8, s / (s + 60));
+  }
+
+  // Powered absorbers cut a field multiplicatively with distance falloff.
+  // Stacking helps, but ABSORB_FLOOR stops them from deleting the hazard.
+  absorbFactor(x, z) {
+    let f = 1;
+    for (const a of this.absorbers) {
+      const rad = a.def.absorbRadius || 12;
+      const d = Math.hypot(a.x - x, a.z - z);
+      if (d < rad) f *= 1 - (a.def.absorbRate || 0.35) * (1 - d / rad);
+    }
+    return Math.max(TUNING.ABSORB_FLOOR, f);
   }
 
 

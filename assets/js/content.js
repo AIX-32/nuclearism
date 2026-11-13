@@ -1,10 +1,11 @@
+import { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES } from './build-tiers.js';
+import { KIND as WALL, ITEMS as WALL_ITEMS, RECIPES as WALL_RECIPES } from './pieces/wall.js';
+import { KIND as FLOOR, ITEMS as FLOOR_ITEMS, RECIPES as FLOOR_RECIPES } from './pieces/floor.js';
+import { KIND as ROOF, ITEMS as ROOF_ITEMS, RECIPES as ROOF_RECIPES } from './pieces/roof.js';
+import { KIND as DOOR, ITEMS as DOOR_ITEMS, RECIPES as DOOR_RECIPES } from './pieces/door.js';
+import { KIND as TRIANGLE, ITEMS as TRIANGLE_ITEMS, RECIPES as TRIANGLE_RECIPES } from './pieces/triangle.js';
 
-
-
-
-
-
-
+export { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES };
 
 // `rad` on items/machines is a dose rate in rad/s while carried or running.
 const I = (code, name, extra = {}) => ({ code, name, stack: 99, rad: 0, ...extra });
@@ -37,7 +38,18 @@ export const LIQUID_DEFS = {
 };
 
 
+
+// Building tiers: `transmission` is the fraction of radiation that survives
+// ONE METRE of the material. Wood barely helps, shielded concrete almost stops
+// the field (but never all of it). The tier data lives in build-tiers.js so
+// the piece modules can use it without a circular import.
+
 export const ITEM_DEFS = {
+  ...WALL_ITEMS,
+  ...FLOOR_ITEMS,
+  ...ROOF_ITEMS,
+  ...DOOR_ITEMS,
+  ...TRIANGLE_ITEMS,
   stone: { code: 'ST', name: 'STONE', stack: 99, rad: 0, block: true, icon: 'assets/images/items/stone.png' },
   dirt: { code: 'DI', name: 'DIRT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/dirt.png' },
   carbon: { code: 'C+', name: 'CARBON', stack: 99, rad: 0, block: true, icon: 'assets/images/items/carbon.png' },
@@ -269,6 +281,7 @@ export const ITEM_DEFS = {
 
 
   pipe: I('PI', 'PIPE', { block: false, stack: 64, pipeGrid: true }),
+  hammer: { code: 'HM', name: 'HAMMER', stack: 1, rad: 0, tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], build: true }, desc: 'Upgrades a wall to the next tier and pulls it back down again.' },
   fuel_generator: I('GG', 'GAS GENERATOR', { block: false, stack: 4, workbench: 'fuel_generator', desc: 'Burns gasoline or ethanol to make power. Fill it from a jerry can.' }),
 
 
@@ -590,7 +603,7 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'research_lab', kind: 'processor', name: 'RESEARCH LAB', model: MODEL('research_lab'), layout: LAYOUT('research_lab'), label: 'Use research lab', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 45 }, rad: 0.1,
+    id: 'research_lab', kind: 'processor', name: 'RESEARCH LAB', model: MODEL('research_lab'), layout: LAYOUT('research_lab'), label: 'Use research lab', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 60 }, rad: 0.1,
     recipes: [
       { in: { data_disk: 1, circuit_advanced: 1, u235: 2, lead_plate: 2 }, out: { blueprint_reactor: 1 }, time: 20, rad: 0.4 },
       { in: { data_drive: 1, circuit_advanced: 2, pu239: 2, carbon_mesh: 1 }, out: { blueprint_fusion: 1 }, time: 32, rad: 0.8 },
@@ -600,7 +613,7 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'centrifuge', kind: 'processor', name: 'CENTRIFUGE', model: MODEL('centrifuge'), layout: LAYOUT('centrifuge'), label: 'Use centrifuge', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 55 }, rad: 0.2,
+    id: 'centrifuge', kind: 'processor', name: 'CENTRIFUGE', model: MODEL('centrifuge'), layout: LAYOUT('centrifuge'), label: 'Use centrifuge', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 75 }, rad: 0.2,
     recipes: [
       { in: { crushed_uranium: 1 }, out: { u235: 1, u238: 3 }, time: 8, rad: 0.5 },
       { in: { crushed_thorium: 1 }, out: { th232: 1 }, time: 8, rad: 0.3 },
@@ -611,7 +624,7 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'isotope_separator', kind: 'processor', name: 'ISOTOPE SEPARATOR', model: MODEL('isotope_separator'), layout: LAYOUT('isotope_separator'), label: 'Use isotope separator', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 90 }, rad: 0.4,
+    id: 'isotope_separator', kind: 'processor', name: 'ISOTOPE SEPARATOR', model: MODEL('isotope_separator'), layout: LAYOUT('isotope_separator'), label: 'Use isotope separator', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 110 }, rad: 0.4,
     recipes: [
       { in: { fuel_rod_casing: 1, u235: 1, u238: 4 }, out: { leu_235_fuel: 1 }, time: 12, rad: 1 },
       { in: { fuel_rod_casing: 1, u235: 4, u238: 1 }, out: { heu_235_fuel: 1 }, time: 16, rad: 2 },
@@ -636,7 +649,7 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'fuel_reprocessor', kind: 'processor', name: 'FUEL REPROCESSOR', model: MODEL('fuel_reprocessor'), layout: LAYOUT('fuel_reprocessor'), label: 'Use fuel reprocessor', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 80 }, rad: 0.8,
+    id: 'fuel_reprocessor', kind: 'processor', name: 'FUEL REPROCESSOR', model: MODEL('fuel_reprocessor'), layout: LAYOUT('fuel_reprocessor'), label: 'Use fuel reprocessor', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 110 }, rad: 0.8,
     recipes: [
       { in: { depleted_tbu: 1 }, out: { th232: 1 }, time: 12, rad: 2 },
       { in: { depleted_leu: 1 }, out: { u238: 2, pu239: 1 }, time: 14, rad: 3 },
@@ -719,7 +732,7 @@ export const MACHINE_DEFS = [
   },
   {
     id: 'atmospheric_scrubber', kind: 'scrubber', name: 'ATMOSPHERIC SCRUBBER', model: MODEL('atmospheric_scrubber'), layout: LAYOUT('atmospheric_scrubber'), label: 'Open atmospheric scrubber', height: 1.8, dx: 2.8, dz: 1.8,
-    energy: { use: 200 }, ambientCut: 0.15, filter: { item: 'filter_cartridge', seconds: 120 }
+    energy: { use: 450 }, ambientCut: 0.15, filter: { item: 'filter_cartridge', seconds: 120 }
   },
   { id: 'energy_storage', kind: 'storage', name: 'ENERGY STORAGE', model: MODEL('energy_storage'), layout: LAYOUT('energy_storage'), label: 'Open energy storage', height: 1.3, dx: 2.8, dz: 1.8, capacity: 20000 },
   { id: 'simple_container', kind: 'storage', name: 'SIMPLE CONTAINER', model: 'assets/models/items/simple_container.gltf', label: 'Open simple container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 14 },
@@ -727,17 +740,17 @@ export const MACHINE_DEFS = [
   { id: 'copper_director', kind: 'starter_cable', name: 'COPPER DIRECTOR', model: MODEL('copper_director'), layout: LAYOUT('cable'), label: 'Copper director', height: 0.325, reach: 0.15, dx: 0.55, dz: 0.55 },
 
   {
-    id: 'excavator', kind: 'excavator', name: 'EXCAVATOR', model: MODEL('excavator'), layout: LAYOUT('excavator'), label: 'Open excavator', height: 3.0, dx: 3.2, dz: 2.2, sink: 0.083, energy: { use: 120 },
+    id: 'excavator', kind: 'excavator', name: 'EXCAVATOR', model: MODEL('excavator'), layout: LAYOUT('excavator'), label: 'Open excavator', height: 3.0, dx: 3.2, dz: 2.2, sink: 0.083, energy: { use: 220 },
     outputs: 9, drillRate: 1.2, spin: 'cylinder', spinRate: 7
   },
   {
     id: 'bucket_wheel_excavator', kind: 'bwe', name: 'BUCKET WHEEL EXCAVATOR', model: MODEL('bucket_wheel_excavator'), layout: LAYOUT('bucket_wheel_excavator'), label: 'Control bucket wheel excavator',
-    height: 14, dx: 8, dz: 5, energy: { use: 350 }, outputs: 64, noPad: true, footprint: [9, 5],
+    height: 14, dx: 8, dz: 5, energy: { use: 600 }, outputs: 64, noPad: true, footprint: [9, 5],
     bwe: { boomPivot: [5.375, 4.375, 0], mast: [3.8, 14.07, 0], boomAnchor: [16.38, 7.29, 0], ropeSpan: 14, ropeCenter: 0.25 }
   },
   { id: 'geiger_block', kind: 'geiger', name: 'GEIGER BLOCK', model: MODEL('geiger_block'), layout: LAYOUT('geiger_block'), label: 'Read geiger block', height: 1.0, dx: 2.8, dz: 1.8 },
   {
-    id: 'radiation_absorber', kind: 'absorber', name: 'RADIATION ABSORBER', model: MODEL('radiation_absorber'), layout: LAYOUT('radiation_absorber'), label: 'Open radiation absorber', height: 1.5, dx: 2.8, dz: 1.8, energy: { use: 50 }, absorbRadius: 12, absorbRate: 0.6,
+    id: 'radiation_absorber', kind: 'absorber', name: 'RADIATION ABSORBER', model: MODEL('radiation_absorber'), layout: LAYOUT('radiation_absorber'), label: 'Open radiation absorber', height: 1.5, dx: 2.8, dz: 1.8, energy: { use: 150 }, absorbRadius: 12, absorbRate: 0.35,
     recipes: [{ in: { lead_plate: 1 }, out: {}, time: 30, fuel: true }]
   },
   {
@@ -813,6 +826,11 @@ export const DEPLETED_OF = {
 
 
 export const CRAFT_RECIPES = [
+  ...WALL_RECIPES,
+  ...FLOOR_RECIPES,
+  ...ROOF_RECIPES,
+  ...DOOR_RECIPES,
+  ...TRIANGLE_RECIPES,
 
 
 
@@ -965,6 +983,7 @@ export const CRAFT_RECIPES = [
 
   { out: { test_bench: 1 }, needs: { iron_ingot: 2, car_battery: 1, copper_plate: 2 } },
   { out: { water_pump: 1 }, needs: { iron_ingot: 4, copper_ingot: 2, wood: 2 } },
+  { out: { hammer: 1 }, needs: { iron_ingot: 1, wood: 2 } },
 ];
 
 // Machine benches craft over time; machine blocks are a real build, everything else is quick.
@@ -976,6 +995,8 @@ for (const r of CRAFT_RECIPES) {
 
 
 const TABLE_OUTPUTS = new Set([
+  // items that opt in with `table: true` (the building pieces do)
+  ...Object.entries(ITEM_DEFS).filter(([, d]) => d.table).map(([id]) => id),
 
   'iron_ingot', 'copper_ingot', 'tin_ingot', 'torch', 'lantern', 'flashlight', 'graphite', 'carbon_mesh',
   'cigarette_pack', 'lighter', 'jerry_can_black', 'plastic', 'flour', 'cup_noodles',
@@ -992,7 +1013,7 @@ const TABLE_OUTPUTS = new Set([
 
   'manufactory', 'armor_workbench', 'gun_workbench', 'crusher', 'electric_furnace', 'cable', 'simple_container', 'copper_director', 'wooden_powerpole', 'liquid_mixer',
   'rtg', 'hand_crank', 'water_pump',
-  'pipe', 'fuel_carton',
+  'pipe', 'fuel_carton', 'wall_wood', 'hammer',
 ]);
 export const TABLE_RECIPES = CRAFT_RECIPES.filter((r) => TABLE_OUTPUTS.has(Object.keys(r.out)[0]));
 
@@ -1131,10 +1152,19 @@ export function layoutFor(def) {
 export const TUNING = {
   DAY_SECONDS: 900,
   HUNGER_DRAIN: 0.07,
-  RAD_RAMP_DAY: 10,
+  RAD_START_DAY: 3,      // ambient pressure begins here and ramps continuously
+  RAD_RAMP_DAY: 10,      // days per +1 tier of the ambient curve
   AMBIENT_BASE: 0.02,
   AMBIENT_EXP: 1.7,
   WASTELAND_RAD: 0.35,
+  RAD_SOURCE_DIST: 240,   // distance of the fallout source from the world origin
+  RAD_OCCL_FLOOR: 0.2,    // terrain alone never shields more than 80% of a field
+  RAD_CALM_DELAY: 30,    // seconds at zero intake before the body starts shedding dose
+  RAD_DECAY: 0.05,       // rad/s shed while calm — deliberately very slow
+  ABSORB_FLOOR: 0.25,    // absorbers never remove more than 75% of a field
+  BUILD_WALL_W: 3,        // wall pieces are 3 m x 3 m panels
+  BUILD_WALL_H: 3,
+  BUILD_WALL_T: 0.25,     // panel thickness in metres
   RAD_ARS_DOSE: 100,
   RAD_LD50: 450,
   RAD_LETHAL_DOSE: 600,

@@ -2709,7 +2709,15 @@ button.workbench-work-cell:hover {
 }
 
 .bwe-mini[hidden] {
-  display: none;
+  display: block;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(10px);
+}
+
+.bwe-mini {
+  transition: opacity .18s ease, visibility .18s ease, transform .18s ease;
 }
 
 .bwe-mini-head {
@@ -2914,6 +2922,29 @@ button.workbench-work-cell:hover {
   letter-spacing: .3px;
   white-space: pre-line;
   text-align: center;
+}
+
+#radDirWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+#radDir {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 11px solid rgba(255, 255, 255, .85);
+  transform-origin: 50% 50%;
+}
+
+#radDirTxt {
+  color: #ddd;
+  font-size: 7px;
+  letter-spacing: .3px;
+  white-space: nowrap;
 }
 
 #radMeter .track {
@@ -4227,38 +4258,6 @@ body.lowhp #hpFill {
   white-space: nowrap;
 }
 
-.mapHead .mapInfo {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  color: #bbb;
-  font: 700 9px/1.4 ui-monospace, monospace;
-  letter-spacing: .5px;
-}
-
-.mapHead .mapInfo b {
-  color: #fff;
-  font-weight: 700;
-}
-
-.mapHead .mapCursor {
-  flex: 0 0 auto;
-  color: #999;
-  font: 700 9px/1.4 ui-monospace, monospace;
-  letter-spacing: .5px;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.mapHint {
-  color: #666;
-  font: 700 8px/1.5 ui-monospace, monospace;
-  letter-spacing: .5px;
-  padding-top: 2px;
-}
-
 #mapClose,
 .mapBtn {
   background: rgba(0, 0, 0, .55) !important;
@@ -4321,8 +4320,8 @@ body.lowhp #hpFill {
 }
 
 .mapSide {
-  flex: 0 0 280px;
-  width: 280px;
+  flex: 0 0 230px;
+  width: 230px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4371,7 +4370,8 @@ body.lowhp #hpFill {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-height: 42vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
 }
@@ -4480,14 +4480,9 @@ body.lowhp #hpFill {
   }
 
   .mapSide {
-    flex-basis: 210px;
-    width: 210px;
+    flex-basis: 200px;
+    width: 200px;
     padding: 8px;
-  }
-
-  .mapHead .mapInfo,
-  .mapHead .mapCursor {
-    display: none;
   }
 }
 
@@ -4654,4 +4649,356 @@ body.lowhp #hpFill {
 
 #invPanel .inventory-craft {
   padding-bottom: 10px;
+}
+
+/* ---- settings ---- */
+.settings-list {
+  width: min(560px, 94vw);
+  max-height: 62vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.set-group {
+  margin: 16px 0 4px;
+  color: rgba(255, 255, 255, .45);
+  font: 700 9px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 3px;
+}
+
+.set-group:first-child {
+  margin-top: 0;
+}
+
+.set-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 6px 0;
+}
+
+.set-label {
+  color: #e6e6e6;
+  font: 700 10px/1.3 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1.5px;
+}
+
+.set-hint {
+  flex-basis: 100%;
+  color: rgba(255, 255, 255, .38);
+  font: 400 9px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: .4px;
+}
+
+.set-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-list .opts button {
+  margin-left: 0;
+}
+
+.settings-list .opts button.on,
+.settings-list .set-toggle.on {
+  background: rgba(0, 0, 0, .8) !important;
+  outline: 2px solid rgba(255, 255, 255, .5) !important;
+  outline-offset: 2px !important;
+}
+
+.set-toggle {
+  min-width: 54px;
+}
+
+.set-val {
+  min-width: 46px;
+  text-align: right;
+  color: #fff;
+  font: 700 11px/1 ui-monospace, Menlo, Consolas, monospace;
+}
+
+.set-range input[type=range] {
+  width: 150px;
+  height: 18px;
+  accent-color: #fff;
+  background: transparent;
+  cursor: pointer;
+}
+
+.set-range input[type=range]:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .5);
+  outline-offset: 2px;
+}
+
+#overlay .view-settings:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#overlay .view-settings .btn {
+  margin: 10px auto;
+}
+
+/* =====================================================================
+   MOTION
+   Every overlay panel fades in and out instead of popping. A hidden panel
+   keeps its layout (visibility:hidden, not display:none) so the fade can
+   play in reverse; the content slides up a little while the backdrop fades.
+   ===================================================================== */
+
+#invPanel,
+#recipePanel,
+#treePanel,
+#mapPanel,
+#achievePanel,
+#intro,
+#cmd,
+#menu,
+.workbench-screen,
+#overlay {
+  opacity: 1;
+  visibility: visible;
+  animation: none;
+  transition: opacity .18s ease, visibility .18s ease;
+}
+
+#invPanel.hidden,
+#recipePanel.hidden,
+#treePanel.hidden,
+#mapPanel.hidden,
+#achievePanel.hidden,
+#intro.hidden,
+#cmd.hidden,
+#menu.hidden,
+.workbench-screen[hidden],
+#overlay.closing {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* the hidden state must not be display:none, or there is no fade to play */
+#invPanel.hidden,
+#recipePanel.hidden,
+#mapPanel.hidden,
+#achievePanel.hidden,
+#intro.hidden,
+#menu.hidden {
+  display: flex;
+}
+
+#treePanel.hidden,
+#cmd.hidden {
+  display: block;
+}
+
+.workbench-screen[hidden] {
+  display: grid;
+}
+
+#invPanel .box,
+#recipePanel .box,
+.treeBox,
+.achieveBox,
+.mapBox,
+.introBox,
+.workbench-frame,
+#cmdInput {
+  animation: none;
+  transition: transform .2s cubic-bezier(.2, .8, .25, 1);
+}
+
+#invPanel.hidden .box,
+#recipePanel.hidden .box,
+#treePanel.hidden .treeBox,
+#achievePanel.hidden .achieveBox,
+#mapPanel.hidden .mapBox,
+#intro.hidden .introBox,
+.workbench-screen[hidden] .workbench-frame,
+#cmd.hidden #cmdInput {
+  transform: translateY(12px);
+}
+
+/* the pause menu content leaves faster than its backdrop */
+#overlay .panel {
+  animation: none;
+  transition: opacity .12s ease;
+}
+
+/* =====================================================================
+   MICRO-INTERACTION
+   ===================================================================== */
+
+.slot,
+.workbench-slot,
+.workbench-inventory-slot,
+.craftCard,
+.ritem,
+.rfilter,
+.rback,
+.mapBtn,
+.mapLayer,
+.mapMark,
+.mbtn,
+.btn,
+#overlay .btn,
+.opts button,
+#invRecipesBtn,
+#recipeClose,
+#giveRow button,
+#cmdInput,
+#cmdSug .row,
+.workbench-close,
+.world-item,
+#mapClose,
+#achieveClose,
+.set-toggle {
+  transition: background .13s ease, outline-color .13s ease, transform .13s ease, opacity .13s ease, filter .13s ease;
+}
+
+.slot:hover,
+.workbench-slot:hover,
+.workbench-inventory-slot:hover {
+  outline: 2px solid rgba(255, 255, 255, .45) !important;
+  outline-offset: 1px;
+}
+
+.craftCard:hover:not(.is-disabled),
+.ritem:hover {
+  transform: translateX(3px);
+}
+
+.craftCard:active:not(.is-disabled),
+.ritem:active,
+.rfilter:active {
+  transform: translateX(3px) scale(.985);
+}
+
+.slot:active,
+.workbench-slot:active,
+.workbench-inventory-slot:active {
+  transform: scale(.94);
+}
+
+/* keyboard users get the same outline the mouse hover gets */
+#invPanel :focus-visible,
+#recipePanel :focus-visible,
+#treePanel :focus-visible,
+#mapPanel :focus-visible,
+#achievePanel :focus-visible,
+#intro :focus-visible,
+#cmd :focus-visible,
+#menu :focus-visible,
+#overlay :focus-visible,
+.workbench-screen :focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .65) !important;
+  outline-offset: 2px !important;
+}
+
+/* dragging a stack around should never select the panel text */
+#invPanel,
+#recipePanel,
+#treePanel,
+#mapPanel,
+#achievePanel,
+.workbench-screen,
+#menu,
+#overlay {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#recipeSearch,
+.mapInput,
+#cmdInput,
+.mfield {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* one scrollbar look everywhere the UI scrolls */
+.recipeItems,
+.recipe-list,
+.recipe-detail,
+.workbench-layout,
+.workbench-craft-list,
+.workbench-inventory-grid,
+.mapSide,
+.mapMarkers,
+.mapCanvasWrap,
+.settings-list,
+.achieveScroll,
+.craftOptions,
+.introBox {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .3) transparent;
+}
+
+.recipeItems::-webkit-scrollbar,
+.recipe-list::-webkit-scrollbar,
+.recipe-detail::-webkit-scrollbar,
+.workbench-layout::-webkit-scrollbar,
+.workbench-craft-list::-webkit-scrollbar,
+.workbench-inventory-grid::-webkit-scrollbar,
+.mapSide::-webkit-scrollbar,
+.mapMarkers::-webkit-scrollbar,
+.settings-list::-webkit-scrollbar,
+.introBox::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.recipeItems::-webkit-scrollbar-track,
+.recipe-list::-webkit-scrollbar-track,
+.recipe-detail::-webkit-scrollbar-track,
+.workbench-layout::-webkit-scrollbar-track,
+.workbench-craft-list::-webkit-scrollbar-track,
+.workbench-inventory-grid::-webkit-scrollbar-track,
+.mapSide::-webkit-scrollbar-track,
+.mapMarkers::-webkit-scrollbar-track,
+.settings-list::-webkit-scrollbar-track,
+.introBox::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recipeItems::-webkit-scrollbar-thumb,
+.recipe-list::-webkit-scrollbar-thumb,
+.recipe-detail::-webkit-scrollbar-thumb,
+.workbench-layout::-webkit-scrollbar-thumb,
+.workbench-craft-list::-webkit-scrollbar-thumb,
+.workbench-inventory-grid::-webkit-scrollbar-thumb,
+.mapSide::-webkit-scrollbar-thumb,
+.mapMarkers::-webkit-scrollbar-thumb,
+.settings-list::-webkit-scrollbar-thumb,
+.introBox::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  #invPanel,
+  #recipePanel,
+  #treePanel,
+  #mapPanel,
+  #achievePanel,
+  #intro,
+  #cmd,
+  #menu,
+  .workbench-screen,
+  #overlay,
+  #invPanel .box,
+  #recipePanel .box,
+  .treeBox,
+  .achieveBox,
+  .mapBox,
+  .introBox,
+  .workbench-frame {
+    transition-duration: .01ms !important;
+  }
 }

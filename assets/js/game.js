@@ -2,12 +2,15 @@
     import { WorkbenchUI } from './workbench-ui.js';
     import { CraftOptions } from './craft-options.js';
     import { DragDrop, inventoryAdapter } from './drag-drop.js';
-    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES } from './content.js';
+    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES } from './content.js';
     import * as Liquid from './liquids.js';
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
+    import { BuildingSystem } from './building.js';
     import { MapSystem } from './map.js';
     import { createFootsteps, surfToCategory } from './footsteps.js';
+    import { sourcePoint, transmission, relativeBearing, compass, RAD_OCCL } from './radiation.js';
+    import { getSetting, renderSettings, onSettingsChange } from './settings.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -23,8 +26,11 @@
     // The settings value controls the visible horizon in chunks. Interactive
     // terrain remains tightly bounded until the far-terrain LOD streamer is
     // available; never feed the horizon value directly into chunk allocation.
-    const MAX_RENDER_DISTANCE = 2000;
+    const MAX_RENDER_DISTANCE = 10000;
     const DETAIL_CHUNK_RADIUS = 6;
+    // Haze strength of the far-terrain rings: the fade reaches ~99.9% at the
+    // outer edge of the outermost ring, so its border never shows as a hard line.
+    const FAR_HAZE_REACH = 2.6;
     const SAMPLE_SIZE = CHUNK_SIZE + 2;
     const VERTEX_SIZE = CHUNK_SIZE + 1;
     const S2 = SAMPLE_SIZE * SAMPLE_SIZE;
@@ -36,19 +42,12 @@
     const WORLD_NAME = MENU_WORLD?.name || 'WORLD';
     document.title = `NUCLEARISM — ${WORLD_NAME}`;
 
-    let viewRadius = 3;
-    let showInfoHud = false;
-    let masterVolume = 1;
-    let vsync = true;
-    try {
-      const s = JSON.parse(localStorage.getItem('idte.settings.v1')) || {};
-      const v = +s.renderDistance;
-      if (Number.isFinite(v) && v >= 1) viewRadius = Math.min(MAX_RENDER_DISTANCE, v);
-      showInfoHud = !!s.infoHud;
-      const vol = +s.volume;
-      if (Number.isFinite(vol)) masterVolume = Math.min(1, Math.max(0, vol));
-      vsync = s.vsync !== false;
-    } catch {                }
+    let viewRadius = Math.min(MAX_RENDER_DISTANCE, getSetting('renderDistance'));
+    let showInfoHud = getSetting('infoHud');
+    let masterVolume = getSetting('volume');
+    let vsync = getSetting('vsync');
+    let mouseSens = getSetting('sensitivity');
+    let invertY = getSetting('invertY');
     const CHUNK_Y_MIN = -1;
     const CHUNK_Y_MAX = 2;
 
@@ -198,9 +197,30 @@
     ];
 
 
-    const _colKey = (a, b) => (a + 32768) * 65536 + (b + 32768);
+    // Terrain lookups extend far beyond the old signed 16-bit packed-key range.
+    // Pack column coords into a NUMBER, not a string: these caches are hit once
+    // per voxel sample, so building a string key per lookup was pure overhead.
+    // Beyond ±2^20 m (far past any reachable world) fall back to a string key.
+    const _colKey = (a, b) => (
+      a >= -1048576 && a <= 1048575 && b >= -1048576 && b <= 1048575
+    ) ? ((a + 1048576) * 2097152 + (b + 1048576)) : `w${a},${b}`;
     const _trendCache = new Map();
     const _biomeCache = new Map();
+
+    function cacheTerrainValue(cache, key, value) {
+      cache.set(key, value);
+      // Far-horizon sampling walks through new coordinates over time. Bound the
+      // shared procedural caches so exploring the horizon cannot grow them forever.
+      if (cache.size > 160000) {
+        const it = cache.keys();
+        for (let i = 0; i < 24000; i++) {
+          const first = it.next();
+          if (first.done) break;
+          cache.delete(first.value);
+        }
+      }
+      return value;
+    }
 
     function biomeWeights(sx, sz) {
       const k = _colKey(Math.floor(sx), Math.floor(sz));
@@ -216,7 +236,7 @@
       }).sort((a, b) => b[1] - a[1]).slice(0, 3);
       const sum = scored[0][1] + scored[1][1] + scored[2][1];
       w = scored.map(([id, s]) => ({ id, w: s / sum }));
-      _biomeCache.set(k, w);
+      cacheTerrainValue(_biomeCache, k, w);
       return w;
     }
 
@@ -254,19 +274,31 @@
         base += d.base * wt; amp += d.amp * wt; rough += d.rough * wt;
         if (id >= B.PLAINS) land = true;
       }
-      const mountains = land ? Math.max(0, e - 0.22) * 46 : 0;
+      // Mountain belts are broad, linked massifs. A warped ridged field gives
+      // them long folded spines; branching drainage incisions cut through those
+      // spines like dry watercourses instead of leaving isolated noise peaks.
+      const beltWarpX = fbm3(sx * 0.0017, 31.7, sz * 0.0017, 3) * 2 - 1;
+      const beltWarpZ = fbm3(sx * 0.0017, 47.1, sz * 0.0017, 3) * 2 - 1;
+      const belt = fbm3((sx + beltWarpX * 180) * 0.0024, 13.9, (sz + beltWarpZ * 180) * 0.0024, 3) * 2 - 1;
+      const massif = Math.max(0, (belt - 0.04) / 0.72);
+      const spineNoise = fbm3((sx + beltWarpX * 95) * 0.008, 21.3, (sz + beltWarpZ * 95) * 0.008, 4) * 2 - 1;
+      const spines = Math.pow(Math.max(0, 1 - Math.abs(spineNoise)), 1.25);
+      const drainage = Math.max(0, 1 - Math.abs(fbm3(sx * 0.017, 63.4, sz * 0.017, 3) * 2 - 1) * 4);
+      const mountainLift = land
+        ? Math.max(0, e - 0.22) * 20 + massif * (42 + 66 * spines) - drainage * massif * 18
+        : 0;
       const hills = fbm3(sx * 0.0042, 0.0, sz * 0.0042, 4) * 2 - 1;
       const detail = fbm3(sx * 0.018, 5.5, sz * 0.018, 3) * 2 - 1;
       const ridge = fbm3(sx * 0.009, 9.3, sz * 0.009, 3) * 2 - 1;
 
-      const raw = base + mountains
+      const raw = base
         + amp * 1.7 * hills
         + rough * 1.8 * detail
         + amp * 1.1 * (0.5 - Math.abs(ridge));
 
       // Dry world: no ocean plate or shore blend, every column is land.
-      v = SEA_LEVEL + 26 * Math.tanh(raw / 26);
-      _trendCache.set(k, v);
+      v = SEA_LEVEL + 26 * Math.tanh(raw / 26) + mountainLift;
+      cacheTerrainValue(_trendCache, k, v);
       return v;
     }
 
@@ -297,6 +329,14 @@
         seaFade: Math.min(1, Math.max(0, (h - SEA_LEVEL) / 6)),
       };
       _colDensityCache.set(k, v);
+      if (_colDensityCache.size > 160000) {
+        const it = _colDensityCache.keys();
+        for (let i = 0; i < 24000; i++) {
+          const first = it.next();
+          if (first.done) break;
+          _colDensityCache.delete(first.value);
+        }
+      }
       return v;
     }
 
@@ -533,6 +573,22 @@
       }
       for (const r of rooms) grow(r.x, r.y, r.z, r.rx + pad, r.ry + pad, r.rz + pad);
 
+      // Per-primitive vertical bounds. A capsule/ellipsoid/cone can only affect
+      // the y range it spans, so a voxel far above or below a tunnel never needs
+      // to test it. Exact bounds (not approximations) — the result is unchanged.
+      for (const s of segs) {
+        s.y0 = Math.min(s.ay, s.by) - s.r;
+        s.y1 = Math.max(s.ay, s.by) + s.r;
+      }
+      for (const r of rooms) {
+        r.y0 = r.y - r.ry;
+        r.y1 = r.y + r.ry;
+      }
+      for (const sp of spikes) {
+        sp.y0 = Math.min(sp.y, sp.ty) - sp.r;
+        sp.y1 = Math.max(sp.y, sp.ty) + sp.r;
+      }
+
       return {
         x: px, z: pz, y0, segs, rooms, spikes, hub,
         mouth: withMouth, noodle: withNoodle,
@@ -607,6 +663,14 @@
         }
       }
       _caveCols.set(k, list);
+      if (_caveCols.size > 160000) {
+        const it = _caveCols.keys();
+        for (let i = 0; i < 24000; i++) {
+          const first = it.next();
+          if (first.done) break;
+          _caveCols.delete(first.value);
+        }
+      }
       return list;
     }
 
@@ -620,6 +684,7 @@
         if (y < s.minY || y > s.maxY) continue;
 
         for (const g of s.segs) {
+          if (y < g.y0 || y > g.y1) continue;
           const abx = g.bx - g.ax, aby = g.by - g.ay, abz = g.bz - g.az;
           const apx = sx - g.ax, apy = y - g.ay, apz = sz - g.az;
           const len2 = abx * abx + aby * aby + abz * abz;
@@ -634,6 +699,7 @@
         }
 
         for (const r of s.rooms) {
+          if (y < r.y0 || y > r.y1) continue;
           const dx = (sx - r.x) / r.rx, dy = (y - r.y) / r.ry, dz = (sz - r.z) / r.rz;
           const q2 = dx * dx + dy * dy + dz * dz;
           if (q2 >= 1) continue;
@@ -645,6 +711,7 @@
 
 
         for (const sp of s.spikes) {
+          if (y < sp.y0 || y > sp.y1) continue;
           const ax = sp.tx - sp.x, ay = sp.ty - sp.y, az = sp.tz - sp.z;
           const len2 = ax * ax + ay * ay + az * az;
           if (len2 < 1e-6) continue;
@@ -871,7 +938,10 @@
       }
 
       static key(x, y, z) {
-        return ((x + 32768) * 65536 + (y + 32768)) * 65536 + (z + 32768);
+        if (x >= -32768 && x <= 32767 && y >= -32768 && y <= 32767 && z >= -32768 && z <= 32767) {
+          return ((x + 32768) * 65536 + (y + 32768)) * 65536 + (z + 32768);
+        }
+        return `world:${x},${y},${z}`;
       }
 
       base(x, y, z) {
@@ -883,6 +953,17 @@
 
           const pad = industrialPadAt(x, z);
           if (pad) v += (pad.site.y0 - y - v) * pad.w;
+          // Bound the cache: every sampled voxel was kept forever, so a long
+          // session grew an unbounded Map (slower lookups + growing memory).
+          // Evict the oldest entries in bulk, like the terrain caches do.
+          if (this.baseCache.size > 400000) {
+            const it = this.baseCache.keys();
+            for (let i = 0; i < 120000; i++) {
+              const first = it.next();
+              if (first.done) break;
+              this.baseCache.delete(first.value);
+            }
+          }
           this.baseCache.set(k, v);
         }
         return v;
@@ -893,7 +974,6 @@
         const e = this.edits.get(k);
         return e !== undefined ? e : this.base(x, y, z);
       }
-
       set(x, y, z, v) {
         this.edits.set(DensityField.key(x, y, z), v);
       }
@@ -1014,6 +1094,7 @@
         this.wQueued = false;
         this.dead = false;
         this.hasSurface = true;
+        this.built = false;
       }
 
 
@@ -1077,6 +1158,21 @@
         const c = _corners;
         const wsurfCol = _wsurfCol.fill(NaN);
 
+        // Only torches whose range reaches this chunk can light its vertices.
+        // Testing every placed torch for every vertex was the bulk of the cost.
+        let chunkTorches = torches;
+        if (torches.length) {
+          const cx = this.ox + 8, cy = this.oy + 8, cz = this.oz + 8;
+          const near = [];
+          for (const t of torches) {
+            const L = t.light;
+            const reach = L.range + CHUNK_SIZE;
+            const dx = t.pos.x - cx, dy = t.pos.y - cy, dz = t.pos.z - cz;
+            if (dx * dx + dy * dy + dz * dz <= reach * reach) near.push(t);
+          }
+          chunkTorches = near;
+        }
+
 
         for (let k = -1; k <= N - 1; k++) {
           for (let j = -1; j <= N - 1; j++) {
@@ -1135,7 +1231,7 @@
               colors.push(col[0], col[1], col[2]);
               adata.push(stoneMask, dirtMask, grassMask, occ);
               surfArr.push(_surf[0], _surf[1], _surf[2], _surf[3]);
-              const lt = lightAt(this.world.field, wx, wy, wz);
+              const lt = lightAt(this.world.field, wx, wy, wz, chunkTorches);
               torchArr.push(lt[0], lt[1], lt[2]);
 
 
@@ -1240,6 +1336,7 @@
 
 
         if (this.oy <= SEA_LEVEL) this.rebuildWater();
+        this.built = true;
       }
 
       rebuildTerrain() {
@@ -1304,6 +1401,10 @@
             this.waterMesh = null;
           }
         };
+
+        // No water anywhere in the simulation means there is nothing to build.
+        // Bail before allocating the overshoot buffers and walking the grid.
+        if (!wsim.depth.size) { dropMesh(); return; }
 
 
 
@@ -1447,6 +1548,10 @@
     let grassMask = 0;
     let dirtMask = 0;
     const _surf = [0, 0, 0, 0];
+    function mountainRockAt(x, z) {
+      return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) - SEA_LEVEL > 30;
+    }
+
     function surfaceColor(wx, wy, wz) {
       const n = (noise3(wx * 0.15, wy * 0.15, wz * 0.15) - 0.5) * 4.0;
       const def = BIOME_DEFS[biomeAt(wx, wz)];
@@ -1482,13 +1587,14 @@
 
 
 
-      grassMask = (def.surf !== 'rock' && depth < 1.2) ? 1 : 0;
+      const exposedMountain = mountainRockAt(wx, wz) ? 1 : 0;
+      grassMask = (def.surf !== 'rock' && depth < 1.2) ? 1 - exposedMountain : 0;
       dirtMask = (depth >= 1.2 && depth < 3.0) ? 1 : 0;
-      stoneMask = depth >= 3.0 ? 1 : 0;
-      _surf[0] = def.surf === 'sand' ? 1 : 0;
-      _surf[1] = def.surf === 'dry' ? 1 : 0;
-      _surf[2] = def.surf === 'snow' ? 1 : 0;
-      _surf[3] = def.surf === 'ash' ? 1 : 0;
+      stoneMask = depth >= 3.0 ? 1 : exposedMountain;
+      _surf[0] = def.surf === 'sand' ? 1 - exposedMountain : 0;
+      _surf[1] = def.surf === 'dry' ? 1 - exposedMountain : 0;
+      _surf[2] = def.surf === 'snow' ? 1 - exposedMountain : 0;
+      _surf[3] = def.surf === 'ash' ? 1 - exposedMountain : 0;
       return _col;
     }
 
@@ -1538,9 +1644,10 @@
     }
 
     const _lightOut = [0, 0, 0];
-    function lightAt(field, x, y, z) {
+    function lightAt(field, x, y, z, list) {
       let r = 0, g = 0, b = 0;
-      for (const t of torches) {
+      const src = list || torches;
+      for (const t of src) {
         const L = t.light;
         const dx = t.pos.x - x, dy = t.pos.y - y, dz = t.pos.z - z;
         const d2 = dx * dx + dy * dy + dz * dz;
@@ -1787,6 +1894,7 @@
         this.scene = scene;
         this.field = new DensityField();
         this.chunks = new Map();
+        this.columnTopChunks = new Map();
         this.dirty = [];
         this.waterDirty = [];
         this.water = new WaterSim(this);
@@ -1805,10 +1913,12 @@
         stoneTex.wrapS = stoneTex.wrapT = THREE.RepeatWrapping;
         stoneTex.colorSpace = THREE.SRGBColorSpace;
         stoneTex.anisotropy = 4;
+        this.stoneTexture = stoneTex;
         const grassTex = new THREE.TextureLoader().load('assets/images/grass.jpg');
         grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
         grassTex.colorSpace = THREE.SRGBColorSpace;
         grassTex.anisotropy = 4;
+        this.farGrassTexture = grassTex;
         const dirtTex = new THREE.TextureLoader().load('assets/images/dirt.jpg');
         dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping;
         dirtTex.colorSpace = THREE.SRGBColorSpace;
@@ -1825,6 +1935,7 @@
         ashTex.wrapS = ashTex.wrapT = THREE.RepeatWrapping;
         ashTex.colorSpace = THREE.SRGBColorSpace;
         ashTex.anisotropy = 4;
+        this.farBiomeTextures = { grass: grassTex, sand: sandTex, dry: dryTex, snow: snowTex, ash: ashTex };
         this.material.onBeforeCompile = (shader) => {
           shader.uniforms.stoneMap = { value: stoneTex };
           shader.uniforms.grassMap = { value: grassTex };
@@ -1889,6 +2000,9 @@
                      + triplanar(ashMap, rotY(vWPos, 4.1888), tn, 0.35)) * (1.0 / 3.0);
           topTex = mix(topTex, ashT, vSurf.w);
           tBase = mix(tBase, topTex, vTop);
+          // Apply a fragment-level cutoff so interpolated vertex masks cannot
+          // leave a green halo between the grass foothills and exposed stone.
+          tBase = mix(tBase, triplanar(stoneMap, vWPos, tn, 0.08), step(50.0, vWPos.y));
           diffuseColor.rgb = tBase * vOcc;`)
             .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           // baked light colour already wall-occluded — rock can't leak, range can't flood.
@@ -1990,6 +2104,30 @@
         return this.chunks.get(World.ck(cx, cy, cz));
       }
 
+      topChunkForColumn(cx, cz) {
+        const key = `${cx},${cz}`;
+        let top = this.columnTopChunks.get(key);
+        if (top !== undefined) return top;
+        let maxHeight = -Infinity;
+        // Sample at 4 m intervals so narrow ridges that cross a 16 m chunk
+        // still request the vertical meshes needed to render them.
+        for (let z = 0; z <= CHUNK_SIZE; z += 4) {
+          for (let x = 0; x <= CHUNK_SIZE; x += 4) {
+            maxHeight = Math.max(maxHeight, terrainTrend(
+              cx * CHUNK_SIZE + x + WORLD_SEED,
+              cz * CHUNK_SIZE + z + WORLD_SEED,
+            ));
+          }
+        }
+        top = Math.max(CHUNK_Y_MAX, Math.floor(maxHeight / CHUNK_SIZE) + 1);
+        this.columnTopChunks.set(key, top);
+        if (this.columnTopChunks.size > 20000) {
+          const oldest = this.columnTopChunks.keys().next().value;
+          this.columnTopChunks.delete(oldest);
+        }
+        return top;
+      }
+
 
       update(px, py, pz) {
         this.playerPos.set(px, py, pz);
@@ -2003,7 +2141,7 @@
           for (let dx = -detailRadius; dx <= detailRadius; dx++) {
             const cx = pcx + dx;
             const cz = pcz + dz;
-            for (let cy = CHUNK_Y_MIN; cy <= CHUNK_Y_MAX; cy++) {
+            for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(cx, cz); cy++) {
               const key = World.ck(cx, cy, cz);
               if (!this.chunks.has(key)) {
                 const c = new Chunk(this, cx, cy, cz);
@@ -2021,11 +2159,38 @@
         const unloadR = detailRadius + 2;
         for (const [key, c] of this.chunks) {
           const dx = c.cx - pcx, dz = c.cz - pcz;
-          if (Math.abs(dx) > unloadR || Math.abs(dz) > unloadR) {
+          if (Math.abs(dx) > unloadR || Math.abs(dz) > unloadR
+            || c.cy > this.topChunkForColumn(c.cx, c.cz) || c.cy < CHUNK_Y_MIN) {
             c.dispose();
             this.chunks.delete(key);
           }
         }
+      }
+
+      async prewarm(px, py, pz, onProgress = () => {}) {
+        this.update(px, py, pz);
+        const pcx = Math.floor(px / CHUNK_SIZE);
+        const pcz = Math.floor(pz / CHUNK_SIZE);
+        const center = [];
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(pcx + dx, pcz + dz); cy++) {
+              const chunk = this.getChunk(pcx + dx, cy, pcz + dz);
+              if (chunk) center.push(chunk);
+            }
+          }
+        }
+
+        const total = center.length;
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        let built = 0;
+        while (built < total) {
+          this.processDirty(8);
+          built = center.reduce((n, chunk) => n + (chunk.built ? 1 : 0), 0);
+          onProgress(total ? built / total : 1);
+          if (built < total) await nextFrame();
+        }
+        onProgress(1);
       }
 
       markDirty(c) {
@@ -2055,7 +2220,7 @@
 
       markColumnDirty(cx, cz) {
         const ccx = Math.floor(cx / CHUNK_SIZE), ccz = Math.floor(cz / CHUNK_SIZE);
-        for (let cy = CHUNK_Y_MIN; cy <= CHUNK_Y_MAX; cy++) {
+        for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(ccx, ccz); cy++) {
           const c = this.getChunk(ccx, cy, ccz);
           if (c && !c.queued) this.markDirty(c);
         }
@@ -2066,7 +2231,7 @@
         const cz0 = Math.floor(z0 / CHUNK_SIZE) - 1, cz1 = Math.floor(z1 / CHUNK_SIZE) + 1;
         for (let cx = cx0; cx <= cx1; cx++)
           for (let cz = cz0; cz <= cz1; cz++)
-            for (let cy = CHUNK_Y_MIN; cy <= CHUNK_Y_MAX; cy++) {
+            for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(cx, cz); cy++) {
               const c = this.getChunk(cx, cy, cz);
               if (c && !c.wQueued) { c.wQueued = true; this.waterDirty.push(c); }
             }
@@ -2088,18 +2253,20 @@
         const t0 = performance.now();
         const px = this.playerPos.x, py = this.playerPos.y, pz = this.playerPos.z;
 
-        while (this.dirty.length > 0 && performance.now() - t0 < budgetMs) {
-
-          let bestIdx = 0, bestD = Infinity;
-          for (let i = 0; i < this.dirty.length; i++) {
-            const c = this.dirty[i];
+        // Sort the queue by distance to the player once, then rebuild in that
+        // order. The old code re-scanned the whole queue for every chunk it
+        // rebuilt (O(n^2)) just to pick the nearest one each time.
+        if (this.dirty.length > 1) {
+          const d2 = (c) => {
             const dx = c.ox + 8 - px, dy = c.oy + 8 - py, dz = c.oz + 8 - pz;
-            const d = dx * dx + dy * dy + dz * dz;
-            if (d < bestD) { bestD = d; bestIdx = i; }
-          }
-          const c = this.dirty[bestIdx];
-          this.dirty[bestIdx] = this.dirty[this.dirty.length - 1];
-          this.dirty.pop();
+            return dx * dx + dy * dy + dz * dz;
+          };
+          // Farthest first, so popping off the end yields the nearest next.
+          this.dirty.sort((a, b) => d2(b) - d2(a));
+        }
+
+        while (this.dirty.length > 0 && performance.now() - t0 < budgetMs) {
+          const c = this.dirty.pop();
           c.queued = false;
           if (!c.dead) c.rebuild();
         }
@@ -2389,6 +2556,7 @@
             timeLock: timeLock !== null,
             machines: machineSystem ? machineSystem.serialize() : [],
             pipes: pipeSystem ? pipeSystem.serialize() : [],
+            buildings: buildingSystem ? buildingSystem.serialize() : [],
             map: mapSystem ? mapSystem.serialize() : null,
             torches: torches.map(t => [
               Math.round(t.pos.x * 100) / 100, Math.round(t.pos.y * 100) / 100, Math.round(t.pos.z * 100) / 100,
@@ -2479,6 +2647,262 @@
 
 
 
+
+
+    class FarTerrainRenderer {
+      constructor(scene, biomeTextures, stoneTexture, world) {
+        this.scene = scene;
+        this.world = world;
+        this.outer = 0;
+        this.shader = null;
+        this.material = new THREE.MeshLambertMaterial({
+          side: THREE.DoubleSide,
+          flatShading: false,
+          fog: false,
+        });
+        this.material.onBeforeCompile = (shader) => {
+          this.shader = shader;
+          shader.uniforms.farGrassMap = { value: biomeTextures.grass };
+          shader.uniforms.farSandMap = { value: biomeTextures.sand };
+          shader.uniforms.farDryMap = { value: biomeTextures.dry };
+          shader.uniforms.farSnowMap = { value: biomeTextures.snow };
+          shader.uniforms.farAshMap = { value: biomeTextures.ash };
+          shader.uniforms.farStoneMap = { value: stoneTexture };
+          shader.uniforms.uHazeColor = { value: new THREE.Color(0x9ec9e8) };
+          shader.uniforms.uHazeStart = { value: DETAIL_CHUNK_RADIUS * CHUNK_SIZE };
+          shader.uniforms.uHazeDensity = { value: 0 };
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nattribute vec4 aFarSurf; varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFarNormal = normalize(mat3(modelMatrix) * objectNormal);');
+          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarSurf = aFarSurf;');
+          shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', `#include <common>
+            uniform sampler2D farGrassMap; uniform sampler2D farSandMap; uniform sampler2D farDryMap;
+            uniform sampler2D farSnowMap; uniform sampler2D farAshMap; uniform sampler2D farStoneMap;
+            uniform vec3 uHazeColor; uniform float uHazeStart; uniform float uHazeDensity;
+            varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal;
+            vec3 farTri(sampler2D m, vec3 p, vec3 n, float s) {
+              vec3 w = pow(abs(n), vec3(4.0)); w /= w.x + w.y + w.z;
+              return texture2D(m, p.zy * s).rgb * w.x + texture2D(m, p.xz * s).rgb * w.y + texture2D(m, p.xy * s).rgb * w.z;
+            }`)
+            .replace('#include <map_fragment>', `#include <map_fragment>
+            vec3 farN = normalize(vFarNormal);
+            vec3 farGrass = farTri(farGrassMap, vFarPos, farN, 0.4);
+            vec3 farTop = farGrass * max(0.0, 1.0 - dot(vFarSurf, vec4(1.0)))
+              + farTri(farSandMap, vFarPos, farN, 0.30) * vFarSurf.x
+              + farTri(farDryMap, vFarPos, farN, 0.40) * vFarSurf.y
+              + farTri(farSnowMap, vFarPos, farN, 0.22) * vFarSurf.z
+              + farTri(farAshMap, vFarPos, farN, 0.35) * vFarSurf.w;
+            vec3 farStone = farTri(farStoneMap, vFarPos, farN, 0.08);
+            diffuseColor.rgb = mix(farTop, farStone, step(50.0, vFarPos.y));`)
+            // Own distance haze: the far rings fade into the sky exactly at the
+            // outer edge of the outermost ring, so its border is never visible.
+            .replace('#include <fog_fragment>', `
+            float hazeD = distance(cameraPosition, vFarPos);
+            float hazeF = 1.0 - exp(-pow(max(0.0, hazeD - uHazeStart) * uHazeDensity, 2.0));
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, uHazeColor, hazeF);`);
+        };
+        this.meshes = [];
+        this.centerKey = '';
+        this.token = 0;
+      }
+
+      disposeMeshes(meshes = this.meshes) {
+        for (const mesh of meshes) {
+          this.scene.remove(mesh);
+          mesh.geometry.dispose();
+        }
+      }
+
+      ringSteps(radius) {
+        const steps = [];
+        let step = CHUNK_SIZE;
+        while (step * 32 < radius && steps.length < 7) {
+          steps.push(step);
+          step *= 4;
+        }
+        if (!steps.length && radius > DETAIL_CHUNK_RADIUS * CHUNK_SIZE) steps.push(CHUNK_SIZE);
+        if (steps.length && steps[steps.length - 1] * 32 < radius) steps.push(steps[steps.length - 1] * 4);
+        return steps;
+      }
+
+      async rebuild(px, pz, progress = () => {}) {
+        const radius = viewRadius * CHUNK_SIZE;
+        const steps = radius > DETAIL_CHUNK_RADIUS * CHUNK_SIZE ? this.ringSteps(radius) : [];
+        const centerX = Math.floor(px / CHUNK_SIZE) * CHUNK_SIZE;
+        const centerZ = Math.floor(pz / CHUNK_SIZE) * CHUNK_SIZE;
+        const key = `${centerX},${centerZ},${steps.join(':')}`;
+        if (key === this.centerKey) { progress(1); return; }
+        this.centerKey = key;
+        const token = ++this.token;
+        const nextMeshes = [];
+
+        if (!steps.length) {
+          this.disposeMeshes();
+          this.meshes = [];
+          progress(1);
+          return;
+        }
+
+        const side = 64;
+        const row = side + 1;
+        const vertexCount = row * row;
+        const totalSamples = steps.length * vertexCount;
+        let sampled = 0;
+        let batch = 0;
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+        for (let level = 0; level < steps.length; level++) {
+          const step = steps[level];
+          const innerCells = level === 0 ? 5 : 8;
+          const positions = new Float32Array(vertexCount * 3);
+          const uvs = new Float32Array(vertexCount * 2);
+          const farSurf = new Float32Array(vertexCount * 4);
+          const indices = [];
+
+          for (let z = 0; z <= side; z++) {
+            for (let x = 0; x <= side; x++) {
+              const i = z * row + x;
+              const lx = (x - side / 2) * step;
+              const lz = (z - side / 2) * step;
+              positions[i * 3] = lx;
+              positions[i * 3 + 2] = lz;
+              uvs[i * 2] = (centerX + lx) * 0.4;
+              uvs[i * 2 + 1] = (centerZ + lz) * 0.4;
+
+              if (Math.abs(x - side / 2) >= innerCells || Math.abs(z - side / 2) >= innerCells) {
+                const wx = centerX + lx, wz = centerZ + lz;
+                for (const biome of biomeWeights(wx + WORLD_SEED, wz + WORLD_SEED)) {
+                  const surf = BIOME_DEFS[biome.id].surf;
+                  const channel = surf === 'sand' ? 0 : surf === 'dry' ? 1 : surf === 'snow' ? 2 : surf === 'ash' ? 3 : -1;
+                  if (channel >= 0) farSurf[i * 4 + channel] += biome.w;
+                }
+                const baseY = terrainTrend(wx + WORLD_SEED, wz + WORLD_SEED);
+                const pad = level === 0 ? industrialPadAt(wx, wz) : null;
+                const terrainY = pad ? baseY + (pad.site.y0 - baseY) * pad.w : baseY;
+                const edgeDistance = Math.max(Math.abs(x - side / 2), Math.abs(z - side / 2)) - innerCells;
+                let y = terrainY - 6;
+                if (level === 0 && edgeDistance <= 2) {
+                  const actualY = this.world.surfaceY(wx, wz, Math.ceil(terrainY + 16));
+                  const t = Math.max(0, Math.min(1, edgeDistance / 2));
+                  const blend = t * t * (3 - 2 * t);
+                  y = actualY + (terrainY - 6 - actualY) * blend;
+                }
+                positions[i * 3 + 1] = y;
+              }
+              sampled++;
+              if (++batch >= 256) {
+                batch = 0;
+                progress((sampled - batch) / totalSamples);
+                await nextFrame();
+                if (token !== this.token) {
+                  this.disposeMeshes(nextMeshes);
+                  return;
+                }
+              }
+            }
+          }
+
+          for (let z = 0; z < side; z++) {
+            for (let x = 0; x < side; x++) {
+              const inHole = x >= side / 2 - innerCells && x < side / 2 + innerCells
+                && z >= side / 2 - innerCells && z < side / 2 + innerCells;
+              if (inHole) continue;
+              const a = z * row + x;
+              const b = a + 1;
+              const c = a + row;
+              const d = c + 1;
+              indices.push(a, c, b, b, c, d);
+            }
+          }
+
+          const perimeter = (min, max) => {
+            const out = [];
+            for (let x = min; x < max; x++) out.push(min * row + x);
+            for (let z = min; z < max; z++) out.push(z * row + max);
+            for (let x = max; x > min; x--) out.push(max * row + x);
+            for (let z = max; z > min; z--) out.push(z * row + min);
+            return out;
+          };
+          const boundaries = [perimeter(0, side)];
+          if (level > 0) boundaries.push(perimeter(side / 2 - innerCells, side / 2 + innerCells));
+          let skirtCount = 0;
+          for (const edge of boundaries) skirtCount += edge.length;
+          const meshPositions = new Float32Array((vertexCount + skirtCount) * 3);
+          meshPositions.set(positions);
+          const meshUvs = new Float32Array((vertexCount + skirtCount) * 2);
+          meshUvs.set(uvs);
+          const meshFarSurf = new Float32Array((vertexCount + skirtCount) * 4);
+          meshFarSurf.set(farSurf);
+          let skirtIndex = vertexCount;
+          for (const edge of boundaries) {
+            const lower = [];
+            for (const top of edge) {
+              const bottom = skirtIndex++;
+              meshPositions[bottom * 3] = positions[top * 3];
+              meshPositions[bottom * 3 + 1] = positions[top * 3 + 1] - 64;
+              meshPositions[bottom * 3 + 2] = positions[top * 3 + 2];
+              meshUvs[bottom * 2] = uvs[top * 2];
+              meshUvs[bottom * 2 + 1] = uvs[top * 2 + 1];
+              for (let channel = 0; channel < 4; channel++) {
+                meshFarSurf[bottom * 4 + channel] = farSurf[top * 4 + channel];
+              }
+              lower.push(bottom);
+            }
+            for (let i = 0; i < edge.length; i++) {
+              const j = (i + 1) % edge.length;
+              indices.push(edge[i], edge[j], lower[i], edge[j], lower[j], lower[i]);
+            }
+          }
+
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.BufferAttribute(meshPositions, 3));
+          geometry.setAttribute('uv', new THREE.BufferAttribute(meshUvs, 2));
+          geometry.setAttribute('aFarSurf', new THREE.BufferAttribute(meshFarSurf, 4));
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals();
+          geometry.computeBoundingSphere();
+          const mesh = new THREE.Mesh(geometry, this.material);
+          mesh.position.set(centerX, 0, centerZ);
+          mesh.frustumCulled = true;
+          nextMeshes.push(mesh);
+        }
+
+        if (token !== this.token) {
+          this.disposeMeshes(nextMeshes);
+          return;
+        }
+        for (const mesh of nextMeshes) this.scene.add(mesh);
+        this.disposeMeshes();
+        this.meshes = nextMeshes;
+        progress(1);
+      }
+
+      update(px, pz) {
+        const radius = viewRadius * CHUNK_SIZE;
+        const steps = radius > DETAIL_CHUNK_RADIUS * CHUNK_SIZE ? this.ringSteps(radius) : [];
+        // Outer edge of the outermost ring: the haze is scaled to it, so the far
+        // terrain dissolves into the sky exactly where it stops.
+        this.outer = steps.length ? steps[steps.length - 1] * 32 : 0;
+        const centerX = Math.floor(px / CHUNK_SIZE) * CHUNK_SIZE;
+        const centerZ = Math.floor(pz / CHUNK_SIZE) * CHUNK_SIZE;
+        const key = `${centerX},${centerZ},${steps.join(':')}`;
+        if (key !== this.centerKey) this.rebuild(px, pz).catch((e) => console.warn('far terrain build failed', e));
+      }
+
+      // Fade the rings into the sky. The haze is complete at `visFar` (the outer
+      // ring edge or the camera's far plane, whichever comes first), so the fake
+      // terrain has no visible border.
+      setHaze(visFar) {
+        if (!this.shader) return;
+        this.shader.uniforms.uHazeColor.value.copy(this.scene.fog.color);
+        this.shader.uniforms.uHazeDensity.value = visFar > 0 ? FAR_HAZE_REACH / visFar : 0;
+      }
+
+      async prewarm(px, pz, progress = () => {}) {
+        await this.rebuild(px, pz, progress);
+      }
+    }
 
 
     class Walker {
@@ -2695,7 +3119,7 @@
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 
-    let PIXEL = 3;
+    let PIXEL = getSetting('resolution');
     renderer.setPixelRatio(1);
     let postTarget = null;
     function applyPixelSize() {
@@ -2709,7 +3133,7 @@
 
 
 
-    let COLOR_LEVELS = 32;
+    let COLOR_LEVELS = getSetting('colorLevels');
     postTarget = new THREE.WebGLRenderTarget(2, 2, { depthBuffer: true, samples: 0 });
     postTarget.texture.minFilter = THREE.NearestFilter;
     postTarget.texture.magFilter = THREE.NearestFilter;
@@ -2783,7 +3207,7 @@
     scene.background = SKY.clone();
     scene.fog = new THREE.Fog(SKY, 55, 130);
 
-    const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 400);
+    const camera = new THREE.PerspectiveCamera(getSetting('fov'), innerWidth / innerHeight, 0.08, 400);
     camera.rotation.order = 'YXZ';
     scene.add(camera);
 
@@ -3301,6 +3725,7 @@
     let armorShieldTimer = 0;
     let radIntakeTimer = 0;
     let radIntakeMult = 1;
+    let radFreeT = 0;
     let smokeTime = 0;
     let smokeSpeed = 1;
     let wasInWaste = false;
@@ -3308,11 +3733,64 @@
     let machineSystem = null;
     let mapSystem = null;
 
-    function dayTier() { return Math.floor((clock.day - 1) / TUNING.RAD_RAMP_DAY); }
+    // Ambient pressure starts gently on RAD_START_DAY and scales continuously,
+    // so the meter moves from the first day instead of waiting for a tier jump.
     function ambientRad() {
-      const tier = dayTier();
-      return tier <= 0 ? 0 : TUNING.AMBIENT_BASE * Math.pow(tier, TUNING.AMBIENT_EXP);
+      const tiers = Math.max(0, clock.day - TUNING.RAD_START_DAY + 1) / TUNING.RAD_RAMP_DAY;
+      return tiers <= 0 ? 0 : TUNING.AMBIENT_BASE * Math.pow(tiers, TUNING.AMBIENT_EXP);
     }
+    // Radiation has a direction. The ambient field comes from the world's
+    // fallout spot and machines radiate from their own block, so solid ground
+    // between the player and that direction absorbs part of the dose.
+    function radSource() {
+      return sourcePoint(WORLD_SEED, TUNING.RAD_SOURCE_DIST);
+    }
+    function radFactor(x, y, z) {
+      return solidAt(world.field, x, y, z) ? RAD_OCCL.solid : 1;
+    }
+    // Near-field shadow march toward a source: 1 = clear line, ~0.2 = buried.
+    // Walls are shadowed separately: the point march would step straight over a
+    // 25 cm panel, so the building system attenuates by material thickness.
+    function radTransmission(dx, dy, dz) {
+      if (!world) return 1;
+      const t = transmission(radFactor, player.pos.x, player.pos.y + 1, player.pos.z, dx, dy, dz);
+      const w = buildingSystem ? buildingSystem.shadow(player.pos.x, player.pos.y + 1, player.pos.z, dx, dy, dz, RAD_OCCL.range) : 1;
+      return Math.max(TUNING.RAD_OCCL_FLOOR, t * w);
+    }
+
+    // Ambient and machine radiation, split so the scrubber only cuts ambient.
+    // Cached briefly: the field only has to keep up with the HUD.
+    let _radField = null, _radFieldAt = -1e9;
+    function radField() {
+      const now = performance.now();
+      if (_radField && now - _radFieldAt < 100) return _radField;
+      _radFieldAt = now;
+      const px = player.pos.x, py = player.pos.y + 1, pz = player.pos.z;
+
+      const src = radSource();
+      let dx = src.x - px, dz = src.z - pz;
+      const d = Math.hypot(dx, dz) || 1;
+      dx /= d; dz /= d;
+      const ambient = ambientRad() * radTransmission(dx, 0, 0);
+
+      let machine = 0, best = ambient, bx = dx, bz = dz, bdist = d;
+      if (machineSystem) {
+        for (const e of machineSystem.emitList) {
+          const ex = e.x - px, ey = e.y - py, ez = e.z - pz;
+          const ed = Math.hypot(ex, ey, ez);
+          const r = e.rad / (1 + ed * ed * 0.25);
+          if (r < 1e-4) continue;
+          const k = 1 / (ed || 1);
+          const ux = ex * k, uy = ey * k, uz = ez * k;
+          const contrib = r * radTransmission(ux, uy, uz);
+          machine += contrib;
+          if (contrib > best) { best = contrib; bx = ux; bz = uz; bdist = ed; }
+        }
+      }
+      _radField = { ambient, machine, dx: bx, dz: bz, dist: bdist };
+      return _radField;
+    }
+
     function radStage() {
       let stage = { name: 'SAFE', speed: 1, blur: 0, dark: 0 };
       for (const s of TUNING.RAD_STAGES) if (inv.dose >= s.at) stage = s;
@@ -3919,6 +4397,7 @@
 
 
     const world = new World(scene);
+    const farTerrain = new FarTerrainRenderer(scene, world.farBiomeTextures, world.stoneTexture, world);
 
 
 
@@ -3986,7 +4465,11 @@
     ];
 
 
-    for (const sp of VEG_SPECIES) sp.dist = Math.min(sp.dist, 52);
+    // Trees stay visible across almost the full 6-chunk detailed terrain radius.
+    // Low vegetation keeps its shorter range so it does not add distant clutter.
+    for (const sp of VEG_SPECIES) {
+      sp.dist = sp.layer === 'canopy' ? 100 : Math.min(sp.dist, 52);
+    }
 
     function _vegHash(gx, gz, salt) {
       return hash3(gx * 131 + salt * 17 + WORLD_SEED, salt * 7 + 3, gz * 197 + salt * 13 + WORLD_SEED);
@@ -4065,6 +4548,8 @@
         const fromY = Math.ceil(terrainTrend(pl.x + WORLD_SEED, pl.z + WORLD_SEED)) + 12;
         const y = world.surfaceY(pl.x, pl.z, fromY);
         if (y <= -8) return null;
+
+        if (mountainRockAt(pl.x, pl.z)) return null;
 
         if (caveCarveAt(pl.x + WORLD_SEED, y + 0.4, pl.z + WORLD_SEED) > 0.02) return null;
         if ((sp.layer === 'canopy' || sp.layer === 'ground' || sp.layer === 'cover' || sp.layer === 'floor') && groundDepth(pl.x, y, pl.z) >= 1.2) return null;
@@ -5680,21 +6165,26 @@
         h: terrainTrend(x + WORLD_SEED, z + WORLD_SEED),
         biome: biomeAt(x, z),
       }),
-      biomeColor: (id) => BIOME_DEFS[id]?.top,
-      biomeName: (id) => BIOME_DEFS[id]?.name || 'UNKNOWN',
+      // Flat map colour: exposed mountain rock overrides the biome top colour.
+      surfaceColor: (x, z, h) => (
+        h - SEA_LEVEL > 30
+          ? [0.33, 0.32, 0.36]
+          : (BIOME_DEFS[biomeAt(x, z)]?.top || [0.4, 0.5, 0.3])
+      ),
       industrialCell: IND_CELL,
+      industrialDims: IND_DIMS,
       industrialSite,
       machines: () => (machineSystem ? machineSystem.instances : []),
       notice: (msg) => notice(msg),
       save: () => { if (!wipeSave) world.save(player); },
       onShow: () => {
         unlockPointer();
-        overlay.style.display = 'none';
+        setOverlay(false);
       },
       onHide: (relock) => {
-        overlay.style.display = 'none';
+        setOverlay(false);
         if (relock) lockPointer();
-        else overlay.style.display = 'flex';
+        else setOverlay(true);
       },
     });
     if (saved && saved.seed !== undefined) mapSystem.restore(saved.map);
@@ -5714,7 +6204,7 @@
       GLTFLoader, registerMachine, machineActivators, patchMachineMaterial,
       ui: workbenchUI,
       isDay,
-      onOpen: () => { unlockPointer(); overlay.style.display = 'none'; },
+      onOpen: () => { unlockPointer(); setOverlay(false); },
       onClosed: () => { lockPointer(); },
       explode: (x, y, z, r) => {
 
@@ -5734,7 +6224,11 @@
       if (saved && saved.pipes) pipeSystem.restore(saved.pipes);
     }).catch((e) => console.warn('pipe load failed', e));
 
-    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED) };
+    const buildingSystem = new BuildingSystem({ THREE, scene, give, world });
+    buildingSystem.load();
+    if (saved && saved.buildings) buildingSystem.restore(saved.buildings);
+
+    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, get buildingSystem() { return buildingSystem; }, get player() { return player; }, get camera() { return camera; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED) };
 
 
 
@@ -5755,6 +6249,22 @@
     let wipeSave = false;
 
     const overlay = document.getElementById('overlay');
+    let overlayTimer = 0;
+
+    // The pause overlay fades instead of popping; hiding it is delayed by the
+    // fade length so it is still visible while it dissolves.
+    function setOverlay(show) {
+      clearTimeout(overlayTimer);
+      if (show) {
+        overlay.style.display = 'flex';
+        overlay.classList.add('closing');
+        void overlay.offsetWidth;
+        overlay.classList.remove('closing');
+      } else {
+        overlay.classList.add('closing');
+        overlayTimer = setTimeout(() => { overlay.style.display = 'none'; }, 190);
+      }
+    }
 
     const introEl = document.getElementById('intro');
     const introBtn = document.getElementById('introBegin');
@@ -5782,7 +6292,7 @@
       introOpen = true;
       introFirstRun = !!firstRun;
       introEl.classList.remove('hidden');
-      overlay.style.display = 'none';
+      setOverlay(false);
       unlockPointer();
       if (introBtn) introBtn.textContent = introBtn.disabled ? 'LOADING' : 'ENTER THE ZONE';
     }
@@ -5798,7 +6308,7 @@
         flashGuideCard();
         lockPointer();
       } else {
-        overlay.style.display = 'flex';
+        setOverlay(true);
       }
     }
 
@@ -5837,49 +6347,31 @@
       mainView.classList.remove('hidden');
     });
 
-    function syncMenu() {
-      document.querySelectorAll('#overlay .row').forEach(row => {
-        const cur = row.dataset.setting === 'hud' ? (showInfoHud ? 1 : 0)
-          : row.dataset.setting === 'vsync' ? (vsync ? 1 : 0)
-          : row.dataset.setting === 'volume' ? masterVolume : viewRadius;
-        row.querySelectorAll('button').forEach(b => {
-          b.classList.toggle('on', parseFloat(b.dataset.val) === cur);
-        });
-      });
-    }
-    document.querySelectorAll('#overlay .row').forEach(row => {
-      const setting = row.dataset.setting;
-      row.querySelectorAll('button').forEach(b => {
-        b.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const val = parseFloat(b.dataset.val);
-          try {
-            const s = JSON.parse(localStorage.getItem('idte.settings.v1')) || {};
-            if (setting === 'hud') { showInfoHud = val > 0; s.infoHud = showInfoHud; }
-            else if (setting === 'vsync') { vsync = val > 0; s.vsync = vsync; }
-            else if (setting === 'volume') { masterVolume = val; s.volume = val; }
-            else { viewRadius = Math.min(MAX_RENDER_DISTANCE, Math.max(1, val)); s.renderDistance = viewRadius; }
-            localStorage.setItem('idte.settings.v1', JSON.stringify(s));
-          } catch {                   }
-          syncMenu();
-        });
-      });
+    renderSettings(document.getElementById('overlaySettings'));
+    onSettingsChange((id, v) => {
+      if (id === 'renderDistance') viewRadius = Math.min(MAX_RENDER_DISTANCE, v);
+      else if (id === 'infoHud') showInfoHud = v;
+      else if (id === 'vsync') vsync = v;
+      else if (id === 'volume') masterVolume = v;
+      else if (id === 'sensitivity') mouseSens = v;
+      else if (id === 'invertY') invertY = v;
+      else if (id === 'fov') { camera.fov = v; camera.updateProjectionMatrix(); }
+      else if (id === 'resolution') { PIXEL = v; applyPixelSize(); }
+      else if (id === 'colorLevels') { COLOR_LEVELS = v; postMat.uniforms.uLevels.value = v; }
     });
-    syncMenu();
 
     document.addEventListener('pointerlockchange', () => {
       locked = document.pointerLockElement === renderer.domElement;
       blockLook();
-      overlay.style.display = (!locked && !introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) ? 'flex' : 'none';
+      setOverlay(!locked && !introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen);
       if (!locked) {
         settingsView.classList.add('hidden');
         mainView.classList.remove('hidden');
-        syncMenu();
       }
     });
 
     document.addEventListener('pointerlockerror', () => {
-      if (!introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) overlay.style.display = 'flex';
+      if (!introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) setOverlay(true);
     });
 
 
@@ -5914,6 +6406,9 @@
     const radNum = document.getElementById('radNum');
     const radMeterEl = document.getElementById('radMeter');
     const radLd50El = document.getElementById('radLd50');
+    const radDirEl = document.getElementById('radDir');
+    const radDirTxt = document.getElementById('radDirTxt');
+    const radDirWrap = document.getElementById('radDirWrap');
     const hpFill = document.getElementById('hpFill');
     const hpNum = document.getElementById('hpNum');
     const hungerFill = document.getElementById('hungerFill');
@@ -6435,7 +6930,7 @@
       if (!achievePanelEl) return;
       buildAchievements();
       unlockPointer();
-      overlay.style.display = 'none';
+      setOverlay(false);
       achievePanelEl.classList.remove('hidden');
       achieveOpen = true;
       paintAchievements(true);
@@ -6447,7 +6942,7 @@
       achieveTipEl.classList.add('hidden');
       achieveOpen = false;
       if (!wipeSave) world.save(player);
-      overlay.style.display = 'flex';
+      setOverlay(true);
     }
 
     function takeInv(id, n) {
@@ -6737,13 +7232,13 @@
       invPanel.classList.toggle('hidden', !invOpen);
       if (invOpen) {
         unlockPointer();
-        overlay.style.display = 'none';
+        setOverlay(false);
         syncBars();
       } else {
 
         if (relink) lockPointer();
-        overlay.style.display = 'none';
-        setTimeout(() => { if (!locked && !invOpen && !recipeOpen && !achieveOpen) overlay.style.display = 'flex'; }, 350);
+        setOverlay(false);
+        setTimeout(() => { if (!locked && !invOpen && !recipeOpen && !achieveOpen) setOverlay(true); }, 350);
       }
     }
 
@@ -7070,21 +7565,31 @@
     function doseRate() {
       let carried = 0;
       for (const s of allSlots()) if (s && ITEMS[s.id]) carried += (ITEMS[s.id].rad || 0);
-      if (machineSystem) carried *= 1 - machineSystem.carryShield();
+      let protect = 0;
+      if (machineSystem) {
+        carried *= 1 - machineSystem.carryShield();
+        protect = machineSystem.radProtect();
+      }
       let r = carried - (machineSystem ? machineSystem.totalArmorRadShield() : 0);
       if (armorShieldTimer > 0) r -= 3;
-      let amb = ambientRad();
-      if (machineSystem?.ambientCut) amb *= 1 - machineSystem.ambientCut();
-      r += amb;
-      if (biomeAt(player.pos.x, player.pos.z) === B.WASTELAND) r += TUNING.WASTELAND_RAD;
+
+      // Ambient, wasteland ground and machine fields all pass through worn
+      // armor, then absorbers. Both are fractions, so neither zeroes the field.
+      // The field arrives from a direction, so walls between the player and the
+      // source already took a bite out of it.
+      const rf = radField();
+      let field = rf.ambient;
+      if (machineSystem?.ambientCut) field *= 1 - machineSystem.ambientCut();
+      field += rf.machine;
+      if (biomeAt(player.pos.x, player.pos.z) === B.WASTELAND) field += TUNING.WASTELAND_RAD;
       if (machineSystem) {
-        r += machineSystem.localRad(player.pos.x, player.pos.y + 1, player.pos.z);
-        for (const a of machineSystem.absorbers) {
-          const rad = a.def.absorbRadius || 12;
-          const d = Math.hypot(a.x - player.pos.x, a.z - player.pos.z);
-          if (d < rad) r -= (a.def.absorbRate || 0.5) * (1 - d / rad);
-        }
+        field *= 1 - protect;
+        field *= machineSystem.absorbFactor(player.pos.x, player.pos.z);
+      } else {
+        field *= 1 - protect;
       }
+      r += field;
+
       if (radIntakeTimer > 0) r *= radIntakeMult;
       return Math.max(0, r);
     }
@@ -7101,6 +7606,18 @@
         radMeterEl.dataset.stage = stage.name;
         radMeterEl.title = `Dose ${formatRad(inv.dose)} · ARS ${formatRad(TUNING.RAD_ARS_DOSE)} · LD50 ${formatRad(TUNING.RAD_LD50)} · fatal ${formatRad(lethal)}`;
         radMeterEl.setAttribute('aria-valuenow', Math.round(pct));
+      }
+      // Arrow points at the source of the radiation, so walls can be built
+      // between the player and it.
+      if (radDirEl) {
+        const rf = radField();
+        const on = rf.ambient + rf.machine > 1e-6;
+        if (radDirWrap) radDirWrap.style.display = on ? '' : 'none';
+        const ang = relativeBearing(rf.dx, rf.dz, player.yaw);
+        radDirEl.style.transform = `rotate(${ang}deg)`;
+        const label = `${compass(rf.dx, rf.dz)} ${Math.round(rf.dist)}m`;
+        if (radDirTxt) radDirTxt.textContent = label;
+        radDirEl.title = `Radiation from ${label}`;
       }
     }
 
@@ -7181,8 +7698,8 @@
       if (!locked) return;
       if (lookSkipEvents > 0) { lookSkipEvents--; return; }
       if (performance.now() < lookBlockedUntil) return;
-      player.yaw -= e.movementX * 0.0022;
-      player.pitch -= e.movementY * 0.0022;
+      player.yaw -= e.movementX * 0.0022 * mouseSens;
+      player.pitch -= e.movementY * 0.0022 * mouseSens * (invertY ? -1 : 1);
       const lim = Math.PI / 2 - 0.02;
       player.pitch = Math.max(-lim, Math.min(lim, player.pitch));
     });
@@ -7304,7 +7821,7 @@
 
       if (e.code === 'KeyR') {
         const held = inv.hot[inv.sel];
-        if (held && ITEMS[held.id].workbench && !e.repeat) placeRot = (placeRot + Math.PI / 2) % (Math.PI * 2);
+        if (held && (ITEMS[held.id].workbench || ITEMS[held.id].building) && !e.repeat) placeRot = (placeRot + Math.PI / 2) % (Math.PI * 2);
       }
 
 
@@ -7445,7 +7962,7 @@
       cmdInput.value = '';
       renderSuggest('');
       if (document.pointerLockElement) unlockPointer();
-      overlay.style.display = 'none';
+      setOverlay(false);
       cmdInput.focus();
     }
     function closeCmd() {
@@ -7454,8 +7971,8 @@
       cmdSug.classList.add('hidden');
       cmdInput.blur();
       lockPointer();
-      overlay.style.display = 'none';
-      setTimeout(() => { if (!locked && !invOpen && !cmdOpen && !achieveOpen) overlay.style.display = 'flex'; }, 350);
+      setOverlay(false);
+      setTimeout(() => { if (!locked && !invOpen && !cmdOpen && !achieveOpen) setOverlay(true); }, 350);
     }
 
     function resolveItem(q) {
@@ -7798,6 +8315,25 @@
           if (pick.distance < terrT) { pipeSystem.removeAt(pick.cell.x, pick.cell.y, pick.cell.z); return; }
         }
       }
+      if (buildingSystem) {
+        const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const pick = buildingSystem.pick(origin, dir, REACH);
+        if (pick) {
+          const terrT = hit ? new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5).distanceTo(origin) : Infinity;
+          if (pick.distance < terrT) {
+            const hammer = !!tool.build;
+            const broke = buildingSystem.damage(pick.piece, hammer ? 1500 : 30);
+            if (broke) {
+              const id = Object.keys(ITEMS).find((k) => ITEMS[k].building?.kind === pick.piece.kind
+                && ITEMS[k].building?.tier === pick.piece.tier);
+              if (id) give(id, 1);
+              notice('WALL DOWN');
+            }
+            return;
+          }
+        }
+      }
       if (!hit) return;
       const band = groundBand(hit.x, hit.y, hit.z);
       const match = tool.good.includes(band);
@@ -7918,6 +8454,32 @@
       return out;
     }
 
+    // Right-click a wall with the hammer: upgrade it to the next tier in place.
+    function useBuildingUpgrade() {
+      const s = inv.hot[inv.sel];
+      if (!s || !ITEMS[s.id]?.tool?.build) return false;
+      if (!buildingSystem) return false;
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      const pick = buildingSystem.pick(origin, dir, REACH);
+      if (!pick) return false;
+      const piece = pick.piece;
+      const idx = BUILD_TIER_ORDER.indexOf(piece.tier);
+      if (idx < 0 || idx >= BUILD_TIER_ORDER.length - 1) { notice('ALREADY TOP TIER'); return true; }
+      const next = BUILD_TIER_ORDER[idx + 1];
+      const cost = BUILD_UPGRADES[piece.tier] || {};
+      const counts = invCounts();
+      for (const [id, n] of Object.entries(cost)) {
+        if ((counts[id] || 0) < n) { notice(`NEED ${n - (counts[id] || 0)} ${id.toUpperCase()}`); return true; }
+      }
+      for (const [id, n] of Object.entries(cost)) takeInv(id, n);
+      buildingSystem.upgrade(piece, next);
+      triggerSwing(0.3);
+      syncBars();
+      notice(`UPGRADED · ${BUILD_TIERS[next].name}`);
+      return true;
+    }
+
     function pickItemToHand(id) {
       if (!id || !ITEMS[id]) return false;
       const hot = inv.hot.findIndex((s) => s && s.id === id);
@@ -7944,6 +8506,13 @@
         const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
         const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         if (pipeSystem.pick(origin, dir, REACH)) id = Object.keys(ITEMS).find((k) => ITEMS[k].pipeGrid) || null;
+      }
+      if (!id && buildingSystem) {
+        const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const pick = buildingSystem.pick(origin, dir, REACH);
+        if (pick) id = Object.keys(ITEMS).find((k) => ITEMS[k].building?.kind === pick.piece.kind
+          && ITEMS[k].building?.tier === pick.piece.tier) || null;
       }
       if (!id) {
         const { hit } = mineAim();
@@ -8006,6 +8575,32 @@
         syncBars();
         return { type: 'machine' };
       }
+      if (ITEMS[s.id].building) {
+        const b = ITEMS[s.id].building;
+        const kind = buildingSystem?.kind(b.kind);
+        if (!kind) return null;
+        const { dir, hit } = mineAim();
+        if (!hit) return null;
+        const gx = Math.floor(hit.x + dir.x * 1.5);
+        const gz = Math.floor(hit.z + dir.z * 1.5);
+        const rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
+        const base = kind.base(buildingSystem, gx, gz, rot);
+        if (!buildingSystem.canPlace(b.kind, gx, base, gz, rot)) return null;
+        // Never wall the player in.
+        const pr = player.radius, ph = player.height;
+        for (const [, box] of kind.cells(gx, base, gz, rot)) {
+          if (player.pos.x + pr > box.minX && player.pos.x - pr < box.maxX
+            && player.pos.z + pr > box.minZ && player.pos.z - pr < box.maxZ
+            && player.pos.y + ph > box.minY && player.pos.y < box.maxY) return null;
+        }
+        const piece = buildingSystem.place(b.kind, b.tier, gx, base, gz, rot);
+        if (!piece) return null;
+        achBump('placed', 1);
+        triggerSwing(0.26);
+        if (--s.n <= 0) inv.hot[inv.sel] = null;
+        syncBars();
+        return { type: 'building' };
+      }
       if (!ITEMS[s.id].block) return null;
       const { dir, hit } = mineAim();
       if (!hit) return null;
@@ -8040,6 +8635,8 @@
     }
     function updatePlacePreview(now) {
       const s = inv.hot[inv.sel];
+      if (s && ITEMS[s.id].building) { updateWallPreview(now, s.id); return; }
+      hideWallGhost();
       const wb = s && ITEMS[s.id].workbench;
       if (!wb || !machineSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) { hidePlaceGhost(); return; }
       const tpl = machineSystem.templates.get(wb);
@@ -8055,6 +8652,47 @@
       const op = 0.22 + 0.3 * (0.5 + 0.5 * Math.sin(now * 0.006));
       const tint = blocked ? 0xff5555 : 0xffffff;
       for (const m of placeGhost.mats) { m.opacity = op; m.color.setHex(tint); }
+    }
+
+    let wallGhost = null;
+    function hideWallGhost() {
+      if (wallGhost) { scene.remove(wallGhost); wallGhost = null; }
+    }
+    function updateWallPreview(now, itemId) {
+      if (!buildingSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) { hideWallGhost(); return; }
+      const b = ITEMS[itemId]?.building;
+      const kind = b && buildingSystem.kind(b.kind);
+      if (!kind) { hideWallGhost(); return; }
+      const { dir, hit } = mineAim();
+      if (!hit) { hideWallGhost(); return; }
+      const gx = Math.floor(hit.x + dir.x * 1.5);
+      const gz = Math.floor(hit.z + dir.z * 1.5);
+      const rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
+      const base = kind.base(buildingSystem, gx, gz, rot);
+      if (!wallGhost) {
+        wallGhost = new THREE.Mesh(
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false })
+        );
+        scene.add(wallGhost);
+      }
+      const c = kind.center(gx, base, gz, rot);
+      const s = kind.scale(gx, base, gz, rot);
+      wallGhost.position.set(c.x, c.y, c.z);
+      wallGhost.scale.set(s.x, s.y, s.z);
+      let blocked = !buildingSystem.canPlace(b.kind, gx, base, gz, rot);
+      if (!blocked && kind.support && !kind.support(buildingSystem, gx, base, gz, rot)) blocked = true;
+      const pr = player.radius, ph = player.height;
+      if (!blocked) {
+        for (const [, box] of kind.cells(gx, base, gz, rot)) {
+          if (player.pos.x + pr > box.minX && player.pos.x - pr < box.maxX
+            && player.pos.z + pr > box.minZ && player.pos.z - pr < box.maxZ
+            && player.pos.y + ph > box.minY && player.pos.y < box.maxY) { blocked = true; break; }
+        }
+      }
+      const op = 0.2 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.006));
+      wallGhost.material.opacity = op;
+      wallGhost.material.color.setHex(blocked ? 0xff5555 : 0xffffff);
     }
 
     const _tn = new THREE.Vector3(0, 1, 0);
@@ -8481,6 +9119,7 @@
       }
       else if (e.button === 2) {
         if (useBweController()) return;
+        if (useBuildingUpgrade()) return;
         if (useConsumable()) return;
         if (useInteractable()) return;
         if (useLiquidContainer()) return;
@@ -8488,7 +9127,7 @@
         resetHoldPlace();
         doPlace();
         const s = inv.hot[inv.sel];
-        if (s && (ITEMS[s.id].torch || ITEMS[s.id].pipeGrid || ITEMS[s.id].workbench || ITEMS[s.id].block)) {
+        if (s && (ITEMS[s.id].torch || ITEMS[s.id].pipeGrid || ITEMS[s.id].workbench || ITEMS[s.id].block || ITEMS[s.id].building)) {
           holdPlace.active = true;
           holdPlace.next = performance.now() + 140;
         }
@@ -8545,6 +9184,20 @@
 
       for (const y of ys) {
         if (world.field.sample(p.x, p.y + y, p.z) > 0) return true;
+      }
+      // Walls are their own geometry, not terrain: they block the player too.
+      if (buildingSystem) {
+        for (let a = 0; a < 8; a++) {
+          const ang = (a / 8) * Math.PI * 2;
+          const dx = Math.cos(ang) * r;
+          const dz = Math.sin(ang) * r;
+          for (const y of ys) {
+            if (buildingSystem.solidAt(p.x + dx, p.y + y, p.z + dz)) return true;
+          }
+        }
+        for (const y of ys) {
+          if (buildingSystem.solidAt(p.x, p.y + y, p.z)) return true;
+        }
       }
       return false;
     }
@@ -8718,14 +9371,21 @@
       const sprint = keys.ShiftLeft || keys.ShiftRight;
       const speed = (inWater ? 2.8 : (sprint ? 7.2 : 4.2)) * radStage().speed * woundSpeed() * (smokeTime > 0 ? smokeSpeed : 1);
 
-      let wx = 0, wz = 0;
+      // Strafing and backpedalling are slower than walking forward.
+      const FWD_MULT = 1, BACK_MULT = 0.45, STRAFE_MULT = 0.65;
+      const fW = forward > 0 ? FWD_MULT : BACK_MULT;
+      const sW = STRAFE_MULT;
+
+      let wx = 0, wz = 0, speedMul = 1;
       if (forward || strafe) {
         const sinY = Math.sin(player.yaw);
         const cosY = Math.cos(player.yaw);
 
-        wx = (-sinY * forward) + (cosY * strafe);
-        wz = (-cosY * forward) - (sinY * strafe);
+        const F = forward * fW, S = strafe * sW;
+        wx = (-sinY * F) + (cosY * S);
+        wz = (-cosY * F) - (sinY * S);
         const len = Math.hypot(wx, wz);
+        speedMul = Math.min(1, len);
         wx /= len; wz /= len;
       }
 
@@ -8746,7 +9406,7 @@
       if (wasGrounded) {
         if (sliding) {
           friction(dt, 0.6);
-          if (wx || wz) accelerate(wx, wz, speed, 3, dt);
+          if (wx || wz) accelerate(wx, wz, speed * speedMul, 3, dt);
 
           const ssp = Math.hypot(player.vel.x, player.vel.z);
           if (ssp > 0.5) {
@@ -8759,10 +9419,10 @@
           }
         } else {
           friction(dt, inWater ? 4 : 10);
-          if (wx || wz) accelerate(wx, wz, speed, inWater ? 8 : 40, dt);
+          if (wx || wz) accelerate(wx, wz, speed * speedMul, inWater ? 8 : 40, dt);
         }
       } else if (wx || wz) {
-        accelerate(wx, wz, speed, 5, dt);
+        accelerate(wx, wz, speed * speedMul, 5, dt);
       }
 
 
@@ -9036,7 +9696,7 @@
         `${noticeT > 0 ? ` <b>${noticeMsg}</b>` : ''}<br>` +
         `<span class="k">walkers</span> ${walkers.length} ` +
         `<span class="k">veg</span> ${vegCount()} ` +
-        `<span class="k">px</span> ${PIXEL}x <span class="k">col</span> ${COLOR_LEVELS} ` +
+        `<span class="k">res</span> ${Math.round(100 / PIXEL)}% <span class="k">col</span> ${COLOR_LEVELS} ` +
         `<span class="k">view</span> ${viewRadius} <span class="k">torch</span> ${torches.length}<br>` +
         `<span class="k">frame</span> <span class="copy" title="press I to copy">${frameMs.toFixed(2)}ms · ${frameBreak} · q ${world.dirty.length} · qw ${world.waterDirty.length} · dc ${renderer.info.render.calls} · tri ${(renderer.info.render.triangles / 1000).toFixed(0)}k</span><br>` +
         `<span class="k">veg ms</span> <span class="copy">${vegMs.toFixed(2)} · ${vegBreak} · ${vegCount()} inst · ${trunkColliders.length} hit</span>`;
@@ -9308,7 +9968,10 @@
         wasInWaste = inWaste;
         if (inWaste) notice('WASTELAND · HOT GROUND');
       }
-      inv.dose += doseRate() * dt;
+      const radRate = doseRate();
+      if (radRate <= 0.01) radFreeT += dt; else radFreeT = 0;
+      if (radFreeT >= TUNING.RAD_CALM_DELAY) inv.dose = Math.max(0, inv.dose - TUNING.RAD_DECAY * dt);
+      inv.dose += radRate * dt;
       if (inv.dose >= TUNING.RAD_LETHAL_DOSE) die();
       if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
       if (deathT > 0) deathT = Math.max(0, deathT - dt);
@@ -9358,6 +10021,7 @@
 
       const _pWorld = performance.now();
       world.update(player.pos.x, player.pos.y, player.pos.z);
+      farTerrain.update(player.pos.x, player.pos.z);
       perf.world += performance.now() - _pWorld;
       vegPerf.frames++;
       const _pVeg = performance.now();
@@ -9429,8 +10093,15 @@
 
 
       const _pMisc = performance.now();
-      const baseFar = viewRadius * CHUNK_SIZE, baseNear = baseFar * 0.6;
-      camera.far = Math.max(400, baseFar * 1.1);
+      // The far rings own their own distance haze, so scene.fog only has to cover
+      // the editable terrain. The haze is complete exactly where the fake terrain
+      // ends (outer ring edge or camera far plane), so no border of it shows.
+      const nominalFar = viewRadius * CHUNK_SIZE;
+      const horizon = farTerrain.outer;
+      const visFar = horizon > 0 ? Math.min(horizon, nominalFar * 1.1) : nominalFar;
+      camera.far = Math.max(400, horizon > 0 ? Math.min(horizon * 1.02, nominalFar * 1.1) : nominalFar * 1.1);
+      const baseFar = visFar;
+      const baseNear = horizon > 0 ? DETAIL_CHUNK_RADIUS * CHUNK_SIZE : nominalFar * 0.6;
 
 
       uwT += ((submerged ? 1 : 0) - uwT) * Math.min(1, dt * 6);
@@ -9438,6 +10109,7 @@
       scene.fog.far = baseFar + (22 - baseFar) * uwT;
       scene.fog.color.copy(skyNow).lerp(UNDERWATER_COL, uwT);
       scene.background.copy(skyNow).lerp(UNDERWATER_COL, uwT);
+      farTerrain.setHaze(visFar);
       camera.rotation.z = cameraRoll + Math.sin(now * 0.0011) * 0.05 * uwT;
       clouds.visible = uwT < 0.85;
       sunDisc.material.opacity = 0.95 * (1 - uwT) * sunVis;
@@ -9527,7 +10199,23 @@
     }
 
     maybeShowIntro();
-    scheduleNextFrame();
+    window.__NUCLEARISM_PREGEN_PROGRESS__ = 0;
+    window.__NUCLEARISM_READY_COMPLETE__ = false;
+    window.__NUCLEARISM_HAS_FAR_TERRAIN__ = viewRadius > DETAIL_CHUNK_RADIUS;
+    const hasFarTerrain = window.__NUCLEARISM_HAS_FAR_TERRAIN__;
+    window.__NUCLEARISM_READY__ = world.prewarm(
+      player.pos.x,
+      player.pos.y,
+      player.pos.z,
+      (progress) => { window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? progress * 0.2 : progress; },
+    ).then(() => farTerrain.prewarm(
+      player.pos.x,
+      player.pos.z,
+      (progress) => { window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? 0.2 + progress * 0.8 : progress; },
+    )).then(() => {
+      scheduleNextFrame();
+      window.__NUCLEARISM_READY_COMPLETE__ = true;
+    });
 
 
     initModelIcons();

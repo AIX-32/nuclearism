@@ -2,9 +2,9 @@
 
 
 import * as THREE from 'three';
+import { renderSettings } from './settings.js';
 
 const WORLDS_KEY = 'idte.worlds.v1';
-const SETTINGS_KEY = 'idte.settings.v1';
 const DISCORD_URL = 'https://discord.com/';
 
 const menu = document.getElementById('menu');
@@ -20,10 +20,6 @@ const editBtn = document.getElementById('worldEditBtn');
 const createName = document.getElementById('createName');
 const editName = document.getElementById('editName');
 const createMode = document.getElementById('createMode');
-const distEl = document.getElementById('menuDist');
-const hudEl = document.getElementById('menuHud');
-const vsyncEl = document.getElementById('menuVsync');
-const volEl = document.getElementById('menuVol');
 
 const readJSON = (key, fallback) => {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
@@ -33,7 +29,6 @@ const writeJSON = (key, value) => {
 };
 
 let worlds = readJSON(WORLDS_KEY, []);
-let settings = readJSON(SETTINGS_KEY, {});
 if (!Array.isArray(worlds)) worlds = [];
 let selectedId = null;
 let newMode = 'survival';
@@ -135,7 +130,6 @@ overlay.style.display = 'none';
 menu.classList.remove('hidden');
 
 let loadingFrame = 0;
-let loadingReadyAt = 0;
 
 function setLoadingScreen(active, value = 0, text = 'INITIALIZING', ready = false) {
   if (!loadingView || !loadingFill || !loadingStatus || !loadingHint || !loadingShell) return;
@@ -167,20 +161,17 @@ function setLoadingScreen(active, value = 0, text = 'INITIALIZING', ready = fals
 
 function animateLoadingScreen() {
   cancelAnimationFrame(loadingFrame);
-  const started = performance.now();
-  loadingReadyAt = started + 3000;
   const tick = () => {
-    const now = performance.now();
-    const elapsed = (now - started) / 3000;
-    const raw = Math.min(1, 0.08 + elapsed * 0.92);
-    const steps = 11;
-    const chunky = Math.min(1, (Math.round(raw * steps) / steps));
-    loadingFill.style.setProperty('--progress', String(chunky));
-    const ready = now >= loadingReadyAt;
+    const generated = Math.max(0, Math.min(1, Number(window.__NUCLEARISM_PREGEN_PROGRESS__) || 0));
+    const ready = !!window.__NUCLEARISM_READY_COMPLETE__;
+    loadingFill.style.setProperty('--progress', String(ready ? 1 : generated));
     loadingShell.classList.toggle('ready', ready);
     loadingHint.classList.toggle('visible', ready);
     if (!ready) {
-      loadingStatus.textContent = 'INITIALIZING';
+      const hasFar = !!window.__NUCLEARISM_HAS_FAR_TERRAIN__;
+      if (generated >= 1) loadingStatus.textContent = 'FINALIZING WORLD';
+      else if (hasFar && generated >= 0.2) loadingStatus.textContent = `GENERATING DISTANT TERRAIN ${Math.floor(((generated - 0.2) / 0.8) * 100)}%`;
+      else loadingStatus.textContent = `GENERATING SPAWN TERRAIN ${Math.floor((hasFar ? generated / 0.2 : generated) * 100)}%`;
       loadingFrame = requestAnimationFrame(tick);
     } else {
       loadingStatus.textContent = '';
@@ -192,7 +183,7 @@ function animateLoadingScreen() {
 
 overlay.addEventListener('click', () => {
   if (!loadingView || loadingView.classList.contains('hidden')) return;
-  if (performance.now() < loadingReadyAt) return;
+  if (!window.__NUCLEARISM_READY_COMPLETE__) return;
   setLoadingScreen(false);
   cancelAnimationFrame(loadingFrame);
   loadingStatus.textContent = 'INITIALIZING';
@@ -208,7 +199,6 @@ function show(name) {
     v.classList.toggle('hidden', v.dataset.view !== name);
   }
   if (name === 'worlds') paintWorlds();
-  if (name === 'settings') paintSettings();
   if (name === 'home') paintSplash();
 }
 
@@ -231,24 +221,6 @@ function paintWorlds() {
   editBtn.disabled = !on;
 }
 
-function paintSettings() {
-  const raw = +settings.renderDistance;
-  const cur = Number.isFinite(raw) && raw >= 1 ? Math.min(2000, raw) : 3;
-  for (const b of distEl.querySelectorAll('button')) {
-    b.classList.toggle('on', parseFloat(b.dataset.val) === cur);
-  }
-  for (const b of hudEl.querySelectorAll('button')) {
-    b.classList.toggle('on', (parseFloat(b.dataset.val) === 1) === !!settings.infoHud);
-  }
-  for (const b of vsyncEl.querySelectorAll('button')) {
-    b.classList.toggle('on', (parseFloat(b.dataset.val) === 1) === (settings.vsync !== false));
-  }
-  const vol = settings.volume === undefined ? 1 : +settings.volume;
-  for (const b of volEl.querySelectorAll('button')) {
-    b.classList.toggle('on', Math.abs(parseFloat(b.dataset.val) - vol) < 0.001);
-  }
-}
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -261,12 +233,12 @@ function beginWorld(w) {
   stopPanorama();
   window.__NUCLEARISM_WORLD__ = { id: w.id, name: w.name, mode: w.mode };
   menu.classList.add('hidden');
-  setLoadingScreen(true, 0.08, 'INITIALIZING', false);
+  setLoadingScreen(true, 0, 'GENERATING SPAWN TERRAIN', false);
   animateLoadingScreen();
   const label = playBtn.textContent;
   playBtn.textContent = 'LOADING';
   playBtn.disabled = true;
-  import('./game.js').then(() => {
+  import('./game.js').then(() => window.__NUCLEARISM_READY__).then(() => {
     loadingStatus.textContent = 'READY';
     loadingHint.classList.add('visible');
     loadingHint.textContent = 'CLICK TO LOCK';
@@ -336,38 +308,6 @@ createMode.addEventListener('click', (e) => {
   for (const b of createMode.querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === mode);
 });
 
-distEl.addEventListener('click', (e) => {
-  const val = e.target.closest('[data-val]')?.dataset.val;
-  if (!val) return;
-  settings.renderDistance = Math.min(2000, Math.max(1, parseFloat(val)));
-  writeJSON(SETTINGS_KEY, settings);
-  paintSettings();
-});
-
-hudEl.addEventListener('click', (e) => {
-  const val = e.target.closest('[data-val]')?.dataset.val;
-  if (!val) return;
-  settings.infoHud = parseFloat(val) === 1;
-  writeJSON(SETTINGS_KEY, settings);
-  paintSettings();
-});
-
-vsyncEl.addEventListener('click', (e) => {
-  const val = e.target.closest('[data-val]')?.dataset.val;
-  if (val === undefined) return;
-  settings.vsync = parseFloat(val) === 1;
-  writeJSON(SETTINGS_KEY, settings);
-  paintSettings();
-});
-
-volEl.addEventListener('click', (e) => {
-  const val = e.target.closest('[data-val]')?.dataset.val;
-  if (val === undefined) return;
-  settings.volume = parseFloat(val);
-  writeJSON(SETTINGS_KEY, settings);
-  paintSettings();
-});
-
 createName.addEventListener('keydown', (e) => {
   if (e.code === 'Enter') menu.querySelector('[data-act="doCreate"]').click();
 });
@@ -378,4 +318,5 @@ editName.addEventListener('keydown', (e) => {
 startPanorama();
 document.getElementById('panoPrev')?.addEventListener('click', () => stepPanorama(-1));
 document.getElementById('panoNext')?.addEventListener('click', () => stepPanorama(1));
+renderSettings(document.getElementById('menuSettings'));
 paintSplash();

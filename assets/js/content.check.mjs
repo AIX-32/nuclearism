@@ -544,6 +544,21 @@ ok.push([sys.scrubbers.length === 0 && dry.state.status === 'NO FILTER', 'a scru
 ok.push([!!ITEM_DEFS.plasma_drill?.tool, 'plasma drill is a tool']);
 ok.push([asm.some((r) => r.out?.plasma_drill), 'plasma drill is assembler-made']);
 
+// Radiation field shielding: absorbers are multiplicative with a floor, and
+// worn armor's flat radShield becomes a bounded fraction (never 100%).
+sys.absorbers.length = 0;
+ok.push([sys.absorbFactor(0, 0) === 1, 'no absorbers means no field cut']);
+sys.absorbers.push({ def: MACHINE_BY_ID.radiation_absorber, x: 0, z: 0 });
+ok.push([Math.abs(sys.absorbFactor(0, 0) - 0.65) < 1e-9, 'one absorber cuts 35% at its center']);
+for (let i = 0; i < 6; i++) sys.absorbers.push({ def: MACHINE_BY_ID.radiation_absorber, x: 0, z: 0 });
+ok.push([sys.absorbFactor(0, 0) === TUNING.ABSORB_FLOOR, 'stacked absorbers stop at the floor']);
+sys.absorbers.length = 0;
+sys.inv.armor = {};
+ok.push([sys.radProtect() === 0, 'no armor means no ambient protection']);
+sys.inv.armor = { head: { id: 'containment_helmet' } };
+const protect = sys.radProtect();
+ok.push([protect > 0 && protect < 0.8, `worn armor protects ambient below the cap (${protect.toFixed(2)})`]);
+
 const bad = ok.filter(([p]) => !p);
 if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }
 console.log(`content OK — ${ok.length} assertions`);

@@ -12,6 +12,8 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 ### Content, machines and workbench interfaces
 - `assets/js/content.js` is the data catalogue: `ITEM_DEFS` (items), `LIQUID_DEFS` (liquid types), `MACHINE_DEFS` (machines), `MACHINE_BY_ID`, `CRAFT_RECIPES`, `TABLE_RECIPES` / `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor(def)` fallback layouts, `STARTER_GUIDE` / `GUIDE_STEPS` (opening build order), `ACHIEVEMENT_TYPES` (achievement categories/tiers), and `TUNING`.
 - `assets/js/liquids.js` is the global liquid/container system: pure helpers over `stack.liquid` (`fill`, `drain`, `transfer`, `accepts`, `sanitize`, `volume`). Acid liquids require an acid-proof container.
+- `assets/js/radiation.js` is the directional radiation model: `sourcePoint()` (the world's fallout spot), `transmission()` (near-field shadow march), `relativeBearing()` / `compass()` (HUD direction). `radiation.check.mjs` self-checks it.
+- `assets/js/building.js` is the base building system: `BuildingSystem` (wall panels, placement, upgrades, collision, radiation shadow) plus the pure helpers `wallCells()` / `shadowCells()`. `building.check.mjs` self-checks the geometry and the attenuation law.
 - `assets/js/machines.js` is the machine runtime: placement, power networks and auto-linking cables, reactors and meltdowns, the excavator, bucket wheel excavator, radiation emission, save/restore.
 - `assets/js/workbench-ui.js` renders JSON-described machine panels as an HTML overlay with a fixed power meter mirroring the RAD bar (bridge-driven, works for every machine).
 - `assets/js/craft-options.js` is the shared option-based crafting widget: a small scrollable list of recipe cards (title left, icon right, inventory tooltip on hover) used by both the pocket table and the manufactory.
@@ -21,9 +23,9 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 - `assets/js/package.json` is just `{"type":"module"}` so node can import the ES modules for the checker above.
 - `assets/js/footsteps.js` is the footstep audio player: preloaded clip pools, `surfToCategory()`, `createFootsteps()`.
 - `assets/js/game.js` also holds the first-person **held-tool viewmodel** (§9d) and **tree chopping** (§10c).
-- `assets/js/menu.js` is the main menu + world select. It runs before game.js is imported: world list (`idte.worlds.v1`), create/rename/play, the animated panorama backdrop (one of `assets/images/menu/panorama-1.png` … `panorama-3.png` picked at random per launch), the clickable splash line under the title (`SPLASHES`, re-rolled on click), and the main-menu settings (render distance, INFO HUD) written to `idte.settings.v1` (`SETTINGS_KEY`).
+- `assets/js/menu.js` is the main menu + world select. It runs before game.js is imported: world list (`idte.worlds.v1`), create/rename/play, the animated panorama backdrop (one of `assets/images/menu/panorama-1.png` … `panorama-3.png` picked at random per launch), the clickable splash line under the title (`SPLASHES`, re-rolled on click), and the main-menu settings view (`#menuSettings`, rendered from the shared `settings.js` schema, stored in `idte.settings.v1`).
 - `assets/js/pipes.js` is the grid-snapped decorative pipe system: `PipeSystem` (place, pick, removeAt, serialize/restore), one 1 m XZ cell per pipe, models `assets/models/pipes/{long,short,corner,tee}.glb`.
-- `assets/js/map.js` is the map system: `MapSystem` (corner minimap + fullscreen map), per-chunk terrain tile cache, fog-of-war `seen` set, bookmarks and death spots, layer toggles, pan/zoom and marker management. Pure helpers (`chunkKey`, `worldToScreen`, `screenToWorld`) are exported; `map.check.mjs` self-checks them.
+- `assets/js/map.js` is the map system: `MapSystem` (corner minimap + fullscreen map), per-chunk terrain tile cache, fog-of-war `seen` set, bookmarks and death spots, layer toggles, pan/zoom and marker management. Pure helpers (`chunkKey`, `worldToScreen`, `screenToWorld`) are exported; `map.check.mjs` self-checks them. The map is a **flat pixel map**: tiles are 1 texel per metre (`TILE_PX = 16`), drawn nearest-neighbour with chunk edges snapped to whole pixels, terrain is flat biome colour in stepped height bands, and buildings/containers/tanks/machines/markers are pixel blocks.
 - `assets/js/block-layout-editor.js` is the grid editor (`ble.html`) for authoring machine panel layouts.
 - `WORKBENCHES.md` explains items, machines and layout extension points.
 
@@ -36,6 +38,7 @@ The game never breaks on a missing asset — each has a code-generated substitut
 - machine panel layouts `assets/ui/<machineId>.json` → missing = `layoutFor(def)`
 - held tool models `assets/models/tools/<tool>/<Tool>.obj` (+ `.mtl`, `Tools_Texture.png`) → missing = no viewmodel (the item still works)
 - footstep clips `assets/audio/footsteps/<family>-N.ogg` (concrete/dirt/grass/gravel/metal/stairs/stone/wood) → missing = silent step
+- wall panel textures `assets/textures/buildings/<tier>.jpg` (wood/brick/concrete/shielded) → missing = flat tier colour
 
 Real art can be dropped in later without touching code.
 
@@ -47,6 +50,8 @@ Entry page for the game.
 
 ### assets/css/styles.css
 Contains the game UI styling: HUD (health/hunger/RAD/wounds), inventory, menus, workbench panels, the recipe browser, the START HERE strip, the NEXT STEP objective card, the achievements panel/grid, the bwe full and mini control cards, the recipe tree popup and the minimap/fullscreen map. All chrome uses one pure-black alpha token (`rgba(0,0,0,.55)`) with no borders, outlines, radii or bevel shadows, so stacked elements darken by alpha compositing. Active/selected states get a 50%-white outline offset 2px. The recipe tree draws its connectors as 45%-white lines (vertical per indent level + elbow into each child icon).
+
+**Motion layer** (end of the file): every overlay panel (`#invPanel`, `#recipePanel`, `#treePanel`, `#mapPanel`, `#achievePanel`, `#intro`, `#cmd`, `#menu`, `.workbench-screen`) fades in and out. A hidden panel keeps its layout — `visibility:hidden` + `opacity:0` instead of `display:none` — so the transition can play in reverse, and the panel content slides up 12px while the backdrop fades. `#overlay` (the pause menu) fades through the `.closing` class, driven by `setOverlay()` in game.js, which delays `display:none` by the fade length. The same block adds the micro-interaction rules: hover/press feedback (45%-white outline on slots, 3px nudge on recipe cards), `:focus-visible` rings, one scrollbar look and `user-select:none` on the panels. `prefers-reduced-motion` collapses every transition.
 
 ### assets/js/main.js
 Minimal loader/entry bridge that imports the main menu (`menu.js`), which in turn lazy-imports the game.
@@ -99,7 +104,7 @@ What this does:
 - defines the large-scale heightfield of the world
 - generates the signed density field used by the terrain mesh
 
-This is where the heightmap is shaped. There are no coastlines or ocean floor: `terrainTrend()` always builds the land plate, and `pondHere()` always returns `false` so nothing can seed surface water.
+This is where the heightmap is shaped. There are no coastlines or ocean floor: `terrainTrend()` always builds the land plate, and `pondHere()` always returns `false` so nothing can seed surface water. Broad warped mountain belts add connected, folded ridgelines and valley incisions; exposed high mountain surfaces switch directly to stone without biome snow caps or a grass blend, and vegetation is rejected on that same rocky terrain.
 
 ### 3b. Cave systems (mouths → tunnels → caverns + buried noodles)
 Relevant parts in game.js (right after `columnDensity()`):
@@ -263,12 +268,13 @@ Changing gameplay content means editing this file, not game.js.
 ### 12. Day clock and ambient radiation
 Relevant parts in game.js:
 - `clock = { day, t }`, `TUNING.DAY_SECONDS` (900s = 15 real minutes/day)
-- `dayTier()`, `ambientRad()`, `radStage()`, `isDay()`
+- `ambientRad()`, `radStage()`, `isDay()`
+- `radField()` / `radTransmission()` — directional field (§12c)
 - `doseRate()`, `paintRad()`, radiation post-FX uniforms (`uRadBlur`, `uRadDark`, `uTime`)
 - `die()`, `deathT`, `#deathBanner`
 
 What this does:
-- advances day/time and, from day 10 (`TUNING.RAD_RAMP_DAY`), ramps ambient radiation superlinearly per tier
+- advances day/time and, from day 3 (`TUNING.RAD_START_DAY`), ramps ambient radiation continuously and superlinearly; dose also decays very slowly (`0.05 rad/s`) after 30 s with no intake
 - tracks **absorbed dose in rad** (1 rad = 0.01 Gy); rates use real SI-prefixed units (`nrad/s`, `µrad/s`, `mrad/s`, `rad/s`) through `formatRad()` / `formatRadRate()` in content.js
 - scales the RAD meter to the human whole-body lethal dose: `TUNING.RAD_LETHAL_DOSE` (600 rad) is 100%, with an **LD50 tick at 450 rad** and ARS onset at 100 rad
 - turns accumulated dose into a stage (`SLOWED / BLURRED / CRITICAL / FATAL` at 100/250/450/600 rad) that scales move speed and drives lens blur/darkening
@@ -290,6 +296,42 @@ What this does:
 - wounds slow movement (`woundSpeed()`) and some blur the view; consumables can heal, feed, cure specific wounds or grant temporary infection immunity
 - sandbox mode pins health/hunger full and clears wounds; survival death still routes through `die()` and the drop-everything respawn
 - vitals are saved with the world and exposed on the debug handle as `vitals` / `hurt` / `addWound`
+
+### 12d. Base building: wall panels that shield radiation
+
+Relevant parts:
+- `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march) plus the pure helpers `wallCells()` and `shadowCells()`
+- content.js `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier), `TUNING.BUILD_WALL_W/H/T` (3 m × 3 m × 0.25 m panels)
+- items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: '<tier>'`) and the `hammer`
+- game.js: the `building` branch of `doPlace()`, `useBuildingUpgrade()`, the wall branch of `doMine()`, `updateWallPreview()`, `playerCollides()`, `radTransmission()`, the `buildings` save field
+- textures: `assets/textures/buildings/{wood,brick,concrete,shielded}.jpg` (missing file = flat tier colour)
+- `assets/js/building.check.mjs` (`node assets/js/building.check.mjs`)
+
+What this does:
+- a **wall panel** is a 3 m × 3 m × 0.25 m slab snapped to the 1 m world grid, running along X or Z (`R` rotates). It is its own geometry, not terrain: one `InstancedMesh` per tier, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
+- a piece owns a 3×3 block of grid cells and every cell carries a **1 m slice of the slab**, so the shadow march can attenuate per slice instead of stepping over a 25 cm panel
+- **the attenuation law** is exponential per metre of material (`BUILD_TIERS[tier].transmission`): wood 0.55, brick 0.25, concrete 0.06, shielded 1e-8 (lead lined). One 0.25 m panel therefore blocks 14% / 29% / 50% / 99% of the field
+- because the law is exponential the *fraction* blocked is constant while the absolute rad saved scales with the field — shielding buys margin, it never switches radiation off, and `TUNING.RAD_OCCL_FLOOR` still applies
+- **honeycomb is free**: stacked layers multiply, so two concrete layers block 75% and three shielded layers block 99.99%
+- `shadowCells()` is a 3D-DDA over the cell grid that intersects the ray with each wall slab and multiplies `transmission ^ length`. `radTransmission()` multiplies it with the terrain march, so **walls shield the ambient field and every machine emitter alike**
+- the Rust-like verbs: **build** (hold a wall item, a ghost panel snaps to the target cell, red where refused), **upgrade in place** (right-click a wall with the `hammer`, the next tier's materials are taken from the bag, never downgrade), **demolish** (hammer left-click removes it and refunds the item). Walls stack on other walls; a wall on the ground needs solid ground under it
+- walls are saved with the world (`buildings` in the save file) and restored on load
+
+### 12c. Directional radiation (a source spot, and walls in the way)
+
+Relevant parts:
+- `assets/js/radiation.js`: `sourcePoint(seed)`, `transmission(factorAt, …)`, `RAD_OCCL` (`samples` 24, `range` 24 m, `solid` 0.62), `relativeBearing()`, `compass()`
+- game.js: `radSource()`, `radFactor()`, `radTransmission()`, `radField()`; `doseRate()` now reads `radField().ambient` + `radField().machine` instead of a flat `ambientRad()` + `localRad()`
+- content.js `TUNING`: `RAD_SOURCE_DIST` (240 m from the world origin), `RAD_OCCL_FLOOR` (0.2 — terrain alone never shields more than 80% of a field)
+- `assets/js/radiation.check.mjs` (`node assets/js/radiation.check.mjs`)
+
+What this does:
+- radiation has a direction: the ambient field is attributed to a fixed **fallout spot** derived from the world seed, and every radiating machine is its own point source, so dose always comes *from* somewhere
+- shadowing is **not raytracing**: a fixed 24-step march over the first 24 m toward the source (one sample per metre), each solid metre keeping 62% of the radiation
+- the march reads the density field, so terrain **and placed blocks** already shield the player: a wall between you and the source cuts the dose, a wall behind you does nothing. `radFactor()` is the hook future wall materials plug into (return a smaller factor for lead or concrete)
+- machine radiation is shadowed **per emitter**, so a reactor behind a wall — or a floor between you and it — radiates far less than one in the open
+- the RAD meter shows an arrow pointing at the dominant source with its compass bearing and distance; the arrow hides while nothing radiates
+- the field is cached for 100 ms, so the march costs one sample set per tenth of a second, not one per frame
 
 ### 13. Mining, ore bands and hand tools
 Relevant parts:
@@ -446,6 +488,7 @@ Relevant parts:
 - drag & drop through `DragDrop` (drag-drop.js): every slot supports dragging out and in; shift-click still quick-moves/equips, and clicks on hotbar slots select them
 - pocket table: `CraftOptions` (craft-options.js), `tableOptions()`, `tableCraft()`, `invCounts()`, `takeInv()`, `bagRoomFor()`, `buildTable()`
 - `toggleInv()`; markup in `index.html`, styling in `assets/css/styles.css`
+- `setOverlay()`: fades the pause overlay in and out (`.closing` class, delayed `display:none`) instead of popping it
 
 What this does:
 - a hotbar + storage grid inventory, plus a small always-available option-based crafting table
@@ -528,10 +571,10 @@ Relevant parts in game.js / map.js:
 - `die()` calls `mapSystem.noteDeath(at.x, at.z)` before respawning
 
 What this does:
-- the corner minimap is north-up, 200 m across, and shows only chunks the player has seen (fog of war); it adds a 64 m reference grid, a facing cone, a 50 m-ish scale bar, a soft edge vignette and edge arrows for the nearest off-map bookmarks/deaths, so distant marks are never lost
-- terrain tiles are 16 m chunks rendered once from `terrainTrend` + `biomeAt` at 4 px/m (`TILE_PX = 64`): land colour from `BIOME_DEFS[id].top` with a true central-difference north-west hillshade and 8 m elevation contours. Water tiles are never painted (the world is dry)
-- layers: terrain, industrial sites, machines, death spots and bookmarks; reactors/generators get a restrained category tint and industrial pads gain a faint outline + type label when zoomed in. There is no WATER layer
-- the fullscreen map adds an adaptive world grid (`gridStep()`), bookmark labels (collision-aware), a player→selection dashed distance line, hover names for machines/markers, and a header cursor readout (position + biome)
+- the corner minimap is north-up, 200 m across, and shows only chunks the player has seen (fog of war); it adds a 64 m reference grid, a flat facing wedge, a small scale bar and edge arrows for the nearest off-map bookmarks/deaths, so distant marks are never lost
+- terrain tiles are 16 m chunks rendered once from `terrainTrend` + `biomeAt` at **1 texel per metre** (`TILE_PX = 16`): flat land colour from `BIOME_DEFS[id].top` (exposed mountain rock overrides it with stone grey) shaded by one of 8 discrete 10 m height bands, so the map reads as stepped pixel contours with no smooth relief. Tile edges are snapped to whole pixels and drawn nearest-neighbour, so the map stays blocky at every zoom. Water tiles are never painted (the world is dry)
+- layers: terrain, industrial sites, machines, death spots and bookmarks; every structure is a flat pixel block (buildings/garages concrete grey, containers rust/blue/olive, tanks steel, reactors orange, generators yellow, scrubbers cyan), machines are 3-4 px squares and markers are pixel X / diamond marks with a 1 px shadow. There is no WATER layer
+- the fullscreen map adds an adaptive world grid (`gridStep()`), a player→selection dashed line, and hover names for machines/markers — there are no permanent on-map labels and no header readouts
 - fullscreen map: drag to pan, wheel/+/−/arrow keys/Home/F for zoom, pan, recenter and fit-explored, double-click to drop a bookmark at the cursor, PLAYER recenters, ADD HERE creates a bookmark at the map centre, FIT frames all seen chunks, click a marker to select it, rename bookmarks inline, delete selected markers, layer toggles persist per world
 - seen chunks, bookmarks, death spots and layer flags are saved in the world save (`map`); uncovering new ground or editing markers triggers a save
 - map tiles are a base-terrain approximation: player mining/building edits and cave voids are not re-baked into cached tiles (the tile cache is the performance ceiling; invalidate tiles if live edits must show)
@@ -644,7 +687,7 @@ Relevant parts:
 What this does:
 - **fusion fuel** is made in the isotope separator from lithium, boron, a fuel casing and 12 L of heavy water; it burns for 3200 PU but wants the full 1600 cooling (all five heavy-water coolant rods)
 - **depleted fusion fuel** is recycled in the fuel reprocessor back into lithium and boron, closing the loop
-- the **atmospheric scrubber** burns 200 PU/s and one `filter_cartridge` every 120 s, and cuts 15% off the ambient dose rate while running; the total cut is capped at 85%, so a scrubber farm makes the late ambient ramp survivable but never free
+- the **atmospheric scrubber** burns 450 PU/s and one `filter_cartridge` every 120 s, and cuts 15% off the ambient dose rate while running; the total cut is capped at 85%, so a scrubber farm makes the late ambient ramp survivable but never free
 - filters are assembler-made from carbon mesh, lead plates and plastic; scrubbers are a large power sink for a fusion grid
 - the reactor panel already shows heat/cooling match for both reactor kinds, and the scrubber panel shows its filter slot, status and filter progress
 
@@ -709,23 +752,28 @@ What this does:
 
 ### 18c. Settings (main menu + pause overlay)
 Relevant parts:
-- `idte.settings.v1` (`SETTINGS_KEY`), shared by menu.js and game.js
-- main menu: `#menuDist` / `#menuHud` / `#menuVsync` / `#menuVolume` (`paintSettings()`), game.js imports the values at boot
-- pause overlay: `#overlay .view-settings` rows `data-setting="distance"` / `"hud"` / `"vsync"` / `"volume"`, wired by `syncMenu()` and the per-row click handler
+- `assets/js/settings.js` — the whole settings system: `SETTING_DEFS` (the schema), `getSetting()` / `setSetting()` / `resetSettings()` / `onSettingsChange()`, `renderSettings(container)`, `SETTINGS_KEY` (`idte.settings.v1`)
+- main menu: `#menuSettings`, pause overlay: `#overlaySettings` — both are empty containers the shared renderer fills, so the two screens can never drift apart
+- game.js reads the values at boot (`getSetting(...)`) and applies changes live through `onSettingsChange(...)`; `assets/js/settings.check.mjs` self-checks the store (`node assets/js/settings.check.mjs`)
 
 What this does:
-- **render distance** (2/3/4/6 chunk columns) applies live
+- one schema drives both screens: a `choice` row is a set of buttons, a `toggle` is an ON/OFF button, a `range` is a slider with a live readout; rows are grouped (DISPLAY / CONTROLS / AUDIO) and a `hint` line explains the odd ones
+- **render distance** (2/3/4/6/16/64/2000/10000 chunk columns, labelled in metres/km) applies live; editable terrain stops at 96 m, the rest is visual only
+- **resolution** (100/67/50/33 %) sets the render scale (`PIXEL`), **color depth** (16/32/64) sets the PS1 colour quantisation, **field of view** (60–110°) sets `camera.fov`
 - **INFO HUD** (fps/frame breakdown/position/dose line in `#hud`) is **off by default**; when off the stats are hidden but gameplay notices (`noticeMsg`) still show. Hiding also resets the perf counters so they don't accumulate
-- **VSYNC** toggles the `requestAnimationFrame` gate, and **VOLUME** scales the footstep mix (menu and pause overlay share both)
-- all four settings persist globally (not per-world) in localStorage
+- **VSYNC** toggles the `requestAnimationFrame` gate, **VOLUME** scales the footstep mix, **mouse sensitivity** (0.2–3×) and **invert Y** apply to the pointer-lock look
+- every setting persists globally (not per-world) in localStorage; a slider applies while dragging and only writes to the store on release; `RESET DEFAULTS` restores the schema defaults
 
 ## Important code anchors
 
 ### Survival layer
 - `TUNING`, `ITEM_DEFS`, `MACHINE_DEFS`, `CRAFT_RECIPES`, `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor()`: content.js
 - `MachineSystem`: placement, power, reactor meltdown, excavator, serialize/restore
-- `clock` / `dayTier()` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
+- `clock` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
 - `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
+- `sourcePoint()` / `transmission()` / `RAD_OCCL` (radiation.js): the fallout spot and the near-field shadow march that lets walls block radiation
+- `BuildingSystem` / `wallCells()` / `shadowCells()` (building.js): wall panels, their per-slice attenuation and the DDA shadow march; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
+- `radField()` / `radTransmission()` / `radFactor()`: directional field rate, the source the HUD arrow points at, and the per-voxel transmission hook
 - `BARE_HANDS` / `mineOreDrop()` / `hasGardeningGloves()`: mining and gating
 - `torches` / `lightAt()` / `addTorch()` / `tryTorchPlace()`: placeable lights (torch, lantern, floodlight)
 - `patchMachineMaterial()` / `refreshMachineLights()`: torch/lantern/floodlight light on machine models
@@ -764,7 +812,7 @@ What this does:
 - `industrialSite()` / `industrialPadAt()` / `industrialUpdate()` / `buildWallMask()` / `industrialBlockedAt()`: deterministic industrial buildings, flattened pads and per-wall collision
 - `VEG_SPECIES` / `VEG_LAYERS` / `vegCell()` / `vegResolve()` / `vegStream()` / `vegUpdate()` / `_vegHarvested`: deterministic instanced vegetation, pickups and harvesting
 - `useC4()` / `placeC4()` / `detonateC4()` / `updateC4()` / `C4_FUSE` / `C4_RADIUS`: armed demolition charges, crater carving and blast damage
-- `idte.settings.v1` / `syncMenu()` / `paintSettings()`: render distance, INFO HUD, VSYNC and VOLUME settings
+- `idte.settings.v1` / `SETTING_DEFS` / `renderSettings()` / `onSettingsChange()`: the shared settings schema, store and UI (render distance, resolution, color depth, FOV, VSYNC, INFO HUD, sensitivity, invert Y, volume)
 - `intro` / `maybeShowIntro()` / `openIntro()` / `closeIntro()`: one-time field-manual modal on the first survival load (points at the NEXT STEP card; reopenable from the pause overlay via `manualBtn`); seen state lives in `idte.intro.v1.<worldId>`
 - `World.save()` / `World.load()`: persistence (including `map`)
 - `MapSystem` / `revealAround()` / `addBookmark()` / `noteDeath()` / `drawMini()` / `drawFull()`: minimap and fullscreen map (B = bookmark, M = map)
@@ -773,7 +821,7 @@ What this does:
 ### Terrain / climate
 - climateAt(): noise-driven climate values
 - biomeWeights(): land biome assignment (no ocean/shallow/beach IDs)
-- terrainTrend(): overall world heightfield (land plate only)
+- terrainTrend(): overall world heightfield (land plate, broad massif belts, folded ridges and drainage cuts)
 - pondHere(): always `false`; surface water cannot seed
 - terrainDensity(): density field for solid/air decisions
 - caveSite() / buildCaveSite() / caveCarveAt(): deterministic sinkhole → tunnel → cavern caves plus buried noodle networks and hashed ceiling/floor spikes (tuning: `CAVE_CELL`, `CAVE_CHANCE`, `CAVE_SINK`, `NOODLE_CHANCE`, `NOODLE_DEPTH`)
@@ -821,14 +869,17 @@ For the survival/gameplay layer:
 7. drop item art at `assets/models/items/<id>.glb` and it becomes both the icon and the held prop — no list to edit; add to `ITEM_MODEL_ICON_EXCLUDE` only to opt out, and bump `ICON_CACHE_KEY` after changing art. For a flat PNG instead, `assets/images/items/<id>.png` **must** be referenced via `icon:` in that item's `ITEM_DEFS` entry.
 8. always re-run `node assets/js/content.check.mjs` after touching the catalogue — it fails on unobtainable machine blocks, bad recipes, out-of-bounds layouts, or a model file that doesn't map to its item
 8b. `node assets/js/drag-drop.check.mjs` self-checks the shared slot adapter's take/merge/swap/restore rules
+8c. `node assets/js/settings.check.mjs` self-checks the settings store (defaults, legacy stores, clamping, persistence, reset) — add a new setting to `SETTING_DEFS` in `assets/js/settings.js` and both the menu and the pause overlay pick it up
+8d. `node assets/js/radiation.check.mjs` self-checks the directional radiation helpers (source point, shadow march, bearing, compass) — shielding tuning lives in `RAD_OCCL` in `assets/js/radiation.js` and the floors in `TUNING`
+8e. `node assets/js/building.check.mjs` self-checks the wall geometry (a 3×3 cell panel), the attenuation law per tier and the DDA shadow march — wall tuning lives in `BUILD_TIERS` (content.js), panel size in `TUNING.BUILD_WALL_*`
 9. a new light source is just `torch: true` + `light: { mount, range, power, color }` on an `ITEM_DEFS` entry (see torch/lantern/floodlight) — the placement, bake and machine-lighting paths pick it up automatically
-10. map visuals live in `assets/js/map.js`: `_renderTile()` owns land/water colouring and `drawFull()` owns markers/layers; new marker layers need a getter in the `MapSystem` options and a draw branch. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
+10. map visuals live in `assets/js/map.js`: `_renderTile()` owns the flat terrain colouring (`BAND_SHADE` height steps, `surfaceColor()` from the game's context) and `drawFull()` owns markers/layers; `SITE_COLORS` / `MACHINE_COLORS` hold the pixel palette and `industrialDims` in the `MapSystem` options sizes the structure blocks. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
 
 ## Summary
 This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:
 
 1. **Engine** — procedural world generation, deterministic cave systems (surface sinkholes → tunnels → caverns), chunk streaming, terrain density, water sim and rendering (game.js), plus the main menu/world select (menu.js) and pipes (pipes.js).
-2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. The whole UI shares one black-alpha, borderless skin.
+2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and localStorage persistence. The whole UI shares one black-alpha, borderless skin.
 
 Most important files:
 - [index.html](index.html)
@@ -838,18 +889,21 @@ Most important files:
 - [assets/js/menu.js](assets/js/menu.js) — main menu, world select, settings
 - [assets/js/drag-drop.js](assets/js/drag-drop.js) — shared drag-and-drop for every item slot
 - [assets/js/liquids.js](assets/js/liquids.js) — global liquid/container rules
+- [assets/js/radiation.js](assets/js/radiation.js) — radiation source spot, shadowing, direction readouts
+- [assets/js/building.js](assets/js/building.js) — wall panels, tiers, upgrades and the radiation shadow
 - [assets/js/machines.js](assets/js/machines.js) — machine/power/reactor runtime
 - [assets/js/pipes.js](assets/js/pipes.js) — decorative pipe grid
+- [assets/js/settings.js](assets/js/settings.js) — shared settings schema, store and UI
 - [assets/js/map.js](assets/js/map.js) — minimap, fullscreen map, bookmarks and death spots
 - [assets/js/workbench-ui.js](assets/js/workbench-ui.js) — machine panel renderer
 - [WORKBENCHES.md](WORKBENCHES.md) — extension guide for content and layouts
 
-## Long-distance rendering plan (2000 chunks)
+## Long-distance rendering plan (up to 10000 chunks)
 
-The render-distance setting is measured in 16 m chunks. A value of 2000 means a
-32 km radius. Do not use this value to allocate interactive `Chunk` objects:
+The render-distance setting is measured in 16 m chunks. A value of 10000 means
+a 160 km radius. Do not use this value to allocate interactive `Chunk` objects:
 the existing square streamer would otherwise request 16,008,001 XZ columns and
-over 64 million chunk meshes across the four vertical layers.
+over 64 million chunk meshes across its four baseline vertical layers.
 
 ### Target architecture
 
@@ -860,45 +914,67 @@ Keep three distances separate:
 - **Terrain LOD radius:** a separately streamed coarse terrain representation.
   It is visual only: no mining, collision, water simulation, lighting bake,
   vegetation, or machine interaction.
-- **View horizon:** user setting, 2–2000 chunks (32 m–32 km), used for camera
+- **View horizon:** user setting, 2–10000 chunks (32 m–160 km), used for camera
   clipping and atmospheric fog. This is not a promise of full detail.
 
-The far representation should be deterministic from world seed and the same
-terrain/biome functions as the near world. Build a quadtree or nested clipmap of
-terrain tiles: dense near the interactive boundary, progressively coarser with
-distance, and capped by a fixed vertex and memory budget. Keep tile edges
-stitched to avoid cracks, use terrain skirts where needed, and blend the far
-material into near terrain and sky fog. Rebuild only tiles affected by player
-movement; batch sampling and mesh creation across frames or workers. Cancel
-stale work after rapid movement, prioritize visible/near tiles, and evict distant
-tiles by budget. The seam must account for player edits: edited columns inside
-the LOD overlap need a small invalidation/update path, while edits outside the
-interactive region cannot occur.
+The implemented far representation uses nested square rings sampled from the
+same deterministic terrain height function. Each ring is one 64×64 grid;
+grid spacing grows by 4× per ring, covering the selected horizon with a fixed
+small mesh count. Far surfaces use the same tiled grass texture as nearby
+terrain. Ring samples are built in batches between animation frames,
+stale builds are canceled after the player crosses a chunk, and old meshes stay
+visible until replacements are ready. The shared terrain caches are bounded,
+and terrain-density keys retain distinct coordinates beyond the original local
+16-bit key range. The nearest ring begins 80 m from its snapped center, overlaps
+the detailed chunk area, and matches the live surface along its inner boundary.
+64 m skirts hide cracks at the boundaries between coarse rings. The nearest
+ring also approximates industrial pad flattening. Far terrain does not contain
+caves, vegetation, machines, or saved edits away from the inner boundary.
 
-Industrial structures should remain fully streamed only nearby. At mid range,
-optionally show low-cost site impostors; omit vegetation at the far horizon.
-Keep far terrain out of collision and gameplay queries. Ensure fog and camera
-far planes are clamped to valid WebGL depth ranges and preserve underwater fog
-behavior. Do not make 2000 the default until the LOD path is profiled on ordinary
-integrated graphics; expose it as an opt-in maximum.
+Ring skirts and an overlapping, surface-matched inner edge close cracks between
+LOD rings and the interactive terrain. The main remaining work is propagating
+persistent terrain edits into outer far meshes and profiling re-sampling cost
+while walking. The active six-chunk world remains the only editable and
+collidable terrain.
+
+The far rings carry their own distance haze instead of the scene fog: the ring
+material runs `fog: false` and mixes toward the sky colour with an exp² falloff
+(`FAR_HAZE_REACH` in game.js) scaled to the visible extent — the outer ring edge
+or the camera far plane, whichever comes first. The haze is therefore complete
+exactly where the fake terrain stops, so its border and the LOD ring seams fade
+out instead of showing as hard lines. `scene.fog` now only covers the editable
+terrain, and `camera.far` stops at the ring edge.
+
+Industrial structures remain fully streamed only nearby. At mid range,
+low-cost site impostors are a possible follow-up; vegetation stays out of the
+far horizon. Keep far terrain out of collision and gameplay queries. Profile
+fog, camera depth precision, draw calls, and memory on integrated graphics
+before changing the default horizon.
+
+Far terrain samples the same mountain heightfield and carries biome surface
+weights for grass, sand, dry ground, snow and ash. These match the textures
+used by nearby terrain; mountain stone overrides them at the mountain elevation
+threshold. No snow cap is applied to high mountain surfaces, and trees, shrubs
+and ground cover do not spawn on mountain stone.
 
 ### Build sequence
 
-1. Decouple the user horizon from the interactive chunk radius and guard all
-   allocations against the horizon value.
-2. Add a coarse deterministic terrain tile generator and bounded streamer with
-   near-to-far priorities, cancellation, cache limits, and disposal.
-3. Add LOD transitions, edge stitching, edit invalidation in the overlap, and
-   distance-based material/fog blending.
-4. Extend terrain visuals to distant industrial sites only if the cost fits the
-   budgets; keep gameplay systems on the existing near streamer.
-5. Profile generation time, draw calls, memory, and visual seams while moving
-   across chunk boundaries and changing settings from 6 to 2000.
+1. Done: decouple the user horizon from the interactive chunk radius.
+2. Done: add batched deterministic terrain rings and bounded terrain caches.
+3. Done: overlap the near terrain and skirt LOD boundaries. Follow up: propagate
+   saved terrain edits into far rings.
+4. Follow up: add distant industrial site impostors if the cost fits the budget.
+5. Profile generation time, draw calls, memory, and seams at horizons up to
+   10000 while moving across chunk boundaries.
 
-The first implementation milestone separates the setting from chunk allocation
-and establishes the 2000-chunk horizon controls. The far-terrain tile streamer
-and its visual transition are still required before 2000 yields a filled-in
-landscape rather than a long fog horizon.
+The detailed streamer extends each column's vertical range to cover its local
+terrain peak, with a small headroom chunk above it. This keeps high mountain
+surfaces in editable, collidable terrain chunks while ordinary columns retain
+the original four-layer baseline. World startup pre-generates the 3×3 chunk
+columns around spawn in short 8 ms slices. The loading screen then
+tracks far-ring sampling when the selected horizon exceeds 6 chunks. It becomes
+clickable after the requested terrain work finishes; the remaining detailed
+radius continues streaming during play.
 
 
 
@@ -989,10 +1065,14 @@ their own panel (e.g. the excavator).
 
 ## Radiation model
 
-Carried hot items, running machines and the day-based ambient pressure add dose;
-armor, shielding plates and radiation absorbers remove it. The curve lives in
-`TUNING.RAD_STAGES` in `content.js` (slow → blur → death at 600). Death drops
-everything the player carried.
+Carried hot items, running machines and the day-based ambient pressure add dose.
+Worn armor turns its flat `radShield` into a bounded fraction (≤80%) that now
+applies to ambient and machine fields as well as carried items; powered
+absorbers cut a field multiplicatively (35% at their center, 75% max when
+stacked). Dose only decays while intake is essentially zero for 30 s, at a
+deliberately slow 0.05 rad/s. The curve lives in `TUNING.RAD_STAGES` in
+`content.js` (slow → blur → death at 600). Death drops everything the player
+carried.
 
 ## Check your content
 
@@ -1002,3 +1082,6 @@ node assets/js/content.check.mjs
 
 Validates every recipe item, machine/block pairing, fuel depletion, layout bounds
 and the radiation curve.
+
+
+How ever dont test simple things that need testing.

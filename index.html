@@ -47,6 +47,10 @@
   <section id="radMeter" role="progressbar" aria-label="Radiation dose against the human lethal dose" aria-valuemin="0"
     aria-valuemax="100" aria-valuenow="0">
     <header>RAD</header>
+    <div id="radDirWrap">
+      <div id="radDir" title="Radiation source"></div>
+      <span id="radDirTxt">N</span>
+    </div>
     <div class="track">
       <div id="radFill"></div>
       <div id="radLd50" title="LD50 · 450 rad"></div>
@@ -68,8 +72,6 @@
     <div class="mapBox">
       <header class="mapHead">
         <span class="mapTitle">MAP</span>
-        <div id="mapInfo" class="mapInfo"></div>
-        <div id="mapCursor" class="mapCursor"></div>
         <button id="mapClose">CLOSE</button>
       </header>
       <div class="mapBody">
@@ -77,9 +79,7 @@
           <canvas id="mapCanvas"></canvas>
         </div>
         <aside class="mapSide">
-          <div class="mapSectionTitle">LAYERS</div>
           <div id="mapLayers" class="mapLayers"></div>
-          <div class="mapSectionTitle">MARKERS</div>
           <div id="mapMarkers" class="mapMarkers"></div>
           <div class="mapRow" id="mapRenameRow">
             <input id="mapName" class="mapInput" maxlength="24" placeholder="BOOKMARK NAME" autocomplete="off">
@@ -95,7 +95,6 @@
             <button id="mapZoomIn" class="mapBtn">+</button>
             <button id="mapDeleteBtn" class="mapBtn danger" disabled>DELETE</button>
           </div>
-          <div class="mapHint">DRAG PAN · WHEEL ZOOM · ARROWS PAN · F FIT · DBL-CLICK MARK</div>
         </aside>
       </div>
     </div>
@@ -245,21 +244,11 @@
 
       <section class="menu-view hidden" data-view="settings">
         <h2>SETTINGS</h2>
-        <div class="menu-setting"><span>RENDER DISTANCE</span><span class="opts" id="menuDist">
-            <button data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
-              data-val="6">6</button><button data-val="2000">2000</button>
-          </span></div>
-        <div class="menu-setting"><span>INFO HUD</span><span class="opts" id="menuHud">
-            <button data-val="0">OFF</button><button data-val="1">ON</button>
-          </span></div>
-        <div class="menu-setting"><span>VSYNC</span><span class="opts" id="menuVsync">
-            <button data-val="1">ON</button><button data-val="0">OFF</button>
-          </span></div>
-        <div class="menu-setting"><span>VOLUME</span><span class="opts" id="menuVol">
-            <button data-val="0">0%</button><button data-val="0.25">25%</button><button
-              data-val="0.5">50%</button><button data-val="0.75">75%</button><button data-val="1">100%</button>
-          </span></div>
-        <button class="mbtn link" data-act="home">BACK</button>
+        <div id="menuSettings" class="settings-list"></div>
+        <div class="menu-row">
+          <button class="mbtn link" data-reset-settings>RESET DEFAULTS</button>
+          <button class="mbtn link" data-act="home">BACK</button>
+        </div>
       </section>
     </div>
   </div>
@@ -287,18 +276,8 @@
       </div>
       <div class="view view-settings hidden">
         <h1>SETTINGS</h1>
-        <div class="settings">
-          <div class="row" data-setting="distance"><span>DISTANCE</span><span class="opts"><button
-                data-val="2">2</button><button data-val="3">3</button><button data-val="4">4</button><button
-                data-val="6">6</button><button data-val="2000">2000</button></span></div>
-          <div class="row" data-setting="hud"><span>INFO HUD</span><span class="opts"><button
-                data-val="0">OFF</button><button data-val="1">ON</button></span></div>
-          <div class="row" data-setting="vsync"><span>VSYNC</span><span class="opts"><button
-                data-val="0">OFF</button><button data-val="1">ON</button></span></div>
-          <div class="row" data-setting="volume"><span>VOLUME</span><span class="opts"><button
-                data-val="0">0%</button><button data-val="0.25">25%</button><button data-val="0.5">50%</button><button
-                data-val="0.75">75%</button><button data-val="1">100%</button></span></div>
-        </div>
+        <div id="overlaySettings" class="settings-list"></div>
+        <button class="btn" data-reset-settings>RESET DEFAULTS</button>
         <button id="backBtn" class="btn">BACK</button>
       </div>
     </div>
