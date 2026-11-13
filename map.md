@@ -348,6 +348,8 @@ The piece you aim at is the **anchor**, and the new piece is laid flush against 
 
 **Flush sides**: the wall and door kinds have four rotations — two directions × the side of the cell the panel hugs — and the panel always ends exactly on a cell boundary (`wall.js` / `door.js`). That is what lets a wall sit flush against the edge of a deck.
 
+**One mesh per kind**: `meshKey(piece)` is `tier|kind`, so a wall and a floor of the same tier are drawn in **different** `InstancedMesh`es. A mesh draws every instance with the shape of its first piece, so a shared mesh would draw a wall flat like a floor — and the raycast the snapping depends on would hit the wrong geometry. `node assets/js/building.mesh.check.mjs` guards this.
+
 **Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge). The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
 
 **Triangle collision** is an approximation: the diagonal cuts three cells corner to corner and no axis-aligned box can follow it, so a cut cell gets a half-cell rectangle — the solid half is fully covered (the player cannot walk into the wedge) at the price of over-covering a sliver of the open half.
@@ -814,7 +816,7 @@ What this does:
 - `clock` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
 - `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
 - `sourcePoint()` / `transmission()` / `RAD_OCCL` (radiation.js): the fallout spot and the near-field shadow march that lets walls block radiation
-- `BuildingSystem` / `wallCells()` / `shadowCells()` / `snapPlan()` (building.js): wall panels, their per-slice attenuation, the DDA shadow march and the piece-to-piece snapping; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
+- `BuildingSystem` / `wallCells()` / `shadowCells()` / `snapPlan()` / `meshKey()` (building.js): wall panels, their per-slice attenuation, the DDA shadow march, the piece-to-piece snapping and the mesh a piece is drawn in; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
 - `KINDS` / `pieces/*.js` (pieces/registry.js): the five piece kinds (wall, floor, roof, door, triangle) — geometry, support rules, items and recipes, one module each
 - `doorHit()` / `toggleDoor()` / `updateDoorSwings()` / `swingFrame()` (game.js + pieces/door.js): opening and shutting a door, and the swing animation
 - `radField()` / `radTransmission()` / `radFactor()`: directional field rate, the source the HUD arrow points at, and the per-voxel transmission hook

@@ -10,6 +10,10 @@ import { KINDS } from './pieces/registry.js';
 
 const KEY = (x, y, z) => `${x},${y},${z}`;
 
+// The mesh a piece is drawn in. The kind belongs in the key: a wall and a
+// floor of the same tier are different shapes and must not share a mesh.
+export function meshKey(piece) { return `${piece.tier}|${piece.kind}`; }
+
 // Length of the ray segment that lies inside an axis-aligned box.
 function boxLen(ox, oy, oz, dx, dy, dz, box, maxD) {
   let t0 = 0, t1 = maxD;
@@ -48,10 +52,13 @@ export function snapPlan(fps, af, p, dir, wantRot = 0) {
   // of the piece we are looking down on.
   let axis, side;
   if (fromAbove) {
-    const d = [p.x - af.x0, af.x1 - p.x, p.z - af.z0, af.z1 - p.z];
-    const i = d.indexOf(Math.min(...d));
-    axis = i < 2 ? 'x' : 'z';
-    side = i % 2 === 0 ? -1 : 1;
+    // Which side of the piece is being looked at: the direction of the aim
+    // point from the middle of the piece. The nearest *edge* would flip from
+    // side to side while the mouse moves, which makes the preview jump.
+    const ox = p.x - (af.x0 + af.x1) / 2;
+    const oz = p.z - (af.z0 + af.z1) / 2;
+    axis = Math.abs(ox) > Math.abs(oz) ? 'x' : 'z';
+    side = (axis === 'x' ? ox : oz) < 0 ? -1 : 1;
   } else {
     axis = ax > az ? 'x' : 'z';
     side = dir[axis] > 0 ? -1 : 1;
@@ -130,8 +137,8 @@ export class BuildingSystem {
     this.cells = new Map();     // cell key -> { piece, tier, box }
     this.group = new this.T.Group();
     ctx.scene.add(this.group);
-    this.meshes = new Map();    // "tier|geom" -> InstancedMesh
-    this.meshPieces = new Map();// "tier|geom" -> [piece]
+    this.meshes = new Map();    // "tier|kind" -> InstancedMesh
+    this.meshPieces = new Map();// "tier|kind" -> [piece]
     this.nextId = 1;
   }
 
@@ -384,12 +391,15 @@ export class BuildingSystem {
   rebuild() {
     const groups = new Map();
     for (const p of this.pieces.values()) {
-      const key = `${p.tier}|${p.geom}`;
+      // The kind is part of the key: two kinds never share a mesh, or they
+      // would be drawn with each other's shape (a wall would lie flat like a
+      // floor) and the raycast would hit the wrong geometry.
+      const key = meshKey(p);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
     }
     for (const [key, list] of groups) {
-      const [tier, geom] = key.split('|');
+      const [tier] = key.split('|');
       let mesh = this.meshes.get(key);
       const kind = this.kind(list[0].kind);
       if (!mesh) {

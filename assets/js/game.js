@@ -8614,6 +8614,8 @@
           mesh.setMatrixAt(i, m);
         });
         mesh.instanceMatrix.needsUpdate = true;
+        // The panel moved, so the sphere the raycast uses has to follow it.
+        mesh.computeBoundingSphere();
       }
       // forget doors that were mined away
       for (const id of [...doorAngles.keys()]) if (!buildingSystem.pieces.has(id)) doorAngles.delete(id);

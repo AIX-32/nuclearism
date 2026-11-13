@@ -1,7 +1,7 @@
 // Self-checks for the base building pieces: node assets/js/building.check.mjs
 
 import { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES, TUNING, ITEM_DEFS, CRAFT_RECIPES } from './content.js';
-import { shadowCells, snapPlan } from './building.js';
+import { shadowCells, snapPlan, meshKey } from './building.js';
 import { KIND as WALL } from './pieces/wall.js';
 import { KIND as FLOOR } from './pieces/floor.js';
 import { KINDS } from './pieces/registry.js';
@@ -43,6 +43,19 @@ for (const rot of [0, 1, 2, 3]) {
   check(Math.abs(lo - Math.floor(lo)) < 1e-9 || Math.abs(hi - Math.floor(hi)) < 1e-9,
     `a wall panel (rot ${rot}) hugs one side of its cell exactly`);
   check(Math.abs((hi - lo) - TH) < 1e-9, `a wall panel (rot ${rot}) is one panel thick`);
+}
+
+// --- the meshes ------------------------------------------------------------
+// Two kinds of the same tier are drawn in different meshes: sharing one would
+// draw a wall with the floor's shape (flat) and a floor with the wall's.
+check(meshKey({ tier: 'wood', kind: 'wall' }) !== meshKey({ tier: 'wood', kind: 'floor' }),
+  'a wall and a floor of the same tier do not share a mesh');
+check(meshKey({ tier: 'wood', kind: 'wall' }) !== meshKey({ tier: 'brick', kind: 'wall' }),
+  'two tiers of the same kind do not share a mesh');
+for (const kind of Object.keys(KINDS)) {
+  const keys = new Set();
+  for (const tier of BUILD_TIER_ORDER) keys.add(meshKey({ tier, kind }));
+  check(keys.size === BUILD_TIER_ORDER.length, `every tier of the ${kind} gets its own mesh`);
 }
 
 // --- snapping --------------------------------------------------------------
