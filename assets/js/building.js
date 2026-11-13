@@ -90,6 +90,10 @@ export class BuildingSystem {
           tex.magFilter = this.T.NearestFilter;
           tex.minFilter = this.T.LinearMipmapLinearFilter;
           mat.map = tex;
+          // The tier colour is the fallback for a missing texture. Once the
+          // photo is there it multiplies it, so drop back to white and let the
+          // picture speak for itself.
+          mat.color.setHex(0xffffff);
           mat.needsUpdate = true;
         }, undefined, () => { /* no texture: keep the flat colour */ });
       } catch (e) { /* no loader: keep the flat colour */ }
