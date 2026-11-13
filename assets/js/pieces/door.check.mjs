@@ -12,11 +12,11 @@ function check(cond, msg) { ok.push([!!cond, msg]); }
 const W = 1, H = 3, TH = 0.25;
 
 // --- geometry ---------------------------------------------------------------
-for (const rot of [0, 1]) {
+for (const rot of [0, 1, 2, 3]) {
   const cells = DOOR.cells(4, 10, 7, rot);
   check(cells.length === H, `a door owns ${H} cells (rot ${rot})`);
   check(cells.every(([k]) => k.split(',').length === 3), 'cell keys are x,y,z');
-  check(new Set(cells.map(([k]) => k.split(',')[0])).size === 1, 'a door sits in a single x column (rot 0 style)');
+  check(new Set(cells.map(([k]) => k.split(',')[0])).size === 1, 'a door sits in a single x column');
   check(new Set(cells.map(([k]) => k.split(',')[2])).size === 1, 'a door sits in a single z column');
   check(new Set(cells.map(([k]) => k.split(',')[1])).size === H, 'a door stacks three cells high');
   // every box stays inside the cell it belongs to
@@ -29,14 +29,25 @@ for (const rot of [0, 1]) {
   check(cells.every(([, b]) => Math.abs((b.maxY - b.minY) - 1) < 1e-9), 'each cell slice is one metre tall');
   const s = DOOR.scale(4, 10, 7, rot);
   check(Math.abs(s.y - H) < 1e-9, 'the door is three metres tall');
-  const wide = rot === 0 ? s.x : s.z;
-  const thin = rot === 0 ? s.z : s.x;
+  const wide = rot < 2 ? s.x : s.z;
+  const thin = rot < 2 ? s.z : s.x;
   check(Math.abs(wide - W) < 1e-9, 'the door is one metre wide');
   check(Math.abs(thin - TH) < 1e-9, 'the door is a quarter metre thick');
+  // The panel hugs one side of its cell, so the mesh centre is not the cell
+  // centre: it sits a quarter metre off it.
   const c = DOOR.center(4, 10, 7, rot);
-  check(Math.abs(c.x - 4.5) < 1e-9 && Math.abs(c.z - 7.5) < 1e-9 && Math.abs(c.y - 11.5) < 1e-9,
-    'the door mesh sits in the middle of its cells');
+  check(Math.abs(c.y - 11.5) < 1e-9, 'the door mesh sits in the middle of its height');
+  if (rot < 2) {
+    check(Math.abs(c.x - 4.5) < 1e-9, 'the wide side is centred on the cell');
+    const want = rot === 0 ? 7 + 1 - TH / 2 : 7 + TH / 2;
+    check(Math.abs(c.z - want) < 1e-9, 'the panel hugs the side of its cell');
+  } else {
+    check(Math.abs(c.z - 7.5) < 1e-9, 'the wide side is centred on the cell');
+    const want = rot === 2 ? 4 + 1 - TH / 2 : 4 + TH / 2;
+    check(Math.abs(c.x - want) < 1e-9, 'the panel hugs the side of its cell');
+  }
 }
+check(DOOR.rot === 4, 'a door has four rotations (two directions, two sides to hug)');
 
 // --- the door fills a gap in a wall run ------------------------------------
 const wallCells = new Set(WALL.cells(4, 10, 7, 0).map(([k]) => k));
@@ -56,7 +67,6 @@ check(doorZ.every(([k]) => !wallCells.has(k)), 'a z door does not overlap an x w
 check(DOOR.dynamicSolid === true, 'a door is only solid while it is closed');
 check(DOOR.solid === true, 'a door blocks the player');
 check(DOOR.attenuate === true, 'a door takes part in the radiation shadow');
-check(DOOR.rot === 2, 'a door has two rotations');
 check(!!DOOR.support && !!DOOR.base, 'a door declares base() and support()');
 
 // --- radiation --------------------------------------------------------------
@@ -76,7 +86,7 @@ check(Math.abs(woodClosed - Math.pow(BUILD_TIERS.wood.transmission, TH)) < 1e-6,
   `a closed wood door transmits ${woodClosed.toFixed(3)}`);
 
 // --- the swing --------------------------------------------------------------
-for (const rot of [0, 1]) {
+for (const rot of [0, 1, 2, 3]) {
   const fr = swingFrame(4, 10, 7, rot);
   check(Math.abs(fr.center.y - 11.5) < 1e-9, 'the hinge is at the middle of the panel');
   check(Math.abs(fr.hinge.x - fr.center.x) < 1e-9 || Math.abs(fr.hinge.z - fr.center.z) < 1e-9,
@@ -84,7 +94,7 @@ for (const rot of [0, 1]) {
   check(fr.sign === 1 || fr.sign === -1, 'the swing turns one way or the other');
   // the hinge is half a panel away from the centre, on the axis the panel runs along
   const dx = Math.abs(fr.hinge.x - fr.center.x), dz = Math.abs(fr.hinge.z - fr.center.z);
-  check(Math.abs((rot === 0 ? dx : dz) - 0.5) < 1e-9, 'the hinge is half a metre from the middle');
+  check(Math.abs((rot < 2 ? dx : dz) - 0.5) < 1e-9, 'the hinge is half a metre from the middle');
 }
 
 // --- items ------------------------------------------------------------------

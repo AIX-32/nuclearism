@@ -1,8 +1,9 @@
 // Self-checks for the base building pieces: node assets/js/building.check.mjs
 
 import { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES, TUNING, ITEM_DEFS, CRAFT_RECIPES } from './content.js';
-import { shadowCells } from './building.js';
+import { shadowCells, snapPlan } from './building.js';
 import { KIND as WALL } from './pieces/wall.js';
+import { KIND as FLOOR } from './pieces/floor.js';
 import { KINDS } from './pieces/registry.js';
 
 const ok = [];
@@ -22,9 +23,91 @@ const zCells = new Set(cells.map(([k]) => k.split(',')[2]));
 check(zCells.size === 1, 'an x wall sits in a single z column');
 const xCells = new Set(cells.map(([k]) => k.split(',')[0]));
 check(xCells.size === W, 'an x wall runs over three x cells');
-const zRun = WALL.cells(4, 10, 7, 1);
+const zRun = WALL.cells(4, 10, 7, 2);
 check(zRun.every(([, b]) => Math.abs((b.maxX - b.minX) - TH) < 1e-9), 'a z wall is thin on x');
 check(new Set(zRun.map(([k]) => k.split(',')[0])).size === 1, 'a z wall sits in a single x column');
+check(WALL.rot === 4, 'a wall has four rotations (two directions, two sides to hug)');
+for (const rot of [0, 1, 2, 3]) {
+  const c = WALL.cells(4, 10, 7, rot);
+  check(c.every(([k, b]) => {
+    const [cx, cy, cz] = k.split(',').map(Number);
+    return b.minX >= cx && b.maxX <= cx + 1 && b.minY >= cy && b.maxY <= cy + 1
+      && b.minZ >= cz && b.maxZ <= cz + 1;
+  }), `a wall panel (rot ${rot}) stays inside its own cells`);
+  // The panel hugs one side of its cell exactly, so two panels that share an
+  // edge share it exactly.
+  const thin = rot < 2 ? 'z' : 'x';
+  const box = c[0][1];
+  const lo = thin === 'z' ? box.minZ : box.minX;
+  const hi = thin === 'z' ? box.maxZ : box.maxX;
+  check(Math.abs(lo - Math.floor(lo)) < 1e-9 || Math.abs(hi - Math.floor(hi)) < 1e-9,
+    `a wall panel (rot ${rot}) hugs one side of its cell exactly`);
+  check(Math.abs((hi - lo) - TH) < 1e-9, `a wall panel (rot ${rot}) is one panel thick`);
+}
+
+// --- snapping --------------------------------------------------------------
+// The footprint of a kind inside its cell, for every rotation.
+function footprint(kind, rot) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const [, b] of kind.cells(0, 0, 0, rot)) {
+    x0 = Math.min(x0, b.minX); x1 = Math.max(x1, b.maxX);
+    z0 = Math.min(z0, b.minZ); z1 = Math.max(z1, b.maxZ);
+  }
+  return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0 };
+}
+const fps = (kind) => Array.from({ length: kind.rot }, (_, r) => ({ rot: r, ...footprint(kind, r) }));
+const union = (kind, x, y, z, rot) => {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const [, b] of kind.cells(x, y, z, rot)) {
+    x0 = Math.min(x0, b.minX); x1 = Math.max(x1, b.maxX);
+    z0 = Math.min(z0, b.minZ); z1 = Math.max(z1, b.maxZ);
+  }
+  return { x0, x1, z0, z1 };
+};
+
+// A floor deck, and a wall that is aimed at its -Z edge from outside.
+const deck = { x0: 10, x1: 13, z0: 30, z1: 33 };
+const side = snapPlan(fps(WALL), deck, { x: 11.5, y: 21, z: 30 }, { x: 0, y: 0, z: 1 }, 0);
+check(side.length > 0, 'a wall aimed at a floor finds a place to go');
+check(side[0].z === 29, `the wall lands right outside the deck (z=${side[0]?.z})`);
+check(side[0].x === 10, 'the wall lines up with the deck');
+const wallBox = union(WALL, side[0].x, 20, side[0].z, side[0].rot);
+check(Math.abs(wallBox.z1 - deck.z0) < 1e-9, 'the wall sits flush against the edge of the deck');
+check(Math.abs(wallBox.x0 - deck.x0) < 1e-9 && Math.abs(wallBox.x1 - deck.x1) < 1e-9,
+  'the wall is exactly as long as the deck');
+
+// Looking down at the deck near its -X edge: the wall hugs that edge.
+const top = snapPlan(fps(WALL), deck, { x: 10.2, y: 21, z: 31.5 }, { x: 0, y: -1, z: 0 }, 0);
+check(top.length > 0, 'a wall aimed down at a floor finds a place to go');
+const topBox = union(WALL, top[0].x, 20, top[0].z, top[0].rot);
+check(Math.abs(topBox.x0 - deck.x0) < 1e-9, 'the wall hugs the edge that is looked at');
+check(top[0].x >= deck.x0 && top[0].x + 1 <= deck.x1, 'the wall stands on the deck');
+
+// A second deck flush against the first one.
+const nextDeck = snapPlan(fps(FLOOR), deck, { x: 13, y: 20.5, z: 31.5 }, { x: -1, y: 0, z: 0 }, 0);
+check(nextDeck.length > 0, 'a floor aimed at a floor finds a place to go');
+const deckBox = union(FLOOR, nextDeck[0].x, 20, nextDeck[0].z, nextDeck[0].rot);
+check(Math.abs(deckBox.x0 - deck.x1) < 1e-9, 'the second deck is flush with the first');
+check(Math.abs(deckBox.z0 - deck.z0) < 1e-9 && Math.abs(deckBox.z1 - deck.z1) < 1e-9,
+  'the second deck lines up with the first');
+
+// A wall that continues a wall run.
+const run = union(WALL, 10, 20, 30, 0);
+const next = snapPlan(fps(WALL), run, { x: 13, y: 21, z: 30.9 }, { x: -1, y: 0, z: 0 }, 0);
+check(next.length > 0, 'a wall aimed at the end of a wall run finds a place to go');
+check(next[0].x === 13, 'the next panel continues the run');
+const nextBox = union(WALL, next[0].x, 20, next[0].z, next[0].rot);
+check(Math.abs(nextBox.x0 - run.x1) < 1e-9, 'the panels meet end to end');
+check(Math.abs(nextBox.z0 - run.z0) < 1e-9 && Math.abs(nextBox.z1 - run.z1) < 1e-9,
+  'the panels are in the same plane');
+check(Math.abs((next[0].x - 10) - 3) < 1e-9, 'the run is three metres long');
+
+for (const kind of Object.keys(KINDS)) {
+  const k = KINDS[kind];
+  const plan = snapPlan(fps(k), deck, { x: 11, y: 21, z: 30.5 }, { x: 0, y: 0, z: 1 }, 0);
+  check(plan.every((c) => Number.isInteger(c.x) && Number.isInteger(c.z)),
+    `a ${kind} always snaps to whole cells`);
+}
 
 // --- the attenuation law ---------------------------------------------------
 const blocked = (tier) => 1 - Math.pow(BUILD_TIERS[tier].transmission, TH);
@@ -58,10 +141,11 @@ check(Math.abs(woodT - Math.pow(BUILD_TIERS.wood.transmission, TH)) < 1e-6,
 const shieldedCells = cellsFor('shielded', 4, 10, 7, 0);
 check(shoot(shieldedCells) < 0.02, `a shielded wall in the ray transmits ${shoot(shieldedCells).toFixed(4)}`);
 // Shooting along the wall crosses its full length, so it is shielded harder.
-const lengthwise = shoot(woodCells, [0.5, 11.5, 7.5], [1, 0, 0]);
+// The panel hugs the +Z side of its cell, so the ray runs down its middle.
+const lengthwise = shoot(woodCells, [0.5, 11.5, 7.875], [1, 0, 0]);
 check(Math.abs(lengthwise - Math.pow(BUILD_TIERS.wood.transmission, TUNING.BUILD_WALL_W)) < 1e-6,
   `a lengthwise shot transmits ${lengthwise.toFixed(3)}`);
-check(Math.abs(shoot(woodCells, [0.5, 11.5, 7.5], [-1, 0, 0]) - 1) < 1e-9,
+check(Math.abs(shoot(woodCells, [0.5, 11.5, 7.875], [-1, 0, 0]) - 1) < 1e-9,
   'a wall behind you does not shield you');
 check(Math.abs(shoot(woodCells, [30.5, 11.5, 15.5], [0, 0, -1]) - 1) < 1e-9,
   'a wall off to the side does not shield you');

@@ -307,13 +307,13 @@ Relevant parts:
 - `assets/js/pieces/registry.js` — `KINDS`, the name → kind table the runtime uses
 - content.js spreads the piece `ITEMS` into `ITEM_DEFS` and the piece `RECIPES` into `CRAFT_RECIPES`, so **a kind module never edits content.js**; an item with `table: true` joins the pocket table automatically
 - items: `wall_wood`, `wall_brick`, `wall_concrete`, `wall_shielded` (field `building: { kind, tier }`) and the `hammer`
-- game.js: the `building` branch of `doPlace()`, `useBuildingUpgrade()`, the wall branch of `doMine()`, `updateWallPreview()`, `playerCollides()`, `radTransmission()`, the `buildings` save field
+- game.js: the `building` branch of `doPlace()`, `buildingTarget()` (the snapped target, shared by the ghost and the placement), `useBuildingUpgrade()`, the wall branch of `doMine()`, `updateWallPreview()`, `playerCollides()`, `radTransmission()`, the `buildings` save field
 - textures: `assets/textures/buildings/{wood,brick,concrete,shielded}.jpg` (missing file = flat tier colour)
 - map.js: a **WALLS** layer draws every piece in its tier colour on the minimap and the fullscreen map
 - `assets/js/building.check.mjs` (`node assets/js/building.check.mjs`)
 
 What this does:
-- a **wall panel** is a 3 m × 3 m × 0.25 m slab snapped to the 1 m world grid, running along X or Z (`R` rotates). It is its own geometry, not terrain: one `InstancedMesh` per (tier, geometry) pair, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
+- a **wall panel** is a 3 m × 3 m × 0.25 m slab that snaps to the pieces around it (`R` rotates through the four flush layouts), not to the world grid. It is its own geometry, not terrain: one `InstancedMesh` per (tier, geometry) pair, textured with the tier photo, and it blocks the player (`playerCollides()` samples `buildingSystem.solidAt()`)
 - a piece owns a block of grid cells and every cell carries a **slice of the piece's box**, so the shadow march can attenuate per slice instead of stepping over a 25 cm panel
 - **the attenuation law** is exponential per metre of material (`BUILD_TIERS[tier].transmission`): wood 0.55, brick 0.25, concrete 0.06, shielded 1e-8 (lead lined). One 0.25 m panel therefore blocks 14% / 29% / 50% / 99% of the field
 - because the law is exponential the *fraction* blocked is constant while the absolute rad saved scales with the field — shielding buys margin, it never switches radiation off, and `TUNING.RAD_OCCL_FLOOR` still applies
@@ -328,13 +328,25 @@ Each kind is one module in `assets/js/pieces/`, and each is its own shape, suppo
 
 | kind | file | shape | notes |
 |---|---|---|---|
-| `wall` | `wall.js` | 3 m × 3 m × 0.25 m slab, runs along X or Z (`rot: 2`) | the reference implementation; one `InstancedMesh` per tier |
+| `wall` | `wall.js` | 3 m × 3 m × 0.25 m slab, runs along X or Z (`rot: 4`) | the reference implementation; one `InstancedMesh` per tier. The four rotations are two directions × two sides to hug, and the panel always ends on a cell boundary so it sits flush |
 | `floor` | `floor.js` | 3 m × 3 m deck, **one whole cell thick** (9 cells) | its walking surface is the top of its cell, so a wall on a deck and a deck on a deck are flush. `base()` snaps onto the highest support under the 3×3 footprint; `support()` refuses a floating deck |
 | `roof` | `roof.js` | 3 m × 3 m **barn roof** (flat soffit, eaves, flat ridge strip) | custom geometry `geom: 'roof_gable'` + `rotY(rot)` (ridge along X or Z); a whole row or column of the panel must rest on something below, so it may overhang but never float |
 | `door` | `door.js` | 1 m wide × 3 m tall × 0.25 m thick | `dynamicSolid: true`: solid while shut, passable while open, and it only shields radiation while shut. Own geometry key `door` so the swing can be animated on its own mesh |
 | `triangle` | `triangle.js` | **half** of a 3 m × 3 m square, 0.25 m thick | a real triangular prism (`geom: 'triangle'`), the right angle walks through the four corners as `rot` goes 0..3 (`rot: 4`, `rotY(rot)`). Cell boxes come from the same local frame as the mesh, so they cannot drift apart |
 
 Item ids: `wall_*`, `floor_*`, `roof_*`, `door_*`, `triangle_*` × the four tiers. The wood one of each is `table: true` (pocket table); the rest are manufactory crafts.
+
+### 12d-b-b. Snapping: pieces line up with each other, not with the world grid
+
+The piece you aim at is the **anchor**, and the new piece is laid flush against it on the anchor's own lattice:
+
+- `snapPlan(fps, af, p, dir, wantRot)` (building.js) is the pure planner: it takes the anchor's footprint, the aim point and the ray, and returns the candidate cells in order of preference. `BuildingSystem.snap()` adds the raycast against the placed meshes and the placement checks.
+- the **abutment axis** comes from the ray: looking at a face puts the new piece flush against that face, on the side the player stands on; looking down puts it **on top** of the anchor, hugging the edge that is looked at.
+- the **rotation** is picked so the new piece is as wide as the anchor along the other axis (a panel lies along a floor's edge, a panel continues a panel run), and so it lands exactly on a cell boundary — that is what makes the joint flush instead of a quarter metre off.
+- `kindFootprint()` / `pieceFootprint()` give the offset and the size of a kind inside its cell, so the planner needs nothing from the kind module but its `cells()`.
+- on bare ground (no anchor) the placement falls back to the old world grid.
+
+**Flush sides**: the wall and door kinds have four rotations — two directions × the side of the cell the panel hugs — and the panel always ends exactly on a cell boundary (`wall.js` / `door.js`). That is what lets a wall sit flush against the edge of a deck.
 
 **Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge). The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
 
@@ -802,7 +814,7 @@ What this does:
 - `clock` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
 - `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
 - `sourcePoint()` / `transmission()` / `RAD_OCCL` (radiation.js): the fallout spot and the near-field shadow march that lets walls block radiation
-- `BuildingSystem` / `wallCells()` / `shadowCells()` (building.js): wall panels, their per-slice attenuation and the DDA shadow march; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
+- `BuildingSystem` / `wallCells()` / `shadowCells()` / `snapPlan()` (building.js): wall panels, their per-slice attenuation, the DDA shadow march and the piece-to-piece snapping; `BUILD_TIERS` / `BUILD_UPGRADES` (content.js) hold the four shielding tiers
 - `KINDS` / `pieces/*.js` (pieces/registry.js): the five piece kinds (wall, floor, roof, door, triangle) — geometry, support rules, items and recipes, one module each
 - `doorHit()` / `toggleDoor()` / `updateDoorSwings()` / `swingFrame()` (game.js + pieces/door.js): opening and shutting a door, and the swing animation
 - `radField()` / `radTransmission()` / `radFactor()`: directional field rate, the source the HUD arrow points at, and the per-voxel transmission hook

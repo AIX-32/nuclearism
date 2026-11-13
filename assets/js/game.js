@@ -8660,6 +8660,27 @@
       if (!pickItemToHand(id)) notice('NOT IN INVENTORY');
     }
 
+    // Where a building piece would land. Pieces snap against the piece the
+    // player is aiming at, so they line up with each other instead of with
+    // the world grid; on bare ground they fall back to the grid.
+    function buildingTarget(b, aim) {
+      const kind = buildingSystem?.kind(b.kind);
+      if (!kind) return null;
+      const { dir, hit } = aim;
+      if (!hit) return null;
+      let gx = Math.floor(hit.x + dir.x * 1.5);
+      let gz = Math.floor(hit.z + dir.z * 1.5);
+      let rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+      // Only snap to a piece that is closer than the ground: a piece behind a
+      // hill must not steal the placement.
+      const reach = Math.min(REACH, origin.distanceTo(hit) + 0.05);
+      const snap = buildingSystem.snap(b.kind, origin, dir, rot, reach);
+      if (snap) { gx = snap.x; gz = snap.z; rot = snap.rot; }
+      const base = kind.base(buildingSystem, gx, gz, rot);
+      return { gx, gz, rot, base };
+    }
+
     function doPlace(opts = {}) {
       const drag = !!opts.drag;
       const s = inv.hot[inv.sel];
@@ -8718,12 +8739,9 @@
         const b = ITEMS[s.id].building;
         const kind = buildingSystem?.kind(b.kind);
         if (!kind) return null;
-        const { dir, hit } = mineAim();
-        if (!hit) return null;
-        const gx = Math.floor(hit.x + dir.x * 1.5);
-        const gz = Math.floor(hit.z + dir.z * 1.5);
-        const rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
-        const base = kind.base(buildingSystem, gx, gz, rot);
+        const t = buildingTarget(b, mineAim());
+        if (!t) return null;
+        const { gx, gz, rot, base } = t;
         if (!buildingSystem.canPlace(b.kind, gx, base, gz, rot)) return null;
         // Never wall the player in.
         const pr = player.radius, ph = player.height;
@@ -8805,10 +8823,9 @@
       if (!kind) { hideWallGhost(); return; }
       const { dir, hit } = mineAim();
       if (!hit) { hideWallGhost(); return; }
-      const gx = Math.floor(hit.x + dir.x * 1.5);
-      const gz = Math.floor(hit.z + dir.z * 1.5);
-      const rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
-      const base = kind.base(buildingSystem, gx, gz, rot);
+      const t = buildingTarget(b, { dir, hit });
+      if (!t) { hideWallGhost(); return; }
+      const { gx, gz, rot, base } = t;
       if (!wallGhost || wallGhostKey !== b.kind) {
         hideWallGhost();
         // A kind with its own shape (a gable roof, a wedge) previews as that

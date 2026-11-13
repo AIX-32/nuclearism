@@ -1,22 +1,33 @@
 // Doors: a 1 m wide, 3 m tall, 0.25 m thick panel that fills a gap in a wall
 // run. It is solid while closed and passable while open, and it shields
 // radiation while closed (the runtime handles both).
+//
+// Like the wall panel, `rot` picks the axis the panel is wide along and which
+// side of its cell the panel hugs, so a door sits flush in a wall run:
+//   rot 0: wide along X, hugs the +Z side of its cell
+//   rot 1: wide along X, hugs the -Z side of its cell
+//   rot 2: wide along Z, hugs the +X side of its cell
+//   rot 3: wide along Z, hugs the -X side of its cell
 
 const W = 1, H = 3, TH = 0.25;
 
 function cells(x, y, z, rot) {
+  const r = rot % 4;
   const out = [];
-  const half = TH / 2;
   for (let j = 0; j < H; j++) {
-    if (rot === 0) {
+    if (r < 2) {
+      const minZ = r === 0 ? z + 1 - TH : z;
+      const maxZ = r === 0 ? z + 1 : z + TH;
       out.push([`${x},${y + j},${z}`, {
         minX: x, maxX: x + 1,
         minY: y + j, maxY: y + j + 1,
-        minZ: z + 0.5 - half, maxZ: z + 0.5 + half,
+        minZ, maxZ,
       }]);
     } else {
+      const minX = r === 2 ? x + 1 - TH : x;
+      const maxX = r === 2 ? x + 1 : x + TH;
       out.push([`${x},${y + j},${z}`, {
-        minX: x + 0.5 - half, maxX: x + 0.5 + half,
+        minX, maxX,
         minY: y + j, maxY: y + j + 1,
         minZ: z, maxZ: z + 1,
       }]);
@@ -27,7 +38,7 @@ function cells(x, y, z, rot) {
 
 export const KIND = {
   name: 'door',
-  rot: 2,
+  rot: 4,
   solid: true,
   attenuate: true,
   dynamicSolid: true,
@@ -44,11 +55,17 @@ export const KIND = {
   },
 
   cells,
-  center(x, y, z) {
-    return { x: x + 0.5, y: y + H / 2, z: z + 0.5 };
+  center(x, y, z, rot) {
+    const r = rot % 4;
+    if (r < 2) {
+      const c = r === 0 ? z + 1 - TH / 2 : z + TH / 2;
+      return { x: x + 0.5, y: y + H / 2, z: c };
+    }
+    const c = r === 2 ? x + 1 - TH / 2 : x + TH / 2;
+    return { x: c, y: y + H / 2, z: z + 0.5 };
   },
   scale(x, y, z, rot) {
-    return rot === 0 ? { x: W, y: H, z: TH } : { x: TH, y: H, z: W };
+    return rot % 4 < 2 ? { x: W, y: H, z: TH } : { x: TH, y: H, z: W };
   },
   base(sys, x, z) {
     const top = sys.topAt(x, z);
@@ -63,11 +80,11 @@ export const KIND = {
 // one axis aligned box per piece, so game.js rotates that box around the
 // hinge itself. `sign` is the rotation direction about Y.
 export function swingFrame(x, y, z, rot) {
-  const c = { x: x + 0.5, y: y + H / 2, z: z + 0.5 };
-  const hinge = rot === 0
-    ? { x: x, y: c.y, z: c.z }        // panel runs along x, hinge on its low x edge
-    : { x: c.x, y: c.y, z: z };       // panel runs along z, hinge on its low z edge
-  return { center: c, hinge, sign: rot === 0 ? -1 : 1 };
+  const c = KIND.center(x, y, z, rot);
+  const hinge = rot % 4 < 2
+    ? { x, y: c.y, z: c.z }        // panel is wide along x, hinge on its low x edge
+    : { x: c.x, y: c.y, z };       // panel is wide along z, hinge on its low z edge
+  return { center: c, hinge, sign: rot % 4 < 2 ? -1 : 1 };
 }
 
 export const ITEMS = {

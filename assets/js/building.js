@@ -28,6 +28,65 @@ function boxLen(ox, oy, oz, dx, dy, dz, box, maxD) {
   return t1 - t0;
 }
 
+// Where a new piece would land against an anchor, as a list of candidates in
+// order of preference. Pure maths, so it can be checked without a browser.
+//
+//   fps  - the footprints of the kind, one per rotation: { rot, ox, sx, oz, sz }
+//          (the offset of the piece inside its cell and its size)
+//   af   - the anchor's footprint in world space: { x0, x1, z0, z1 }
+//   p    - the point the player is aiming at
+//   dir  - the ray the player is looking along
+//
+// The piece is laid flush against the anchor: against the face that is looked
+// at, or on the edge that is looked down on. It lines up with the anchor's
+// own lattice, so a base comes out as one perfect grid.
+export function snapPlan(fps, af, p, dir, wantRot = 0) {
+  if (!fps || !fps.length) return [];
+  const ax = Math.abs(dir.x), ay = Math.abs(dir.y), az = Math.abs(dir.z);
+  const fromAbove = ay > ax && ay > az;
+  // The axis the new piece is pushed along: the face we look at, or the edge
+  // of the piece we are looking down on.
+  let axis, side;
+  if (fromAbove) {
+    const d = [p.x - af.x0, af.x1 - p.x, p.z - af.z0, af.z1 - p.z];
+    const i = d.indexOf(Math.min(...d));
+    axis = i < 2 ? 'x' : 'z';
+    side = i % 2 === 0 ? -1 : 1;
+  } else {
+    axis = ax > az ? 'x' : 'z';
+    side = dir[axis] > 0 ? -1 : 1;
+  }
+  const other = axis === 'x' ? 'z' : 'x';
+  // How wide the anchor is along the other axis: a piece that is just as
+  // wide lies flush along the anchor, so that is the rotation we want.
+  const anchorW = af[other + '1'] - af[other + '0'];
+  const cands = [];
+  for (const fp of fps) {
+    const sizeA = axis === 'x' ? fp.sx : fp.sz;
+    const offA = axis === 'x' ? fp.ox : fp.oz;
+    const offB = other === 'x' ? fp.ox : fp.oz;
+    const sizeB = other === 'x' ? fp.sx : fp.sz;
+    // The cell origin the piece needs to sit flush against the anchor.
+    let idealA;
+    if (fromAbove) {
+      idealA = side < 0 ? af[axis + '0'] - offA : af[axis + '1'] - offA - sizeA;
+    } else {
+      const F = side < 0 ? af[axis + '0'] : af[axis + '1'];
+      // The piece goes on the side the player is standing on, flush with the
+      // face that is looked at.
+      idealA = F - offA - (side < 0 ? sizeA : 0);
+    }
+    const idealB = af[other + '0'] - offB;
+    const err = Math.abs(idealA - Math.round(idealA)) + Math.abs(idealB - Math.round(idealB));
+    const fit = Math.abs(sizeB - anchorW) < 0.01 ? 0 : 1;
+    const x = axis === 'x' ? Math.round(idealA) : Math.round(idealB);
+    const z = axis === 'x' ? Math.round(idealB) : Math.round(idealA);
+    cands.push({ x, z, rot: fp.rot, err, fit, want: fp.rot === wantRot ? 0 : 1 });
+  }
+  cands.sort((a, b) => (a.fit - b.fit) || (a.err - b.err) || (a.want - b.want));
+  return cands.map(({ x, z, rot }) => ({ x, z, rot }));
+}
+
 // Directional shadow over a cell map: 1 = clear line, ~0 = fully shielded.
 export function shadowCells(cells, px, py, pz, dx, dy, dz, maxDist = 24) {
   let x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
@@ -264,7 +323,62 @@ export class BuildingSystem {
     const hit = hits[0];
     const list = this.meshPieces.get(hit.object.userData.key);
     const piece = list && hit.instanceId != null ? list[hit.instanceId] : null;
-    return piece ? { piece, distance: hit.distance } : null;
+    return piece ? { piece, distance: hit.distance, point: hit.point } : null;
+  }
+
+  // --- snapping ------------------------------------------------------------
+  // Pieces snap to each other, not to the world grid: the piece you aim at is
+  // the anchor, and the new piece is laid flush against it, on the anchor's
+  // own lattice, so a base comes out as one perfect grid.
+
+  // The mesh footprint of a placed piece, in world space.
+  pieceFootprint(piece) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [, box] of piece.cells) {
+      x0 = Math.min(x0, box.minX); x1 = Math.max(x1, box.maxX);
+      z0 = Math.min(z0, box.minZ); z1 = Math.max(z1, box.maxZ);
+    }
+    if (!isFinite(x0)) return null;
+    return { x0, x1, z0, z1 };
+  }
+
+  // Where a kind sits inside its cell for one rotation: the offset of its
+  // footprint and its size.
+  kindFootprint(kindName, rot) {
+    const kind = this.kind(kindName);
+    if (!kind) return null;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [, box] of kind.cells(0, 0, 0, rot)) {
+      x0 = Math.min(x0, box.minX); x1 = Math.max(x1, box.maxX);
+      z0 = Math.min(z0, box.minZ); z1 = Math.max(z1, box.maxZ);
+    }
+    if (!isFinite(x0)) return null;
+    return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0 };
+  }
+
+  // Where a new piece would land if it snapped to the piece the player aims
+  // at. Returns { x, z, rot, y } or null when there is nothing to snap to.
+  snap(kindName, origin, dir, wantRot = 0, maxDist = 6) {
+    const kind = this.kind(kindName);
+    if (!kind) return null;
+    const o = new this.T.Vector3(origin.x, origin.y, origin.z);
+    const d = new this.T.Vector3(dir.x, dir.y, dir.z).normalize();
+    const hit = this.pick(o, d, maxDist);
+    if (!hit || !hit.piece) return null;
+    const af = this.pieceFootprint(hit.piece);
+    if (!af) return null;
+    const fps = [];
+    for (let r = 0; r < (kind.rot || 1); r++) {
+      const fp = this.kindFootprint(kindName, r);
+      if (fp) fps.push({ rot: r, ...fp });
+    }
+    for (const c of snapPlan(fps, af, hit.point, dir, wantRot)) {
+      const y = kind.base(this, c.x, c.z, c.rot);
+      if (!this.canPlace(kindName, c.x, y, c.z, c.rot)) continue;
+      if (kind.support && !kind.support(this, c.x, y, c.z, c.rot)) continue;
+      return { x: c.x, z: c.z, rot: c.rot, y };
+    }
+    return null;
   }
 
   rebuild() {
