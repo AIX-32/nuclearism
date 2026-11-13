@@ -5,7 +5,7 @@
 // a slice of the piece's box, so the radiation shadow march can attenuate per
 // slice instead of missing a 25 cm panel between two sample points.
 
-import { BUILD_TIERS } from './build-tiers.js';
+import { BUILD_TIERS, BUILD_TIER_ORDER } from './build-tiers.js';
 import { KINDS } from './pieces/registry.js';
 
 const KEY = (x, y, z) => `${x},${y},${z}`;
