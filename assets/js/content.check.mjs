@@ -284,8 +284,8 @@ for (const r of (mix?.recipes || [])) {
 
 const cig = ITEM_DEFS.cigarette_pack;
 ok.push([!!cig?.consumable?.smoke, 'cigarette_pack is smokeable']);
-ok.push([cig.consumable.smoke === 120, 'cigarette lasts 120s']);
-ok.push([Math.abs((cig.consumable.speed || 1) - 1.02) < 1e-9, 'cigarette speed +2%']);
+ok.push([cig.consumable.smoke === 240, 'cigarette lasts 240s']);
+ok.push([Math.abs((cig.consumable.speed || 1) - 1.10) < 1e-9, 'cigarette speed +10%']);
 ok.push([gridOut.has('cigarette_pack'), 'cigarette_pack grid-craftable']);
 for (const f of ['apple', 'orange', 'pear']) {
   ok.push([!!ITEM_DEFS[f]?.consumable?.food, `${f} is edible`]);

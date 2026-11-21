@@ -1000,7 +1000,8 @@ export class MachineSystem {
 
   buildNetworks() {
     // Skyline pylons are not power: they must not bridge two distant machines.
-    const ins = this.instances.filter((m) => m.def.kind !== 'pylon');
+    // Plain storage containers have no power role and should not connect to wires.
+    const ins = this.instances.filter((m) => m.def.kind !== 'pylon' && !(m.def.kind === 'storage' && !m.def.capacity));
     const parent = ins.map((_, i) => i);
     const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
     const uni = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
@@ -1781,6 +1782,7 @@ export class MachineSystem {
     if (inst.def.manual) { this.crank(inst); return; }
     // Pumps also never open a panel: right-click pumps into the held container.
     if (inst.def.kind === 'pump') { this.pump(inst); return; }
+    if (inst.def.sleep) { this.ctx.startSleep?.(inst); return; }
     this.openInst = inst;
     this.ctx.onOpen?.();
     this.ui.open(inst, () => {

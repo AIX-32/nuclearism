@@ -233,7 +233,7 @@ export const ITEM_DEFS = {
 
   unrad_juice: I('UJ', 'UNRAD JUICE', { block: false, stack: 16, consumable: { dose: -120 }, icon: 'assets/images/items/unrad_juice.png' }),
   chelating_agent: I('CA', 'CHELATING AGENT', { block: false, stack: 99, icon: 'assets/images/items/chelating_agent.png' }),
-  iodine_pill: I('IP', 'IODINE PILL', { block: false, stack: 16, icon: 'assets/images/items/iodine_pill.png', consumable: { dose: -40, shieldTime: 60 } }),
+  iodine_pill: I('IP', 'IODINE PILL', { block: false, stack: 16, icon: 'assets/images/items/iodine_pill.png', consumable: { dose: -10 } }),
 
 
   neurozam_9: I('NZ', 'NEUROZAM-9', { block: false, stack: 8, consumable: { intake: 0.8, intakeTime: 1800 }, icon: 'assets/images/items/neurozam_9.png' }),
@@ -241,7 +241,7 @@ export const ITEM_DEFS = {
   stim: I('SI', 'STIM', { block: false, stack: 8, consumable: { intake: 0.25, intakeTime: 240 } }),
 
 
-  cigarette_pack: I('CP', 'CIGARETTE PACK', { block: false, stack: 8, consumable: { smoke: 120, speed: 1.10 }, icon: 'assets/images/items/cigarette_pack.png' }),
+  cigarette_pack: I('CP', 'CIGARETTE PACK', { block: false, stack: 8, consumable: { smoke: 240, speed: 1.10 }, icon: 'assets/images/items/cigarette_pack.png' }),
 
   lighter: I('LT', 'LIGHTER', { block: false, stack: 1, icon: 'assets/images/items/lighter.png' }),
 
@@ -250,6 +250,7 @@ export const ITEM_DEFS = {
   apple: I('AP', 'APPLE', { block: false, stack: 16, consumable: { food: 15 }, icon: 'assets/images/items/apple.png' }),
   orange: I('OR', 'ORANGE', { block: false, stack: 16, consumable: { food: 12 }, icon: 'assets/images/items/orange.png' }),
   pear: I('PR', 'PEAR', { block: false, stack: 16, consumable: { food: 12 }, icon: 'assets/images/items/pear.png' }),
+  forbidden_meat: I('FM', 'FORBIDDEN MEAT', { block: false, stack: 8, icon: 'assets/images/items/forbidden_meat.png', consumable: { food: 20, wound: 'infection', speedTime: 180, speed: 1.7 }, desc: 'Warped flesh. Tastes wrong. Moves you fast.' }),
 
   raw_chicken: I('RC', 'RAW CHICKEN', { block: false, stack: 8, icon: 'assets/images/items/raw_chicken.png' }),
   cooked_chicken: I('CC', 'COOKED CHICKEN', { block: false, stack: 8, consumable: { food: 80 }, icon: 'assets/images/items/cooked_chicken.png' }),
@@ -448,6 +449,7 @@ export const ITEM_DEFS = {
   cable: { code: 'CB', name: 'POWER CABLE', stack: 64, rad: 0, block: false, icon: 'assets/images/items/cable.png' },
   copper_director: { code: 'CD', name: 'COPPER DIRECTOR', stack: 32, rad: 0, block: false, workbench: 'copper_director', desc: 'A cheap starter connector for linking nearby machines without a full power pole.' },
   simple_container: { code: 'SCN', name: 'SIMPLE CONTAINER', stack: 1, rad: 0, block: false, workbench: 'simple_container', model: 'assets/models/items/simple_container.gltf', desc: 'A basic storage vessel made from stone and wood.' },
+  medium_container: { code: 'MCN', name: 'MEDIUM CONTAINER', stack: 1, rad: 0, block: false, workbench: 'medium_container', model: 'assets/models/items/medium_container.gltf', desc: 'A reinforced storage vessel with twice the space of a simple container.' },
   wooden_powerpole: { code: 'WP', name: 'WOODEN POWERPOLE', stack: 16, rad: 0, block: false, workbench: 'cable', desc: 'Links nearby machines into one power grid.' },
   skyline_pylon: { code: 'SY', name: 'SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'skyline_pylon', desc: 'A tall mast. Workbenches near a pylon can be linked by the zipline wrench.' },
   short_skyline_pylon: { code: 'SS', name: 'SHORT SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'short_skyline_pylon', desc: 'A half-height mast for tighter spaces. Workbenches near a pylon can be linked by the zipline wrench.' },
@@ -466,6 +468,7 @@ export const ITEM_DEFS = {
   hand_crank: { code: 'HC', name: 'HAND CRANK', stack: 16, rad: 0, block: false, workbench: 'hand_crank', desc: 'A hand-turned generator. Right-click it to turn the handle and charge the local grid.' },
   infinite_battery: { code: 'IB', name: 'INFINITE BATTERY', stack: 16, rad: 0, block: false, workbench: 'infinite_battery', desc: 'Sandbox power source. Outputs whatever PU/s you set in its panel.' },
   water_pump: { code: 'PU', name: 'WATER PUMP', stack: 16, rad: 0, block: false, workbench: 'water_pump', desc: 'Draws groundwater into the jerry can you are holding. Right-click to pump. Needs grid power.' },
+  bed: { code: 'Bd', name: 'BED', stack: 16, rad: 0, block: false, workbench: 'bed', desc: 'Right-click to sleep until morning.' },
   test_bench: { code: 'T#', name: 'TEST BENCH', stack: 16, rad: 0, block: false, workbench: 'test_bench', desc: 'Drop in a car battery for a quick burst of power.' },
   research_lab: { code: 'RL', name: 'RESEARCH LAB', stack: 16, rad: 0, block: false, workbench: 'research_lab', desc: 'Studies hot samples and turns them into blueprints for the next tier.' },
   fusion_reactor: { code: 'FX', name: 'FUSION REACTOR', stack: 4, rad: 0, block: false, workbench: 'fusion_reactor', desc: 'Burns fusion pellets for enormous power. Even less forgiving of a cooling mismatch than fission.' },
@@ -664,6 +667,7 @@ export const MACHINE_DEFS = [
       { in: { machine_chassis: 2, circuit_board: 2, lead_plate: 8, data_drive: 1 }, out: { fuel_reprocessor: 1 }, time: 18 },
       { in: { machine_chassis: 1, copper_solenoid: 2, circuit_basic: 2, card_reader: 1 }, out: { chemical_reactor: 1 }, time: 12 },
       { in: { machine_chassis: 2, circuit_board: 1, copper_plate: 4, data_disk: 2 }, out: { energy_storage: 1 }, time: 10 },
+      { in: { iron_ingot: 5, wood: 2, stone: 10 }, out: { medium_container: 1 }, time: 8 },
       { in: { copper_plate: 2, iron_plate: 1 }, out: { cable: 8 }, time: 3 },
       { in: { machine_chassis: 1, circuit_basic: 2, iron_plate: 4, optic_lens: 1, glass: 6 }, out: { solar_panel: 1 }, time: 10 },
       { in: { machine_chassis: 1, circuit_board: 1, lead_plate: 8, timer_module: 1 }, out: { decay_generator: 1 }, time: 14 },
@@ -788,7 +792,8 @@ export const MACHINE_DEFS = [
 
   { id: 'hand_crank', kind: 'generator', name: 'HAND CRANK', model: MODEL('hand_crank'), layout: LAYOUT('hand_crank'), label: 'Turn the hand crank', height: 1.0, dx: 2.8, dz: 1.8, energy: { gen: 45 }, manual: true, spin: 'spin', spinRate: 8 },
   { id: 'infinite_battery', kind: 'generator', name: 'INFINITE BATTERY', model: MODEL('infinite_battery'), layout: LAYOUT('infinite_battery'), label: 'Set infinite battery', height: 1.0, dx: 2.8, dz: 1.8, energy: { gen: 0 }, infinite: true },
-  { id: 'water_pump', kind: 'pump', name: 'WATER PUMP', model: MODEL('water_pump'), layout: LAYOUT('water_pump'), label: 'Pump water', height: 1.2, dx: 2.8, dz: 1.8, energy: { use: 30 }, pump: { amount: 5, cost: 30 } },
+  { id: 'water_pump', kind: 'pump', name: 'WATER PUMP', model: MODEL('water_pump'), layout: LAYOUT('water_pump'), label: 'Pump water', height: 1.5, dx: 2.8, dz: 1.8, energy: { use: 400 }, pump: { amount: 5, cost: 400 } },
+  { id: 'bed', kind: 'bed', name: 'BED', model: MODEL('bed'), layout: LAYOUT('bed'), label: 'Sleep', height: 0.6, dx: 2.4, dz: 1.4, sleep: true },
 
   { id: 'test_bench', kind: 'generator', name: 'TEST BENCH', model: MODEL('test_bench'), layout: LAYOUT('test_bench'), label: 'Open test bench', height: 1.2, dx: 2.8, dz: 1.8, energy: { gen: 150 }, battery: { life: 180 } },
 
@@ -812,6 +817,7 @@ export const MACHINE_DEFS = [
   },
   { id: 'energy_storage', kind: 'storage', name: 'ENERGY STORAGE', model: MODEL('energy_storage'), layout: LAYOUT('energy_storage'), label: 'Open energy storage', height: 1.3, dx: 2.8, dz: 1.8, capacity: 20000 },
   { id: 'simple_container', kind: 'storage', name: 'SIMPLE CONTAINER', model: 'assets/models/items/simple_container.gltf', label: 'Open simple container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 14 },
+  { id: 'medium_container', kind: 'storage', name: 'MEDIUM CONTAINER', model: 'assets/models/items/medium_container.gltf', label: 'Open medium container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 28 },
   { id: 'cable', kind: 'cable', name: 'WOODEN POWERPOLE', model: MODEL('cable'), layout: LAYOUT('cable'), label: 'Wooden powerpole', height: 3.2, reach: 1.6, dx: 2.8, dz: 1.8 },
   { id: 'copper_director', kind: 'starter_cable', name: 'COPPER DIRECTOR', model: MODEL('copper_director'), layout: LAYOUT('cable'), label: 'Copper director', height: 0.325, reach: 0.15, dx: 0.55, dz: 0.55 },
   { id: 'skyline_pylon', kind: 'pylon', name: 'SKYLINE PYLON', model: 'assets/models/workbenches/skyline_pylon.gltf', layout: LAYOUT('skyline_pylon'), label: 'Use skyline pylon', height: 3.4, dx: 2.8, dz: 1.8 },
@@ -1088,6 +1094,7 @@ export const CRAFT_RECIPES = [
 
   { out: { test_bench: 1 }, needs: { iron_ingot: 2, car_battery: 1, copper_plate: 2 } },
   { out: { water_pump: 1 }, needs: { iron_ingot: 4, copper_ingot: 2, wood: 2 } },
+  { out: { bed: 1 }, needs: { wood: 4, herb: 2 } },
   { out: { greenhouse: 1 }, needs: { glass: 4, wood: 4, iron_ingot: 2, dirt: 5 } },
   { out: { oven: 1 }, needs: { iron_ingot: 4, copper_ingot: 2, stone: 4 } },
   { out: { hammer: 1 }, needs: { iron_ingot: 1, wood: 2 } },
@@ -1117,7 +1124,7 @@ const TABLE_OUTPUTS = new Set([
   'gardening_gloves', 'test_bench',
 
   'manufactory', 'armor_workbench', 'crusher', 'electric_furnace', 'cable', 'simple_container', 'wooden_powerpole',
-  'hand_crank', 'water_pump', 'oven',
+  'hand_crank', 'water_pump', 'bed', 'oven',
   'pipe', 'fuel_carton', 'wall_wood', 'hammer',
 ]);
 export const TABLE_RECIPES = CRAFT_RECIPES.filter((r) => TABLE_OUTPUTS.has(Object.keys(r.out)[0]));

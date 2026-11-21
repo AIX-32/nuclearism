@@ -19,6 +19,8 @@ const playBtn = document.getElementById('worldPlayBtn');
 const editBtn = document.getElementById('worldEditBtn');
 const createName = document.getElementById('createName');
 const editName = document.getElementById('editName');
+const editColor = document.getElementById('editColor');
+const editColorClear = document.getElementById('editColorClear');
 const createMode = document.getElementById('createMode');
 const createTerrain = document.getElementById('createTerrain');
 
@@ -96,7 +98,7 @@ function startPanorama() {
   geometry.scale(-1, 1, 1);
 
 
-  const pool = ['panorama-1.png', 'panorama-2.png', 'panorama-3.png', 'panorama-4.png', 'panorama-5.png', 'panorama-6.png', 'panorama-7.png']
+  const pool = ['panorama-1.png', 'panorama-2.png', 'panorama-3.png', 'panorama-4.png', 'panorama-5.png', 'panorama-6.png', 'panorama-7.png', 'panorama-8.png']
     .map((f) => `assets/images/menu/${f}`);
   const textures = pool.map((url) => {
     const t = new THREE.TextureLoader().load(url);
@@ -278,6 +280,7 @@ function paintWorlds() {
     const b = document.createElement('button');
     b.className = 'world-item' + (w.id === selectedId ? ' sel' : '');
     b.dataset.id = w.id;
+    applyWorldCover(b, w.cover);
     const tag = `${w.mode === 'sandbox' ? 'SANDBOX' : 'SURVIVAL'}${w.terrain === 'realistic' ? ' · REALISTIC' : ''}`;
     b.innerHTML = `<span>${escapeHtml(w.name)}</span><span class="tag">${tag}</span>`;
     b.addEventListener('click', () => { selectedId = w.id; paintWorlds(); });
@@ -291,6 +294,29 @@ function paintWorlds() {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function mixHex(hex, to, amt) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  r = Math.round(r + (to - r) * amt);
+  g = Math.round(g + (to - g) * amt);
+  b = Math.round(b + (to - b) * amt);
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+function applyWorldCover(el, cover) {
+  if (!cover) {
+    el.style.removeProperty('--world-bg');
+    el.style.removeProperty('--world-bg-hover');
+    el.style.removeProperty('--world-bg-sel');
+    return;
+  }
+  el.style.setProperty('--world-bg', cover);
+  el.style.setProperty('--world-bg-hover', mixHex(cover, 255, 0.18) || cover);
+  el.style.setProperty('--world-bg-sel', mixHex(cover, 255, 0.32) || cover);
 }
 
 function newId() {
@@ -349,6 +375,7 @@ menu.addEventListener('click', async (e) => {
     const w = worlds.find((x) => x.id === selectedId);
     if (!w) return;
     editName.value = w.name;
+    if (editColor) { editColor.value = w.cover || '#454545'; editColor.dataset.cleared = w.cover ? '' : '1'; }
     show('edit');
     editName.focus();
     editName.select();
@@ -356,6 +383,7 @@ menu.addEventListener('click', async (e) => {
     const w = worlds.find((x) => x.id === selectedId);
     if (!w) return;
     w.name = editName.value.trim() || w.name;
+    w.cover = (editColor && editColor.dataset.cleared !== '1') ? editColor.value : null;
     await writeJSON(WORLDS_KEY, worlds);
     show('worlds');
   } else if (act === 'doDelete') {
@@ -390,6 +418,8 @@ createName.addEventListener('keydown', (e) => {
 editName.addEventListener('keydown', (e) => {
   if (e.code === 'Enter') menu.querySelector('[data-act="doEdit"]').click();
 });
+if (editColor) editColor.addEventListener('input', () => { editColor.dataset.cleared = ''; });
+if (editColorClear) editColorClear.addEventListener('click', () => { if (editColor) { editColor.value = '#454545'; editColor.dataset.cleared = '1'; } });
 
 startPanorama();
 document.getElementById('panoPrev')?.addEventListener('click', () => stepPanorama(-1));

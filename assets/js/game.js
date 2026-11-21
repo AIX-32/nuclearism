@@ -68,6 +68,7 @@
     let viewRadius = Math.min(MAX_RENDER_DISTANCE, getSetting('renderDistance'));
     let showInfoHud = getSetting('infoHud');
     let masterVolume = getSetting('volume');
+    let musicEnabled = getSetting('music');
     let vsync = getSetting('vsync');
     let mouseSens = getSetting('sensitivity');
     let invertY = getSetting('invertY');
@@ -75,7 +76,7 @@
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
-    const ICON_CACHE_KEY = 'idte.icon.v20.';
+    const ICON_CACHE_KEY = 'idte.icon.v21.';
 
     async function readSaveData(key = SAVE_KEY) {
       try {
@@ -7373,6 +7374,90 @@
     const footsteps = createFootsteps();
     let stepAccum = 0;
 
+    // Ambient day music: handpicked Abstraction CC0 tracks, day only.
+    const AMBIENT_TRACKS = [
+      'Sketchbook 2025-11-23.ogg',
+      'Sketchbook 2025-11-26.ogg',
+      'Sketchbook 2025-12-03.ogg',
+      'Sketchbook 2025-12-17_CHILL.ogg',
+      'Sketchbook 2025-12-17_SOFT.ogg',
+    ].map((file) => ({
+      src: `assets/audio/music/${encodeURIComponent(file)}`,
+      name: file.replace(/\.ogg$/i, '').replace(/_/g, ' '),
+    }));
+    const AMBIENT_FADE = 12;
+    const AMBIENT_LEVEL = 0.28;
+    const AMBIENT_GAP = 10;
+    const AMBIENT_SILENCE = 240;
+    const AMBIENT_SILENCE_CHANCE = 0.35;
+    const ambientAudio = new Audio();
+    ambientAudio.preload = 'auto';
+    ambientAudio.volume = 0;
+    let ambientVol = 0;
+    let ambientTrack = -1;
+    let ambientWant = 0;
+    let ambientCardTimer = 0;
+    let ambientRetry = 0;
+    let ambientCooldown = 0;
+    const nowPlayingEl = document.getElementById('nowPlaying');
+    const nowPlayingNameEl = document.getElementById('nowPlayingName');
+
+    function ambientTrackName(i) { return AMBIENT_TRACKS[i]?.name || 'UNKNOWN'; }
+    function pickAmbientTrack() {
+      if (AMBIENT_TRACKS.length < 2) return 0;
+      let i = ambientTrack;
+      for (let tries = 0; tries < 8 && i === ambientTrack; tries++) i = Math.floor(Math.random() * AMBIENT_TRACKS.length);
+      if (i === ambientTrack) i = (ambientTrack + 1) % AMBIENT_TRACKS.length;
+      return i;
+    }
+    function showNowPlaying(name) {
+      if (!nowPlayingEl || !nowPlayingNameEl) return;
+      nowPlayingNameEl.textContent = name;
+      nowPlayingEl.classList.add('show');
+      ambientCardTimer = 4.5;
+    }
+    function startAmbientTrack() {
+      ambientTrack = pickAmbientTrack();
+      const track = AMBIENT_TRACKS[ambientTrack];
+      if (!track) return;
+      ambientAudio.src = track.src;
+      ambientAudio.currentTime = 0;
+      ambientAudio.volume = Math.max(0, Math.min(1, ambientVol * masterVolume));
+      const p = ambientAudio.play();
+      if (p && typeof p.then === 'function') p.then(() => showNowPlaying(track.name)).catch(() => {});
+      else showNowPlaying(track.name);
+    }
+    ambientAudio.addEventListener('ended', () => {
+      if (!isDay()) return;
+      ambientCooldown = AMBIENT_GAP + (Math.random() < AMBIENT_SILENCE_CHANCE ? AMBIENT_SILENCE : 0);
+    });
+    function updateAmbientMusic(dt) {
+      const want = isDay() && musicEnabled ? AMBIENT_LEVEL : 0;
+      ambientWant = want;
+      if (ambientRetry > 0) ambientRetry -= dt;
+      if (want > 0) {
+        if (ambientCooldown > 0) ambientCooldown -= dt;
+        if (ambientAudio.paused && ambientRetry <= 0 && ambientCooldown <= 0) {
+          ambientRetry = 1.5;
+          startAmbientTrack();
+        }
+      } else {
+        ambientCooldown = 0;
+      }
+      const step = dt / AMBIENT_FADE;
+      if (ambientVol < want) ambientVol = Math.min(want, ambientVol + step);
+      else if (ambientVol > want) ambientVol = Math.max(want, ambientVol - step);
+      ambientAudio.volume = Math.max(0, Math.min(1, ambientVol * masterVolume));
+      if (ambientVol <= 0.001 && want === 0 && !ambientAudio.paused) {
+        ambientAudio.pause();
+        ambientAudio.currentTime = 0;
+      }
+      if (ambientCardTimer > 0) {
+        ambientCardTimer -= dt;
+        if (ambientCardTimer <= 0 && nowPlayingEl) nowPlayingEl.classList.remove('show');
+      }
+    }
+
     const stepPrev = new THREE.Vector3().copy(player.pos);
 
     function validSpawnPos(x, y, z) {
@@ -7599,6 +7684,7 @@
     }
 
     function refreshInteractPrompt() {
+      if (sleep) { hideAllOutlines(); activeInteractTarget = null; pendingInteractTarget = null; pendingInteractSince = 0; hideTip(); return; }
       if (mineConfirm && (performance.now() - mineConfirm.t) > MINE_CONFIRM_MS) clearMineConfirm();
       if (player.vel.lengthSq() > 0.1) {
         if (activeInteractTarget || pendingInteractTarget) {
@@ -7823,6 +7909,7 @@
       GLTFLoader, registerMachine, machineActivators,
       ui: workbenchUI,
       isDay,
+      startSleep: (inst) => startSleep(inst),
       onOpen: () => { unlockPointer(); setOverlay(false); },
       onClosed: () => { lockPointer(); },
       explode: (x, y, z, r) => {
@@ -8260,6 +8347,7 @@
       else if (id === 'infoHud') showInfoHud = v;
       else if (id === 'vsync') vsync = v;
       else if (id === 'volume') masterVolume = v;
+      else if (id === 'music') musicEnabled = v;
       else if (id === 'sensitivity') mouseSens = v;
       else if (id === 'invertY') invertY = v;
       else if (id === 'fov') { camera.fov = v; camera.updateProjectionMatrix(); }
@@ -9626,6 +9714,7 @@
       fallPeak = 0;
       deathT = 3;
       shakeT = 1.5;
+      if (sleep) { sleep = null; if (sleepOverlay) sleepOverlay.style.opacity = '0'; }
       mapSystem?.noteDeath(at.x, at.z);
       spawnAtOrigin();
       syncBars();
@@ -9657,6 +9746,7 @@
     let panoRequested = false;
     document.addEventListener('keydown', (e) => {
       const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+      if (sleep) return;
 
       if (introOpen || prayOpen) {
         if (prayOpen && e.code === 'Escape') { e.preventDefault(); closePray(); }
@@ -10325,6 +10415,7 @@
     }
 
     document.addEventListener('keydown', (e) => {
+      if (sleep) return;
       if (!cmdOpen) {
         if (WORLD_MODE !== 'sandbox') return;
         const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
@@ -10432,7 +10523,12 @@
           clearMineConfirm();
           triggerSwing(Math.min(0.5, Math.max(0.2, tool.rate * 0.9)));
           best.hurtBy(22 + (tool.chop ? 18 : 0));
-          if (bestKind === 'wrapper' && best.dying > 0) { achBump('kills', 1); notice('WRAPPER DOWN'); }
+          if (bestKind === 'wrapper' && best.dying > 0 && !best._lootDropped) {
+            best._lootDropped = true;
+            achBump('kills', 1);
+            notice('WRAPPER DOWN');
+            spawnDrop('forbidden_meat', 1, { x: best.pos.x, y: best.pos.y + 0.5, z: best.pos.z });
+          }
           return;
         }
       }
@@ -11631,6 +11727,8 @@
       if (c.immunity) vitals.infectionImmunity = Math.max(vitals.infectionImmunity, c.immunity);
       if (def.consumable.shieldTime) armorShieldTimer = def.consumable.shieldTime;
       if (def.consumable.intake) { radIntakeMult = def.consumable.intake; radIntakeTimer = def.consumable.intakeTime || 1800; }
+      if (def.consumable.wound) addWound(def.consumable.wound);
+      if (def.consumable.speedTime) { smokeTime = def.consumable.speedTime; smokeSpeed = def.consumable.speed || 1; }
       if (def.consumable.smoke) {
         if (!hasLighter()) { notice('NEED A LIGHTER'); return; }
         smokeTime = def.consumable.smoke; smokeSpeed = def.consumable.speed || 1;
@@ -11656,7 +11754,7 @@
     }
 
     renderer.domElement.addEventListener('mousedown', (e) => {
-      if (!locked || invOpen) return;
+      if (!locked || invOpen || sleep) return;
       if (e.button === 0) { mining = true; mineTimer = 0; }
       else if (e.button === 1) {
         e.preventDefault();
@@ -12278,6 +12376,124 @@
     const hudEl = document.getElementById('hud');
     const barFill = document.getElementById('barFill');
     const deathBanner = document.getElementById('deathBanner');
+    const sleepOverlay = document.getElementById('sleepOverlay');
+    let sleep = null;
+
+    function startSleep(inst) {
+      if (sleep || !inst || !locked || replayPlay || deathT > 0) return;
+      if (invOpen || cmdOpen || mapSystem?.isOpen() || recipeOpen || visibleTree() || workbenchUI.opened || skylineSystem?.isOpen() || achieveOpen) return;
+      const wakeDay = clock.day + 1;
+      const late = Math.random() < 0.35 ? (60 + Math.random() * 180) : (Math.random() * 20);
+      const targetT = Math.min(TUNING.DAY_SECONDS - 1, late); // morning, sometimes late
+      const remaining = (TUNING.DAY_SECONDS - clock.t) + (wakeDay - clock.day - 1) * TUNING.DAY_SECONDS + targetT;
+      sleep = {
+        phase: 'down', t: 0, fadeDown: 1.2, fadeUp: 0.9,
+        remaining, targetDay: wakeDay, targetT,
+        inst, px: player.pos.x, py: player.pos.y, pz: player.pos.z,
+        yaw: player.yaw, pitch: player.pitch, eye: eyeCur,
+      };
+      player.vel.set(0, 0, 0);
+      mining = false;
+      resetHoldPlace?.();
+      if (inst) {
+        player.pos.x = inst.x;
+        player.pos.z = inst.z;
+        player.pos.y = (inst.top || (inst.y + 1.0)) + 0.15;
+        player.yaw = inst.rot || player.yaw;
+        player.pitch = -(Math.PI / 2 - 0.02);
+      }
+      if (sleepOverlay) { sleepOverlay.style.transition = 'none'; sleepOverlay.style.opacity = '0'; }
+      notice('SLEEPING...');
+    }
+
+    function updateSleep(dt) {
+      if (!sleep) return;
+      if (sleep.phase === 'down') {
+        sleep.t += dt;
+        const a = Math.min(1, sleep.t / sleep.fadeDown);
+        if (sleepOverlay) sleepOverlay.style.opacity = String(a);
+        player.vel.set(0, 0, 0);
+        if (sleep.inst) { player.pos.x = sleep.inst.x; player.pos.z = sleep.inst.z; player.pitch = -(Math.PI / 2 - 0.02); }
+        if (a >= 1) { sleep.phase = 'sleep'; sleep.t = 0; }
+        return;
+      }
+      if (sleep.phase === 'sleep') {
+        const step = 0.05;
+        const budget = 8; // game seconds simulated per real frame max
+        let sim = Math.min(sleep.remaining, budget);
+        while (sim > 1e-4) {
+          const sdt = Math.min(step, sim);
+          advanceSleepTime(sdt);
+          if (!sleep) return;
+          sleep.remaining -= sdt;
+          sim -= sdt;
+          if (sleep.remaining <= 1e-4) break;
+        }
+        if (!sleep) return;
+        player.vel.set(0, 0, 0);
+        if (sleep.inst) { player.pos.x = sleep.inst.x; player.pos.z = sleep.inst.z; player.pitch = -(Math.PI / 2 - 0.02); }
+        if (sleep.remaining <= 1e-4) {
+          clock.day = sleep.targetDay;
+          clock.t = sleep.targetT;
+          updateDaylight();
+          sleep.phase = 'up'; sleep.t = 0;
+          if (sleepOverlay) sleepOverlay.style.opacity = '1';
+        }
+        return;
+      }
+      if (sleep.phase === 'up') {
+        sleep.t += dt;
+        const a = Math.max(0, 1 - sleep.t / sleep.fadeUp);
+        if (sleepOverlay) sleepOverlay.style.opacity = String(a);
+        player.vel.set(0, 0, 0);
+        const k = Math.min(1, sleep.t / sleep.fadeUp);
+        if (sleep.inst) { player.pos.x = sleep.inst.x; player.pos.z = sleep.inst.z; player.pos.y = (sleep.inst.top || (sleep.inst.y + 1.0)) + 0.15; }
+        player.pitch = (-(Math.PI / 2 - 0.02)) * (1 - k) + sleep.pitch * k;
+        if (a <= 0) {
+          if (sleepOverlay) sleepOverlay.style.opacity = '0';
+          player.pos.x = sleep.px; player.pos.y = sleep.py; player.pos.z = sleep.pz;
+          player.yaw = sleep.yaw; player.pitch = sleep.pitch;
+          sleep = null;
+          notice('WOKE UP');
+        }
+      }
+    }
+
+    function advanceSleepTime(dt) {
+      if (timeLock === null) {
+        clock.t += dt;
+        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; }
+      } else {
+        clock.t = timeLock;
+      }
+      playTime += dt;
+      updateDaylight();
+      if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
+      if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
+      if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
+      machineSystem?.update(dt);
+      skylineSystem?.update(dt);
+      if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
+      updateVitals(dt);
+      if (!sleep) return;
+      updateGuide(dt);
+      updateAchievements(dt);
+      const radRate = doseRate();
+      if (radRate <= 0.01) radFreeT += dt; else radFreeT = 0;
+      if (radFreeT >= TUNING.RAD_CALM_DELAY) inv.dose = Math.max(0, inv.dose - TUNING.RAD_DECAY * dt);
+      inv.dose += radRate * dt;
+      if (inv.dose >= TUNING.RAD_LETHAL_DOSE && !replayPlay) { die(); return; }
+      if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
+      if (noticeT > 0) noticeT = Math.max(0, noticeT - dt);
+      updateDrops(dt, performance.now());
+      updateWrapperSpawns(dt);
+      updateChickenSpawns(dt);
+      for (let i = walkers.length - 1; i >= 0; i--) { const w = walkers[i]; w.update(dt, player.pos); w.hitCd = Math.max(0, (w.hitCd || 0) - dt); if (w.pos.distanceTo(player.pos) > 90) { w.dispose(); walkers.splice(i, 1); } }
+      for (let i = wrappers.length - 1; i >= 0; i--) { const w = wrappers[i]; w.update(dt, player.pos); w.hitCd = Math.max(0, (w.hitCd || 0) - dt); if (w.dead || w.pos.distanceTo(player.pos) > WRAPPER.despawn) { if (!w.dead) w.dispose(); wrappers.splice(i, 1); } }
+      for (let i = chickens.length - 1; i >= 0; i--) { const c = chickens[i]; c.update(dt, player.pos); if (c.dead || c.pos.distanceTo(player.pos) > CHICKEN.despawn) { c.dispose(); chickens.splice(i, 1); } }
+      pumpDeathSpill();
+      workbenchUI.update(dt);
+    }
 
     let fpsSmooth = 60;
     let hudTimer = 0;
@@ -13047,10 +13263,11 @@
       last = now;
       tickTreeShake(dt);
       const paused = !locked && !replayPlay && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
-      if (!paused) playTime += dt;
+      if (!paused && !sleep) playTime += dt;
       fpsSmooth += ((1 / Math.max(dt, 1e-4)) - fpsSmooth) * 0.08;
+      if (sleep) { updateSleep(dt); mining = false; player.vel.set(0, 0, 0); }
 
-      if (!paused) {
+      if (!paused && !sleep) {
       const _pMove = performance.now();
       if (!invOpen && !cmdOpen && !workbenchUI.opened && !skylineSystem?.isOpen() && !mapSystem?.isOpen() && !replayPlay) {
         movePlayer(dt); updateBreath(dt);
@@ -13073,6 +13290,7 @@
         clock.t = timeLock;
       }
       updateDaylight();
+      updateAmbientMusic(dt);
       if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
       if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
       if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
@@ -13172,7 +13390,21 @@
         world.updateJobs(0);
       }
 
+      if (sleep) {
+        // Keep camera on the bed looking up while world fast-forwards.
+        eyeCur += ((player.eye) - eyeCur) * Math.min(1, dt * 10);
+        slidePitch += ((0) - slidePitch) * Math.min(1, dt * 8);
+        const camTargetY = player.pos.y + eyeCur;
+        camY = camY === null ? camTargetY : camY + (camTargetY - camY) * Math.min(1, dt * 22);
+        camera.position.set(player.pos.x, camY, player.pos.z);
+        camera.rotation.y = player.yaw;
+        camera.rotation.x = player.pitch;
+        camera.rotation.z = 0;
+      }
+
       const submerged = world.isUnderwater(camera.position.x, camera.position.y, camera.position.z);
+      let _dirtyFrameMs = 0;
+      if (!sleep) {
       waterSimTimer += dt;
       const waterStepInterval = submerged ? 0.12 : 0.18;
       if (waterSimTimer >= waterStepInterval) {
@@ -13187,14 +13419,16 @@
 
       const _pDirty = performance.now();
       world.processDirty(5);
-      const _dirtyFrameMs = performance.now() - _pDirty;
+      _dirtyFrameMs = performance.now() - _pDirty;
       perf.dirty += _dirtyFrameMs;
       const _pW = performance.now();
       world.processWaterDirty(1);
       perf.wdirty += performance.now() - _pW;
+      }
 
 
       const _pEnt = performance.now();
+      if (!sleep) {
       updateWrapperSpawns(dt);
       for (let i = walkers.length - 1; i >= 0; i--) {
         const w = walkers[i];
@@ -13240,6 +13474,7 @@
           c.dispose();
           chickens.splice(i, 1);
         }
+      }
       }
       perf.entities += performance.now() - _pEnt;
 

@@ -65,12 +65,18 @@
     <div class="b"></div>
   </div>
 
+  <div id="nowPlaying" class="now-playing" aria-live="polite">
+    <span class="np-label">NOW PLAYING</span>
+    <span id="nowPlayingName" class="np-name"></span>
+  </div>
+
   <div id="urgentCard" class="urgent-card" hidden>
     <div class="urgent-title"></div>
     <div class="urgent-body"></div>
   </div>
 
   <div id="deathBanner"><span>YOU DIED</span><small>you lost everything you carried</small></div>
+  <div id="sleepOverlay" aria-hidden="true"></div>
 
   <div id="minimap" aria-hidden="true"><canvas id="minimapCanvas"></canvas></div>
 
@@ -303,7 +309,7 @@
             <b>PAZATOR</b><span>Local-first tools for large-scale data.</span>
           </a>
           <a class="menu-promo-item" href="https://aix-32.github.io/Xyper/" target="_blank" rel="noopener">
-            <b>XYPER</b><span>Portfolio.</span>
+            <b>XYPER</b><span>My portfolio, check it out.</span>
           </a>
           <a class="menu-promo-item" href="https://discord.gg/jX4Nm9Hq8P" target="_blank" rel="noopener">
             <b>DISCORD</b><span>Projects including this game.</span>
@@ -349,8 +355,9 @@
       </section>
 
       <section class="menu-view hidden" data-view="edit">
-        <h2>RENAME WORLD</h2>
+        <h2>EDIT WORLD</h2>
         <input id="editName" class="mfield" maxlength="24" autocomplete="off">
+        <label class="menu-color-row"><span>COVER COLOR</span><input id="editColor" type="color" value="#454545"><button type="button" class="mbtn link" id="editColorClear">CLEAR</button></label>
         <button class="mbtn primary" data-act="doEdit">SAVE</button>
         <button class="mbtn" data-act="doDelete">DELETE WORLD</button>
         <button class="mbtn link" data-act="worlds">BACK</button>

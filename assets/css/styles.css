@@ -1484,6 +1484,45 @@ canvas {
   margin-bottom: 4px;
 }
 
+#nowPlaying {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font: 700 10px/1.2 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1.5px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -18px);
+  visibility: hidden;
+  transition: opacity .45s ease, transform .45s ease, visibility 0s linear .45s;
+}
+
+#nowPlaying.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+  transition: opacity .45s ease, transform .45s ease, visibility 0s linear 0s;
+}
+
+#nowPlaying .np-label {
+  color: rgba(255, 255, 255, .55);
+  font-size: 8px;
+  letter-spacing: 2px;
+}
+
+#nowPlaying .np-name {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
 .workbench-screen {
   position: fixed;
   inset: 0;
@@ -1978,6 +2017,16 @@ body.dd-dragging * {
   color: #e2e2e2;
   font: 10px/1.4 ui-monospace, monospace;
   letter-spacing: 1px;
+}
+
+#sleepOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s linear;
 }
 
 #radMeter[data-stage="SAFE"] header {
@@ -3506,10 +3555,10 @@ body.lowhp #hpFill {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: #454545;
+  background: var(--world-bg, #454545);
   border: 2px solid #171717;
   outline: 1px solid #777;
-  box-shadow: inset 2px 2px #666, inset -2px -2px #252525;
+  box-shadow: inset 2px 2px rgba(255,255,255,.12), inset -2px -2px rgba(0,0,0,.35);
   color: #fff;
   font: 700 12px/1.3 ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 1px;
@@ -3519,13 +3568,13 @@ body.lowhp #hpFill {
 }
 
 .world-item:hover {
-  background: #5a5a5a;
+  background: var(--world-bg-hover, #5a5a5a);
 }
 
 .world-item.sel {
-  background: #777;
+  background: var(--world-bg-sel, #777);
   outline: 2px solid #fff;
-  box-shadow: inset 2px 2px #aaa, inset -2px -2px #333;
+  box-shadow: inset 2px 2px rgba(255,255,255,.2), inset -2px -2px rgba(0,0,0,.3);
 }
 
 .world-item .tag {
@@ -3562,6 +3611,33 @@ body.lowhp #hpFill {
 
 .mfield::placeholder {
   color: #777;
+}
+
+.menu-color-row {
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 12px;
+  color: #e6e6e6;
+  font: 700 11px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+}
+.menu-color-row span { flex: 1; }
+.menu-color-row input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid #111;
+  background: #171717;
+  cursor: pointer;
+}
+.menu-color-row .mbtn.link {
+  width: auto;
+  margin: 0;
+  padding: 6px 8px;
+  min-height: 0;
+  font-size: 10px;
 }
 
 .menu-setting {
@@ -3778,7 +3854,6 @@ body.lowhp #hpFill {
 #invPanel .slot.sel,
 .ritem.sel,
 .rfilter.on,
-.world-item.sel,
 .mbtn.primary,
 .mbtn.mode.on,
 .opts button.on,
@@ -3789,13 +3864,20 @@ body.lowhp #hpFill {
   outline: 0 !important;
   box-shadow: none !important;
 }
+.world-item.sel {
+  background: var(--world-bg-sel, #777) !important;
+  color: #fff !important;
+  border: 0 !important;
+  outline: 2px solid rgba(255, 255, 255, .5) !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
 
 .btn:hover,
 #overlay .btn:hover,
 #overlay .opts button:hover,
 .opts button:hover,
 .mbtn:hover:not(:disabled),
-.world-item:hover,
 .rfilter:hover,
 .ritem:hover,
 .rback:hover,
@@ -3804,8 +3886,10 @@ body.lowhp #hpFill {
 #giveRow button:hover {
   background: rgba(0, 0, 0, .7) !important;
   color: #fff !important;
-  outline: 0 !important;
-  box-shadow: none !important;
+}
+.world-item:hover {
+  background: var(--world-bg-hover, #5a5a5a) !important;
+  color: #fff !important;
 }
 
 .mbtn.link,
@@ -3855,7 +3939,6 @@ body.lowhp #hpFill {
 #invPanel .craftOut .slot.ready,
 .ritem.sel,
 .rfilter.on,
-.world-item.sel,
 .mbtn.primary,
 .mbtn.mode.on,
 .opts button.on,
@@ -4692,6 +4775,14 @@ body.lowhp #hpFill {
   letter-spacing: .4px;
 }
 
+.set-note {
+  flex-basis: 100%;
+  color: rgba(255, 255, 255, .72);
+  font: 400 10px/1.55 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: .3px;
+  white-space: pre-wrap;
+}
+
 .set-ctl {
   display: flex;
   align-items: center;
@@ -5175,21 +5266,276 @@ body.lowhp #hpFill {
 }
 .saveFailBox h2 { margin: 0 0 12px; letter-spacing: 2px; color: #fff; }
 .saveFailActions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#replayPanel {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 18px;
+  color: #fff;
+  background: rgba(0, 0, 0, .9);
+  font: 700 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: .5px;
+}
 .replayBox {
   display: flex;
   flex-direction: column;
-  width: min(1180px, 94vw);
-  height: min(780px, 92vh);
-  color: #fff;
-  background: var(--ui-black);
-  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
 }
+.replayHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 30px;
+}
+.replayTitle {
+  font-size: 15px;
+  letter-spacing: 4px;
+  white-space: nowrap;
+}
+.replayStatus {
+  color: #8f8f8f;
+  font-size: 10px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.replayHead .btn,
+.replayRow .btn,
+.replayItemActs button,
+#replayBar button {
+  width: auto;
+  margin: 0;
+  padding: 8px 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+  border: 0;
+  outline: 1px solid rgba(255, 255, 255, .25);
+  font: 700 10px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.replayHead .btn:hover,
+.replayRow .btn:hover,
+.replayItemActs button:hover,
+#replayBar button:hover {
+  background: rgba(255, 255, 255, .18);
+  outline-color: rgba(255, 255, 255, .6);
+}
+.replayHead .btn { margin-left: auto; }
+.replayBody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 320px);
+  gap: 10px;
+}
+.replayCol {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, .04);
+}
+.replayCol h3 {
+  margin: 0;
+  color: #8f8f8f;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.replayRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.replayLbl {
+  color: #8f8f8f;
+  font-size: 9px;
+  letter-spacing: 1px;
+  min-width: 84px;
+}
+.replayInfo {
+  color: #cfcfcf;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.replayInfo.mono { font-variant-numeric: tabular-nums; }
+.replayNote {
+  margin: 0;
+  color: #7a7a7a;
+  font-size: 9px;
+  line-height: 1.6;
+  letter-spacing: .5px;
+}
+.replayFoot {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+}
+.replayHint {
+  color: #5d5d5d;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.replayList {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.replayEmpty {
+  color: #6f6f6f;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 14px 0;
+}
+.replayItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(255, 255, 255, .03);
+  outline: 1px solid rgba(255, 255, 255, .08);
+  cursor: pointer;
+}
+.replayItem:hover {
+  background: rgba(255, 255, 255, .07);
+  outline-color: rgba(255, 255, 255, .2);
+}
+.replayItem.sel {
+  background: rgba(255, 255, 255, .1);
+  outline: 1px solid rgba(255, 255, 255, .5);
+  outline-offset: 2px;
+}
+.replayItem b {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #fff;
+}
+.replayItemMeta {
+  color: #8f8f8f;
+  font-size: 9px;
+  letter-spacing: .5px;
+}
+.replayItemActs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.replayRow .opts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.replayRow .opts button {
+  width: auto;
+  margin: 0;
+  padding: 7px 10px;
+  color: #cfcfcf;
+  background: rgba(255, 255, 255, .05);
+  border: 0;
+  outline: 1px solid rgba(255, 255, 255, .15);
+  font: 700 9px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.replayRow .opts button:hover {
+  background: rgba(255, 255, 255, .12);
+  outline-color: rgba(255, 255, 255, .35);
+  color: #fff;
+}
+.replayRow .opts button.on {
+  color: #fff;
+  background: rgba(255, 255, 255, .16);
+  outline: 1px solid rgba(255, 255, 255, .7);
+  outline-offset: 2px;
+}
+#replayBar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, .82);
+  color: #fff;
+  font: 700 10px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+}
+#replayBar .rbTime { color: #cfcfcf; min-width: 34px; font-variant-numeric: tabular-nums; }
+#rbSeek {
+  width: min(420px, 40vw);
+  accent-color: #fff;
+}
+#replayRec {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, .72);
+  color: #fff;
+  font: 700 10px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+}
+#replayRec b { color: #ff4d4d; font-size: 12px; line-height: 1; }
+/* urgent notice centered over the crosshair */
+#urgentCard {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  z-index: 38;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  font: 700 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+}
+#urgentCard .urgent-title {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, .65);
+}
+#urgentCard .urgent-title:empty {
+  display: none;
+}
+#urgentCard .urgent-body {
+  font-size: 13px;
+  letter-spacing: 1.5px;
+}
+#urgentCard .urgent-body:empty {
+  display: none;
+}
+
 /* hide rules for modals outside the motion layer */
 #replayPanel.hidden,
 #replayBar.hidden,
 #replayRec.hidden,
 #saveFail.hidden,
 #prayModal.hidden,
+#urgentCard[hidden],
 #urgentCard.hidden {
   display: none;
 }

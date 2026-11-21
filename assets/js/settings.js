@@ -29,9 +29,14 @@ export const SETTING_DEFS = [
   { id: 'sensitivity', group: 'CONTROLS', label: 'MOUSE SENSITIVITY', type: 'range', def: 1, min: 0.2, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) },
   { id: 'invertY', group: 'CONTROLS', label: 'INVERT Y AXIS', type: 'toggle', def: false },
   { id: 'volume', group: 'AUDIO', label: 'VOLUME', type: 'range', def: 1, min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+  { id: 'music', group: 'AUDIO', label: 'MUSIC', type: 'toggle', def: true },
   {
     id: 'replay', group: 'REPLAY', label: 'REPLAY RECORDER', type: 'toggle', def: false,
     hint: 'ADDS A REPLAY BUTTON TO THE PAUSE MENU · RECORDS YOUR VIEW AND EXPORTS VIDEO',
+  },
+  {
+    id: 'musicLicense', group: 'LICENSES', label: 'AMBIENT MUSIC', type: 'note',
+    text: 'Handpicked tracks from Abstraction - Music Loop Bundle (tallbeard.itch.io/music-loop-bundle). Licensed CC0 / Public Domain. To the extent possible under law, Abstraction Music and Tallbeard Studios have waived all copyright and related or neighboring rights to the music in this bundle. Published from the United States. Not endorsed for use in NFTs, AI/ML, or direct resale of unmodified assets. Credit: "Abstraction" (abstractionmusic.com).',
   },
 ];
 
@@ -48,6 +53,7 @@ async function readStore() {
 }
 
 function normalize(def, raw) {
+  if (def.type === 'note') return def.def;
   if (def.type === 'toggle') return raw === undefined || raw === null ? def.def : !!raw;
   const v = Number(raw);
   if (def.type === 'choice') return def.choices.some((c) => c.v === v) ? v : def.def;
@@ -108,6 +114,14 @@ function buildRow(def) {
   label.textContent = def.label;
   row.appendChild(label);
 
+  if (def.type === 'note') {
+    const note = document.createElement('span');
+    note.className = 'set-note';
+    note.textContent = def.text || '';
+    row.appendChild(note);
+    return row;
+  }
+
   const ctl = document.createElement('span');
   ctl.className = 'set-ctl opts';
   if (def.type === 'toggle') {
@@ -151,7 +165,7 @@ function buildRow(def) {
 function paintView(container) {
   for (const row of container.querySelectorAll('.set-row')) {
     const def = SETTING_DEFS.find((d) => d.id === row.dataset.setting);
-    if (!def) continue;
+    if (!def || def.type === 'note') continue;
     const v = values[def.id];
     if (def.type === 'toggle') {
       const b = row.querySelector('button[data-toggle]');
