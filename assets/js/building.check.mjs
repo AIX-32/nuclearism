@@ -145,6 +145,14 @@ const overWall2 = snapPlan(fps(FLOOR), wallCells,
 check(overWall2.length > 0 && overWall2[0].z === 30,
   `looking from the other side, the roof reaches out the other way (z=${overWall2[0]?.z})`);
 
+// Rotation is not auto-corrected, and an exact side hit wins over a diagonal
+// camera direction (previously it could choose the other face).
+check(top[0].rot === 0, 'the requested wall rotation is not auto-corrected');
+const turned = snapPlan(fps(WALL), deck, { x: 10, y: 20.5, z: 31.5 }, { x: 0, y: 0, z: 1 }, 2);
+check(turned[0].rot === 2, 'R rotation 2 stays rotation 2');
+const faced = snapPlan(fps(WALL), deck, { x: 10, y: 20.5, z: 31.5 }, { x: 0, y: 0, z: 1 }, 0, { x: -1, y: 0, z: 0 });
+check(faced[0].x === 10 && faced[0].z === 30, 'the hit face determines the snap axis');
+
 // --- the attenuation law ---------------------------------------------------
 const blocked = (tier) => 1 - Math.pow(BUILD_TIERS[tier].transmission, TH);
 check(blocked('wood') < 0.2, `wood blocks only a little (${(blocked('wood') * 100).toFixed(0)}%)`);

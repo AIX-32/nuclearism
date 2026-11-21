@@ -2,6 +2,8 @@
 // The main-menu page and the in-game pause overlay both render from this
 // module, so a new setting is added here and nowhere else.
 
+import { idbGet, idbSet, idbRemove } from './idb-store.js';
+
 export const SETTINGS_KEY = 'idte.settings.v1';
 
 export const SETTING_DEFS = [
@@ -27,17 +29,23 @@ export const SETTING_DEFS = [
   { id: 'sensitivity', group: 'CONTROLS', label: 'MOUSE SENSITIVITY', type: 'range', def: 1, min: 0.2, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) },
   { id: 'invertY', group: 'CONTROLS', label: 'INVERT Y AXIS', type: 'toggle', def: false },
   { id: 'volume', group: 'AUDIO', label: 'VOLUME', type: 'range', def: 1, min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+  {
+    id: 'replay', group: 'REPLAY', label: 'REPLAY RECORDER', type: 'toggle', def: false,
+    hint: 'ADDS A REPLAY BUTTON TO THE PAUSE MENU · RECORDS YOUR VIEW AND EXPORTS VIDEO',
+  },
 ];
 
 const listeners = new Set();
 const views = new Set();
 
-const readStore = () => {
+async function readStore() {
   try {
-    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY));
-    return raw && typeof raw === 'object' ? raw : {};
+    const raw = await idbGet(SETTINGS_KEY);
+    if (!raw) return {};
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch { return {}; }
-};
+}
 
 function normalize(def, raw) {
   if (def.type === 'toggle') return raw === undefined || raw === null ? def.def : !!raw;
@@ -50,16 +58,18 @@ function normalize(def, raw) {
   return Number((def.min + steps * def.step).toFixed(decimals));
 }
 
-const store = readStore();
+const store = await readStore();
 const values = {};
 for (const def of SETTING_DEFS) values[def.id] = normalize(def, store[def.id]);
+
+export const settingsReady = Promise.resolve(values);
 
 export function getSetting(id) {
   return values[id];
 }
 
 function writeStore() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(values)); } catch { }
+  idbSet(SETTINGS_KEY, values).catch((e) => console.warn('[settings] persist failed', e));
 }
 
 export function setSetting(id, raw, persist = true) {
@@ -77,7 +87,10 @@ export function setSetting(id, raw, persist = true) {
 }
 
 export function resetSettings() {
-  for (const def of SETTING_DEFS) setSetting(def.id, def.def);
+  for (const def of SETTING_DEFS) values[def.id] = def.def;
+  paint();
+  for (const fn of listeners) for (const def of SETTING_DEFS) fn(def.id, def.def);
+  idbRemove(SETTINGS_KEY).catch((e) => console.warn('[settings] reset persist failed', e));
 }
 
 export function onSettingsChange(fn) {

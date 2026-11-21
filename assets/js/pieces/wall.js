@@ -12,6 +12,7 @@
 // share it exactly and a run of panels is one straight line.
 
 import { BUILD_TIERS } from '../build-tiers.js';
+import { anySupport, baseAt } from './placement.js';
 
 const W = 3, H = 3, TH = 0.25;
 
@@ -63,20 +64,19 @@ export const KIND = {
   scale(x, y, z, rot) {
     return rot % 4 < 2 ? { x: W, y: H, z: TH } : { x: TH, y: H, z: W };
   },
-  base(sys, x, z) {
-    const top = sys.topAt(x, z);
-    return top !== null ? top : sys.surfaceHeight(x, z);
+  base(sys, x, z, rot) {
+    return baseAt(sys, cells(x, 0, z, rot));
   },
-  support(sys, x, y, z) {
-    return sys.groundAt(x, y - 1, z) || sys.occupied(x, y - 1, z);
+  support(sys, x, y, z, rot) {
+    return anySupport(sys, cells(x, y, z, rot), y);
   },
 };
 
 export const ITEMS = {
-  wall_wood: { code: 'WW', name: 'WOOD WALL', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'wood' }, table: true, desc: 'A timber panel. Stops about 14% of the radiation coming through it — barely worth the wood.' },
-  wall_brick: { code: 'WB', name: 'BRICK WALL', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'brick' }, desc: 'Fired clay panel. Stops about 29% of the radiation coming through it.' },
-  wall_concrete: { code: 'WC', name: 'CONCRETE WALL', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'concrete' }, desc: 'Poured concrete. Stops about half of the radiation coming through it.' },
-  wall_shielded: { code: 'WS', name: 'SHIELDED CONCRETE WALL', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'shielded' }, desc: 'Concrete with a lead lining. Stops 99% of the radiation coming through it. Almost nothing gets past.' },
+  wall_wood: { code: 'WW', name: 'WOOD WALL BB', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'wood' }, table: true, desc: 'A timber panel. Stops about 14% of the radiation coming through it — barely worth the wood.' },
+  wall_brick: { code: 'WB', name: 'BRICK WALL BB', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'brick' }, desc: 'Fired clay panel. Stops about 29% of the radiation coming through it.' },
+  wall_concrete: { code: 'WC', name: 'CONCRETE WALL BB', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'concrete' }, desc: 'Poured concrete. Stops about half of the radiation coming through it.' },
+  wall_shielded: { code: 'WS', name: 'SHIELDED CONCRETE WALL BB', stack: 99, rad: 0, block: false, building: { kind: 'wall', tier: 'shielded' }, desc: 'Concrete with a lead lining. Stops 99% of the radiation coming through it. Almost nothing gets past.' },
 };
 
 export const RECIPES = [

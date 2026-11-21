@@ -2,16 +2,22 @@
     import { WorkbenchUI } from './workbench-ui.js';
     import { CraftOptions } from './craft-options.js';
     import { DragDrop, inventoryAdapter } from './drag-drop.js';
-    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES } from './content.js';
+    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, TERRAIN_BLOCKS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES } from './content.js';
     import * as Liquid from './liquids.js';
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
-    import { BuildingSystem } from './building.js';
+    import { SkylineSystem } from './skyline.js';
+    import { BuildingSystem, snapPlan } from './building.js';
     import { swingFrame } from './pieces/door.js';
     import { MapSystem } from './map.js';
     import { createFootsteps, surfToCategory } from './footsteps.js';
     import { sourcePoint, transmission, relativeBearing, compass, RAD_OCCL } from './radiation.js';
+    import { vegTint } from './veg-tint.js';
     import { getSetting, renderSettings, onSettingsChange } from './settings.js';
+    import { createReplay, pushFrame, pushEdit, sampleAt, editIndexAt, editAt, heldId, packReplay, unpackReplay, replayBytes, frameCount, editCount } from './replay.js';
+    import { createReplayUI, formatTime } from './replay-ui.js';
+    import { createRealisticTerrain } from './terrain-realistic.js';
+    import { idbGet, idbSet, idbRemove, idbEntries } from './idb-store.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -29,17 +35,33 @@
     // available; never feed the horizon value directly into chunk allocation.
     const MAX_RENDER_DISTANCE = 10000;
     const DETAIL_CHUNK_RADIUS = 6;
-    // Haze strength of the far-terrain rings: the fade reaches ~99.9% at the
-    // outer edge of the outermost ring, so its border never shows as a hard line.
-    const FAR_HAZE_REACH = 2.6;
+    // Haze strength of the far-terrain rings. The fade is a fourth power over
+    // the visible range, so the middle of the horizon keeps its mountains and
+    // the fade still reaches ~99.8% at the outer edge, where the fake terrain
+    // stops, so its border never shows as a hard line.
+    const FAR_HAZE_REACH = 6;
+    // Distant-range backdrop. The world's own landforms are ~150 m hills on
+    // 400 m features: a few km out they are sub-pixel, so a 32 km and a 160 km
+    // horizon were the same flat line. The far rings add a long-wavelength
+    // ridge field of their own - the classic distant-range backdrop - which
+    // fades out as the player nears it. Visual only: the world is untouched.
+    const FAR_RANGE_AMP = 900;     // m of ridge at the reference distance
+    const FAR_RANGE_REF = 30000;   // m: the ridge keeps its apparent size
+    const FAR_RANGE_START = 3000;  // m: below this the backdrop is gone
+    const FAR_RANGE_FULL = 8000;   // m: fully faded in
     const SAMPLE_SIZE = CHUNK_SIZE + 2;
     const VERTEX_SIZE = CHUNK_SIZE + 1;
     const S2 = SAMPLE_SIZE * SAMPLE_SIZE;
     const V2 = VERTEX_SIZE * VERTEX_SIZE;
 
+    // How many density samples a chunk loads per slice. Capped by time inside
+    // loadSlice so one slice stays bounded even in expensive terrain.
+    const SAMPLE_SLICE = 600;
+
 
     const MENU_WORLD = window.__NUCLEARISM_WORLD__ || null;
     const WORLD_MODE = MENU_WORLD?.mode === 'sandbox' ? 'sandbox' : 'survival';
+    const WORLD_TERRAIN = MENU_WORLD?.terrain === 'realistic' ? 'realistic' : 'legacy';
     const WORLD_NAME = MENU_WORLD?.name || 'WORLD';
     document.title = `NUCLEARISM — ${WORLD_NAME}`;
 
@@ -53,13 +75,51 @@
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
+    const ICON_CACHE_KEY = 'idte.icon.v20.';
+
+    async function readSaveData(key = SAVE_KEY) {
+      try {
+        let raw = await idbGet(key);
+        if (!raw) {
+          console.info(`[save] no save found key=${key}`);
+          return null;
+        }
+        if (typeof raw !== 'string') raw = JSON.stringify(raw);
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.edits)) {
+          console.warn(`[save] invalid save data key=${key}`);
+          return null;
+        }
+        console.info(`[save] loaded key=${key} bytes=${raw.length} edits=${data.edits.length / 2} machines=${Array.isArray(data.machines) ? data.machines.length : 0} play=${data.playTime ?? 0}s`);
+        return data;
+      } catch (e) {
+        console.error(`[save] load failed key=${key}`, e);
+        return null;
+      }
+    }
+
+    const savedData = await readSaveData(SAVE_KEY);
+    const _iconCachePreload = new Map(
+      (await idbEntries(ICON_CACHE_KEY)).map(([k, v]) => [k.slice(ICON_CACHE_KEY.length), v ?? null])
+    );
 
 
     let WORLD_SEED = (Math.random() * 100000) | 0;
+    let REALISTIC = null;
+    let _realisticSeed = null;
+
+    function realisticTerrain() {
+      if (!REALISTIC || _realisticSeed !== WORLD_SEED) {
+        REALISTIC = createRealisticTerrain(WORLD_SEED);
+        _realisticSeed = WORLD_SEED;
+      }
+      return REALISTIC;
+    }
 
 
 
     const SUN_DIR = new THREE.Vector3(0.55, 0.62, 0.35).normalize();
+    const MOON_DIR = new THREE.Vector3(-0.55, 0.62, -0.35).normalize();
     const SUN_COL = new THREE.Color(0xfff2dd);
     const SKY_COL = new THREE.Color(0xbfd9ff);
     const UNDERWATER_COL = new THREE.Color(0x0a1e3a);
@@ -182,7 +242,7 @@
       [B.DESERT]: { name: 'DESERT', base: 3.5, amp: 3.5, rough: 0.8, top: [0.84, 0.72, 0.44], surf: 'sand' },
       [B.TUNDRA]: { name: 'TUNDRA', base: 4.0, amp: 2.0, rough: 0.8, top: [0.74, 0.76, 0.73], surf: 'snow' },
       [B.SNOWY_PEAKS]: { name: 'SNOWY PEAKS', base: 22.0, amp: 16.0, rough: 3.0, top: [0.92, 0.94, 0.97], surf: 'snow' },
-      [B.WASTELAND]: { name: 'WASTELAND', base: 4.0, amp: 3.0, rough: 1.0, top: [0.42, 0.40, 0.37], surf: 'ash' },
+      [B.WASTELAND]: { name: 'WASTELAND', base: 4.0, amp: 3.0, rough: 1.0, top: [0.18, 0.17, 0.15], surf: 'ash' },
     };
 
 
@@ -266,6 +326,16 @@
       let v = _trendCache.get(k);
       if (v !== undefined) return v;
 
+      if (WORLD_TERRAIN === 'realistic') {
+        v = realisticTerrain().height(sx, sz);
+      } else {
+        v = legacyTerrainTrend(sx, sz);
+      }
+      cacheTerrainValue(_trendCache, k, v);
+      return v;
+    }
+
+    function legacyTerrainTrend(sx, sz) {
       const { e } = climateAt(sx, sz);
       const w = biomeWeights(sx, sz);
 
@@ -298,9 +368,7 @@
         + amp * 1.1 * (0.5 - Math.abs(ridge));
 
       // Dry world: no ocean plate or shore blend, every column is land.
-      v = SEA_LEVEL + 26 * Math.tanh(raw / 26) + mountainLift;
-      cacheTerrainValue(_trendCache, k, v);
-      return v;
+      return SEA_LEVEL + 26 * Math.tanh(raw / 26) + mountainLift;
     }
 
 
@@ -311,6 +379,50 @@
 
 
 
+
+    // The ground level: where the density field crosses zero at this column.
+    // The density surface sits up to ~6 m off the trend (1.8*noise + 4.5*fbm
+    // detail), so a band measured against the trend alone would paint random
+    // dirt/stone patches on the surface. Sample the density at the vertex's
+    // own x,z (not the floored column) and find the crossing, so depth follows
+    // the real slope instead of stepping in column-wide stripes on hills.
+    const _groundYCache = new Map();
+    function groundYAt(sx, sz) {
+      const qx = Math.floor(sx * 2), qz = Math.floor(sz * 2);
+      const k = qx + ',' + qz;
+      let v = _groundYCache.get(k);
+      if (v !== undefined) return v;
+      const info = columnDensity(sx, sz);
+      const amp = info.underOcean ? 1.8 : 4.5;
+      const dens = (y) => (info.h - y) + amp * (fbm3(sx * 0.035, y * 0.035, sz * 0.035, 2) * 2 - 1) * info.seaFade;
+      // info.h is the trend height; the crossing sits within a few metres.
+      let y0 = Math.floor(info.h);
+      let d0 = dens(y0);
+      v = y0 + amp;
+      if (d0 > 0) {
+        for (let y = y0; y < y0 + 12; y++) {
+          const d = dens(y);
+          if (d <= 0) { v = y - 1 + d0 / (d0 - d); break; }
+          d0 = d;
+        }
+      } else {
+        for (let y = y0; y > y0 - 12; y--) {
+          const d = dens(y);
+          if (d > 0) { v = y + d / (d - d0); break; }
+          d0 = d;
+        }
+      }
+      _groundYCache.set(k, v);
+      if (_groundYCache.size > 160000) {
+        const it = _groundYCache.keys();
+        for (let i = 0; i < 24000; i++) {
+          const first = it.next();
+          if (first.done) break;
+          _groundYCache.delete(first.value);
+        }
+      }
+      return v;
+    }
 
     const _colDensityCache = new Map();
     function columnDensity(sx, sz) {
@@ -744,12 +856,19 @@
 
 
 
+      // The detail noise can only shift the surface by its own amplitude, so
+      // outside that band the sign of the density is fixed by the trend alone
+      // and the noise does not have to be evaluated. That is the bulk of the
+      // voxels in a chunk (the deep rock and the open air), and evaluating
+      // them was what made a single chunk build cost 12 ms.
+      const amp = info.underOcean ? 1.8 : 4.5;
+
       if (d > 42 || d < -6) return d;
 
-
-      let v = d + (info.underOcean ? 1.8 : 4.5)
-        * (fbm3(sx * 0.035, y * 0.035, sz * 0.035, 2) * 2 - 1) * info.seaFade;
-
+      let v = d;
+      if (d >= -amp && d <= amp) {
+        v = d + amp * (fbm3(sx * 0.035, y * 0.035, sz * 0.035, 2) * 2 - 1) * info.seaFade;
+      }
 
       const cave = caveCarveAt(sx, y, sz);
       if (cave > 0) v -= cave * CAVE_SINK;
@@ -936,6 +1055,7 @@
       constructor() {
         this.edits = new Map();
         this.baseCache = new Map();
+        this.onEdit = null;   // replay recorder hook: (x, y, z, density)
       }
 
       static key(x, y, z) {
@@ -956,10 +1076,10 @@
           if (pad) v += (pad.site.y0 - y - v) * pad.w;
           // Bound the cache: every sampled voxel was kept forever, so a long
           // session grew an unbounded Map (slower lookups + growing memory).
-          // Evict the oldest entries in bulk, like the terrain caches do.
+          // Evict the oldest entries in smaller batches to avoid long stalls.
           if (this.baseCache.size > 400000) {
             const it = this.baseCache.keys();
-            for (let i = 0; i < 120000; i++) {
+            for (let i = 0; i < 40000; i++) {
               const first = it.next();
               if (first.done) break;
               this.baseCache.delete(first.value);
@@ -975,8 +1095,28 @@
         const e = this.edits.get(k);
         return e !== undefined ? e : this.base(x, y, z);
       }
+
+      // The chunk sample grid is its own cache: it keeps every density value
+      // the chunk meshes from. Going through the shared base cache for it only
+      // paid a Map insert (and an eviction) per voxel.
+      valueAt(x, y, z) {
+        return this.valueAtPadded(x, y, z, industrialPadAt(x, z));
+      }
+
+
+      // The industrial pad only depends on x and z, so a caller that walks a
+      // whole column of the grid looks it up once and passes it in.
+      valueAtPadded(x, y, z, pad) {
+        const k = DensityField.key(x, y, z);
+        const e = this.edits.get(k);
+        if (e !== undefined) return e;
+        let v = terrainDensity(x, y, z);
+        if (pad) v += (pad.site.y0 - y - v) * pad.w;
+        return v;
+      }
       set(x, y, z, v) {
         this.edits.set(DensityField.key(x, y, z), v);
+        if (this.onEdit) this.onEdit(x, y, z, v);
       }
 
       hasEdit(x, y, z) {
@@ -1096,29 +1236,93 @@
         this.dead = false;
         this.hasSurface = true;
         this.built = false;
+        this.samplesLoaded = false;
+        this.samplePos = 0;
+        this.pending = [];
       }
 
 
-      loadSamples() {
+      // The sample grid holds the density of every voxel the mesh is built
+      // from. Filling it is the expensive part of a chunk build, so it is
+      // done in slices: a frame loads a slice and the chunk comes back for
+      // the rest, so no single chunk build can eat a whole frame.
+      loadSlice(count) {
         const s = this.samples;
         const field = this.world.field;
         const ox = this.ox, oy = this.oy, oz = this.oz;
+        const S = SAMPLE_SIZE;
+        const total = S * S * S;
+        let c = this.samplePos;
+        const end = Math.min(total, c + count);
+        const t0 = performance.now();
+        if (c === 0) { this._sMin = Infinity; this._sMax = -Infinity; }
+        let sMin = this._sMin, sMax = this._sMax;
+        let pk = NaN, pi = NaN, px = 0, pz = 0, pad = null;
+        while (c < end) {
+          const k = ((c / (S * S)) | 0) - 1;
+          const i = ((c / S) | 0) % S - 1;
+          const j = (c % S) - 1;
+          if (k !== pk || i !== pi) {
+            pk = k; pi = i;
+            px = ox + i; pz = oz + k;
+            pad = industrialPadAt(px, pz);
+          }
+          const v = field.valueAtPadded(px, oy + j, pz, pad);
+          s[(i + 1) + (j + 1) * S + (k + 1) * S2] = v;
+          if (v < sMin) sMin = v;
+          if (v > sMax) sMax = v;
+          c++;
+          if ((c & 63) === 0 && performance.now() - t0 > 6) break;
+        }
+        this.samplePos = c;
+        this._sMin = sMin; this._sMax = sMax;
+        if (c < total) return false;
+        this.samplesLoaded = true;
+        this.hasSurface = !(sMin > 0 || sMax < 0);
+        return true;
+      }
 
-        let mn = Infinity, mx = -Infinity;
 
-        for (let k = -1; k <= CHUNK_SIZE; k++) {
-          const kOff = (k + 1) * S2;
-          const wz = oz + k;
-          for (let j = -1; j <= CHUNK_SIZE; j++) {
-            const jOff = kOff + (j + 1) * SAMPLE_SIZE;
-            const wy = oy + j;
-            for (let i = -1; i <= CHUNK_SIZE; i++) {
-              const v = field.get(ox + i, wy, wz);
-              s[(i + 1) + jOff] = v;
-              if (v < mn) mn = v;
-              if (v > mx) mx = v;
+      // An edit only changes a few voxels, and the rest of the sample grid is
+      // still valid, so a chunk that is already loaded just re-reads the
+      // edited ones instead of the whole grid.
+      refreshPending() {
+        if (!this.pending.length) return;
+        const s = this.samples;
+        const field = this.world.field;
+        const ox = this.ox, oy = this.oy, oz = this.oz;
+        const N = CHUNK_SIZE;
+        let mn = this._sMin ?? Infinity, mx = this._sMax ?? -Infinity;
+        for (const [x0, x1, y0, y1, z0, z1] of this.pending) {
+          const i0 = Math.max(x0, ox - 1), i1 = Math.min(x1, ox + N);
+          const j0 = Math.max(y0, oy - 1), j1 = Math.min(y1, oy + N);
+          const k0 = Math.max(z0, oz - 1), k1 = Math.min(z1, oz + N);
+          for (let k = k0; k <= k1; k++) {
+            const kOff = (k - oz + 1) * S2;
+            for (let j = j0; j <= j1; j++) {
+              const jOff = kOff + (j - oy + 1) * SAMPLE_SIZE;
+              for (let i = i0; i <= i1; i++) {
+                const v = field.valueAt(i, j, k);
+                s[(i - ox + 1) + jOff] = v;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+              }
             }
           }
+        }
+        this.pending.length = 0;
+        this._sMin = mn; this._sMax = mx;
+        this.hasSurface = !(mn > 0 || mx < 0);
+      }
+
+
+      updateSurface() {
+        const s = this.samples;
+        let mn = Infinity, mx = -Infinity;
+        for (let i = 0; i < s.length; i++) {
+          const v = s[i];
+          if (v < mn) mn = v;
+          if (v > mx) mx = v;
         }
         this.hasSurface = !(mn > 0 || mx < 0);
       }
@@ -1141,39 +1345,36 @@
         const V = VERTEX_SIZE;
         const V2l = V2;
         const s = this.samples;
+        const ox = this.ox, oy = this.oy, oz = this.oz;
+        const field = this.world.field;
 
         const positions = [];
         const colors = [];
+        const normals = [];
         const indices = [];
         const adata = [];
         const surfArr = [];
         const submArr = [];
-        const torchArr = [];
 
         const vg = new Int32Array(V * V * V).fill(-1);
 
         const samp = (i, j, k) => s[(i + 1) + (j + 1) * S + (k + 1) * S2l];
+        const sampleAt = (rx, ry, rz) => {
+          const lx = rx - ox + 1, ly = ry - oy + 1, lz = rz - oz + 1;
+          if ((lx | ly | lz) >= 0 && lx < S && ly < S && lz < S) return s[lx + ly * S + lz * S2l];
+          return field.get(rx, ry, rz);
+        };
+        const solidFn = (x, y, z) => {
+          const rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+          const lx = rx - ox + 1, ly = ry - oy + 1, lz = rz - oz + 1;
+          if ((lx | ly | lz) >= 0 && lx < S && ly < S && lz < S) return s[lx + ly * S + lz * S2l] > 0;
+          return field.get(rx, ry, rz) > 0;
+        };
 
 
 
         const c = _corners;
         const wsurfCol = _wsurfCol.fill(NaN);
-
-        // Only torches whose range reaches this chunk can light its vertices.
-        // Testing every placed torch for every vertex was the bulk of the cost.
-        let chunkTorches = torches;
-        if (torches.length) {
-          const cx = this.ox + 8, cy = this.oy + 8, cz = this.oz + 8;
-          const near = [];
-          for (const t of torches) {
-            const L = t.light;
-            const reach = L.range + CHUNK_SIZE;
-            const dx = t.pos.x - cx, dy = t.pos.y - cy, dz = t.pos.z - cz;
-            if (dx * dx + dy * dy + dz * dz <= reach * reach) near.push(t);
-          }
-          chunkTorches = near;
-        }
-
 
         for (let k = -1; k <= N - 1; k++) {
           for (let j = -1; j <= N - 1; j++) {
@@ -1220,20 +1421,25 @@
               }
               if (count === 0) continue;
 
-              const wx = this.ox + i + px / count;
-              const wy = this.oy + j + py / count;
-              const wz = this.oz + k + pz / count;
+              const wx = ox + i + px / count;
+              const wy = oy + j + py / count;
+              const wz = oz + k + pz / count;
 
               const vi = positions.length / 3;
               positions.push(wx, wy, wz);
 
+              const rx = Math.round(wx), ry = Math.round(wy), rz = Math.round(wz);
+              let nx = sampleAt(rx - 1, ry, rz) - sampleAt(rx + 1, ry, rz);
+              let ny = sampleAt(rx, ry - 1, rz) - sampleAt(rx, ry + 1, rz);
+              let nz = sampleAt(rx, ry, rz - 1) - sampleAt(rx, ry, rz + 1);
+              const nl = Math.hypot(nx, ny, nz) || 1;
+              normals.push(nx / nl, ny / nl, nz / nl);
+
               const col = surfaceColor(wx, wy, wz);
-              const occ = occlusionScale(this.world.field, wx, wy, wz);
+              const occ = occlusionScale(field, wx, wy, wz, sampleAt, solidFn);
               colors.push(col[0], col[1], col[2]);
               adata.push(stoneMask, dirtMask, grassMask, occ);
               surfArr.push(_surf[0], _surf[1], _surf[2], _surf[3]);
-              const lt = lightAt(this.world.field, wx, wy, wz, chunkTorches);
-              torchArr.push(lt[0], lt[1], lt[2]);
 
 
 
@@ -1321,21 +1527,19 @@
         return {
           positions: new Float32Array(positions),
           colors: new Float32Array(colors),
+          normals: new Float32Array(normals),
           indices: new Uint32Array(indices),
           data: new Float32Array(adata),
           surf: new Float32Array(surfArr),
-          light: new Float32Array(torchArr),
           subm: new Float32Array(submArr),
         };
       }
 
 
       rebuild() {
-        this.loadSamples();
+        if (!this.samplesLoaded) return;
+        this.refreshPending();
         this.rebuildTerrain();
-
-
-
         if (this.oy <= SEA_LEVEL) this.rebuildWater();
         this.built = true;
       }
@@ -1364,12 +1568,12 @@
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(data.colors, 3));
+        if (data.normals) geo.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
         geo.setAttribute('aData', new THREE.BufferAttribute(data.data, 4));
         geo.setAttribute('aSurf', new THREE.BufferAttribute(data.surf, 4));
-        geo.setAttribute('aLight', new THREE.BufferAttribute(data.light, 3));
         geo.setAttribute('aSubm', new THREE.BufferAttribute(data.subm, 1));
         geo.setIndex(new THREE.BufferAttribute(data.indices, 1));
-        geo.computeVertexNormals();
+        if (!data.normals) geo.computeVertexNormals();
         geo.computeBoundingSphere();
 
         if (this.mesh) {
@@ -1550,6 +1754,11 @@
     let dirtMask = 0;
     const _surf = [0, 0, 0, 0];
     function mountainRockAt(x, z) {
+      if (WORLD_TERRAIN === 'realistic') {
+        // Rock line is slope-driven here, not the legacy height cutoff:
+        // trees climb the massif flanks until the cliff faces take over.
+        return realisticTerrain().slopeDeg(x + WORLD_SEED, z + WORLD_SEED) > 38;
+      }
       return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) - SEA_LEVEL > 30;
     }
 
@@ -1557,6 +1766,7 @@
       const n = (noise3(wx * 0.15, wy * 0.15, wz * 0.15) - 0.5) * 4.0;
       const def = BIOME_DEFS[biomeAt(wx, wz)];
 
+      if (WORLD_TERRAIN === 'realistic') return realisticSurfaceColor(wx, wy, wz, def, n);
 
 
       const depth = terrainTrend(wx + WORLD_SEED, wz + WORLD_SEED) - wy + n;
@@ -1596,6 +1806,64 @@
       _surf[1] = def.surf === 'dry' ? 1 - exposedMountain : 0;
       _surf[2] = def.surf === 'snow' ? 1 - exposedMountain : 0;
       _surf[3] = def.surf === 'ash' ? 1 - exposedMountain : 0;
+      return _col;
+    }
+
+    // Realistic mode: slope/altitude masks pick exposed rock and snow, but
+    // depth below the real ground level must drive the material — the masks
+    // alone can't tell the surface from a cave wall, which made the whole
+    // underground grass. The base colour also follows depth (brown dirt, grey
+    // stone) so the biome's green never bleeds into the dirt/stone bands.
+    function realisticSurfaceColor(wx, wy, wz, def, n) {
+      const sx = wx + WORLD_SEED, sz = wz + WORLD_SEED;
+      const s = realisticTerrain().surface(sx, sz, wy, def.surf);
+      const rock = s.rock;
+      const snow = s.snow;
+      const depth = groundYAt(sx, sz) - wy;
+
+      if (depth < 1.2) {
+        grassMask = 1 - rock;
+        dirtMask = 0;
+        stoneMask = rock;
+      } else if (depth < 3.0) {
+        grassMask = 0;
+        dirtMask = 1 - rock;
+        stoneMask = rock;
+      } else {
+        grassMask = 0;
+        dirtMask = 0;
+        stoneMask = 1;
+      }
+      _surf[0] = def.surf === 'sand' ? 1 - rock : 0;
+      _surf[1] = def.surf === 'dry' ? 1 - rock : 0;
+      _surf[2] = snow;
+      _surf[3] = def.surf === 'ash' ? 1 - rock : 0;
+
+      const top = def.top;
+      let r, g, b;
+      if (depth > 6) {
+        r = 0.33; g = 0.32; b = 0.36;
+      } else if (depth > 2) {
+        const u = (6 - depth) / 4;
+        r = 0.33 + (0.47 - 0.33) * u;
+        g = 0.32 + (0.37 - 0.32) * u;
+        b = 0.36 + (0.25 - 0.36) * u;
+      } else if (depth > 0) {
+        const u = 1 - depth / 2;
+        r = 0.47 + (top[0] - 0.47) * u;
+        g = 0.37 + (top[1] - 0.37) * u;
+        b = 0.25 + (top[2] - 0.25) * u;
+      } else {
+        r = top[0]; g = top[1]; b = top[2];
+      }
+      const rockCol = [0.60, 0.58, 0.55];
+      const snowCol = [0.95, 0.96, 0.99];
+      for (let i = 0; i < 3; i++) {
+        let c = [r, g, b][i] + (rockCol[i] - [r, g, b][i]) * rock;
+        c += (snowCol[i] - c) * snow;
+        c += (hash3(Math.floor(wx * 6.7) + i, Math.floor(wy * 6.7), Math.floor(wz * 6.7)) - 0.5) * 0.06;
+        _col[i] = Math.min(1, Math.max(0, c));
+      }
       return _col;
     }
 
@@ -1640,58 +1908,32 @@
 
 
 
-    function solidAt(field, x, y, z) {
+    function solidAt(field, x, y, z, solidFn) {
+      if (solidFn) return solidFn(x, y, z);
       return field.get(Math.round(x), Math.round(y), Math.round(z)) > 0;
     }
 
-    const _lightOut = [0, 0, 0];
-    function lightAt(field, x, y, z, list) {
-      let r = 0, g = 0, b = 0;
-      const src = list || torches;
-      for (const t of src) {
-        const L = t.light;
-        const dx = t.pos.x - x, dy = t.pos.y - y, dz = t.pos.z - z;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > L.range * L.range || d2 < 0.04) continue;
-        const d = Math.sqrt(d2);
-        let blocked = false;
-        for (let i = 1; i <= 6; i++) {
-          const tt = (i / 7) * (d - 0.4);
-          if (tt <= 0.2) continue;
-          if (solidAt(field, x + dx / d * tt, y + dy / d * tt, z + dz / d * tt)) {
-            blocked = true;
-            break;
-          }
-        }
-        if (blocked) continue;
-        const f = L.power / (1.0 + 0.5 * d + 0.12 * d * d);
-        r += f * t.col[0]; g += f * t.col[1]; b += f * t.col[2];
-      }
-      _lightOut[0] = Math.min(1.5, r);
-      _lightOut[1] = Math.min(1.5, g);
-      _lightOut[2] = Math.min(1.5, b);
-      return _lightOut;
-    }
 
 
 
 
-    function occlusionScale(field, x, y, z) {
+    function occlusionScale(field, x, y, z, sampleFn, solidFn) {
+      const val = (rx, ry, rz) => sampleFn ? sampleFn(rx, ry, rz) : field.get(rx, ry, rz);
 
       let skyVis = 1;
-      for (let i = 1; i <= 6; i++) {
-        const d = field.get(Math.round(x), Math.round(y + i * 1.4), Math.round(z));
+      for (let i = 1; i <= 4; i++) {
+        const d = val(Math.round(x), Math.round(y + i * 1.6), Math.round(z));
         if (d > 0) { skyVis = i <= 2 ? 0.02 : 0.08; break; }
-        if (d > -0.4) skyVis -= 0.12;
+        if (d > -0.4) skyVis -= 0.16;
       }
       skyVis = Math.max(0.02, Math.min(1, skyVis));
 
 
       let sunVis = 1;
       const sx = 0.611, sy = 0.689, sz = 0.389;
-      for (let i = 1; i <= 8; i++) {
-        const t = i * 1.1;
-        if (solidAt(field, x + sx * t, y + sy * t, z + sz * t)) { sunVis = 0; break; }
+      for (let i = 1; i <= 5; i++) {
+        const t = i * 1.4;
+        if (solidAt(field, x + sx * t, y + sy * t, z + sz * t, solidFn)) { sunVis = 0; break; }
       }
 
 
@@ -1897,7 +2139,9 @@
         this.chunks = new Map();
         this.columnTopChunks = new Map();
         this.dirty = [];
+        this.loading = [];
         this.waterDirty = [];
+        this.columnHeightCache = new Map();
         this.water = new WaterSim(this);
         this.builtCount = 0;
         this.jobs = [];
@@ -1924,6 +2168,7 @@
         dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping;
         dirtTex.colorSpace = THREE.SRGBColorSpace;
         dirtTex.anisotropy = 4;
+        this.dirtTexture = dirtTex;
 
 
         const sandTex = surfTexture(11, [214, 196, 140], 0.28);
@@ -1946,33 +2191,32 @@
           shader.uniforms.snowMap = { value: snowTex };
           shader.uniforms.ashMap = { value: ashTex };
           shader.uniforms.uUnderwaterCol = { value: UNDERWATER_COL };
-          Object.assign(shader.uniforms, torchUniforms);
+          shader.uniforms.uForceStoneY = { value: WORLD_TERRAIN === 'realistic' ? 1e6 : 50 };
           shader.vertexShader = shader.vertexShader
             .replace('#include <common>', `#include <common>
           attribute vec4 aData;
           attribute vec4 aSurf;
-          attribute vec3 aLight;
           attribute float aSubm;
           varying vec3 vWPos; varying vec3 vWNorm;
           varying float vStone; varying float vDirt; varying float vTop; varying float vOcc;
           varying vec4 vSurf;
-          varying vec3 vLight; varying float vSubm;`)
+          varying float vSubm;`)
             .replace('#include <fog_vertex>', `#include <fog_vertex>
           vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
           vWNorm = normalize(mat3(modelMatrix) * objectNormal);
           vStone = aData.x; vDirt = aData.y; vTop = aData.z; vOcc = aData.w;
           vSurf = aSurf;
-          vLight = aLight; vSubm = aSubm;`);
+          vSubm = aSubm;`);
           shader.fragmentShader = shader.fragmentShader
             .replace('#include <common>', `#include <common>
           uniform sampler2D stoneMap; uniform sampler2D grassMap; uniform sampler2D dirtMap;
           uniform sampler2D sandMap; uniform sampler2D dryMap; uniform sampler2D snowMap; uniform sampler2D ashMap;
-          uniform float torchTime;
           uniform vec3 uUnderwaterCol;
+          uniform float uForceStoneY;
           varying vec3 vWPos; varying vec3 vWNorm;
           varying float vStone; varying float vDirt; varying float vTop; varying float vOcc;
           varying vec4 vSurf;
-          varying vec3 vLight; varying float vSubm;
+          varying float vSubm;
           vec3 triplanar(sampler2D m, vec3 p, vec3 n, float sc) {
             vec3 an = pow(abs(n), vec3(4.0));
             an /= (an.x + an.y + an.z);
@@ -2003,14 +2247,8 @@
           tBase = mix(tBase, topTex, vTop);
           // Apply a fragment-level cutoff so interpolated vertex masks cannot
           // leave a green halo between the grass foothills and exposed stone.
-          tBase = mix(tBase, triplanar(stoneMap, vWPos, tn, 0.08), step(50.0, vWPos.y));
+          tBase = mix(tBase, triplanar(stoneMap, vWPos, tn, 0.08), step(uForceStoneY, vWPos.y));
           diffuseColor.rgb = tBase * vOcc;`)
-            .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-          // baked light colour already wall-occluded — rock can't leak, range can't flood.
-          // glow follows albedo luminance (pre-occ) so texture detail survives the tint.
-          float tgLum = clamp(dot(diffuseColor.rgb / max(vOcc, 0.02), vec3(0.299, 0.587, 0.114)) * 1.4, 0.0, 1.0);
-          float tgFl = 0.85 + 0.15 * sin(torchTime * 20.0) * sin(torchTime * 13.0 + 1.7);
-          totalEmissiveRadiance += vLight * ((0.3 + 0.7 * tgLum) * tgFl);`)
             .replace('#include <fog_fragment>', `
           // underwater haze: ground deeper under its local water surface fades to
           // the water tint, so submerged terrain reads smoggy even seen from above.
@@ -2022,7 +2260,7 @@
           }
           #include <fog_fragment>`);
         };
-        this.material.customProgramCacheKey = () => 'torch-baked-v2';
+        this.material.customProgramCacheKey = () => 'terrain-surface-v3';
 
 
 
@@ -2105,13 +2343,13 @@
         return this.chunks.get(World.ck(cx, cy, cz));
       }
 
-      topChunkForColumn(cx, cz) {
-        const key = `${cx},${cz}`;
-        let top = this.columnTopChunks.get(key);
-        if (top !== undefined) return top;
+      // The highest terrain height in a chunk column, sampled every 4 m so
+      // narrow ridges that cross a 16 m chunk are still found.
+      columnMaxHeight(cx, cz) {
+        const key = World.wk(cx, cz);
+        let v = this.columnHeightCache.get(key);
+        if (v !== undefined) return v;
         let maxHeight = -Infinity;
-        // Sample at 4 m intervals so narrow ridges that cross a 16 m chunk
-        // still request the vertical meshes needed to render them.
         for (let z = 0; z <= CHUNK_SIZE; z += 4) {
           for (let x = 0; x <= CHUNK_SIZE; x += 4) {
             maxHeight = Math.max(maxHeight, terrainTrend(
@@ -2120,7 +2358,20 @@
             ));
           }
         }
-        top = Math.max(CHUNK_Y_MAX, Math.floor(maxHeight / CHUNK_SIZE) + 1);
+        this.columnHeightCache.set(key, maxHeight);
+        if (this.columnHeightCache.size > 20000) {
+          const oldest = this.columnHeightCache.keys().next().value;
+          this.columnHeightCache.delete(oldest);
+        }
+        return maxHeight;
+      }
+
+
+      topChunkForColumn(cx, cz) {
+        const key = World.wk(cx, cz);
+        let top = this.columnTopChunks.get(key);
+        if (top !== undefined) return top;
+        top = Math.max(CHUNK_Y_MAX, Math.floor(this.columnMaxHeight(cx, cz) / CHUNK_SIZE) + 1);
         this.columnTopChunks.set(key, top);
         if (this.columnTopChunks.size > 20000) {
           const oldest = this.columnTopChunks.keys().next().value;
@@ -2135,61 +2386,99 @@
 
         const pcx = Math.floor(px / CHUNK_SIZE);
         const pcz = Math.floor(pz / CHUNK_SIZE);
-
-
         const detailRadius = Math.min(viewRadius, DETAIL_CHUNK_RADIUS);
-        for (let dz = -detailRadius; dz <= detailRadius; dz++) {
-          for (let dx = -detailRadius; dx <= detailRadius; dx++) {
-            const cx = pcx + dx;
-            const cz = pcz + dz;
-            for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(cx, cz); cy++) {
-              const key = World.ck(cx, cy, cz);
-              if (!this.chunks.has(key)) {
-                const c = new Chunk(this, cx, cy, cz);
-                this.chunks.set(key, c);
-                this.markDirty(c);
-
-                this.water.enqueue(cx * CHUNK_SIZE, cx * CHUNK_SIZE + CHUNK_SIZE - 1,
-                  cz * CHUNK_SIZE, cz * CHUNK_SIZE + CHUNK_SIZE - 1);
-              }
-            }
-          }
+        if (pcx !== this._pcx || pcz !== this._pcz || detailRadius !== this._detailRadius) {
+          this._pcx = pcx; this._pcz = pcz; this._detailRadius = detailRadius;
+          this._streamDZ = -detailRadius;
+          this._streamDX = -detailRadius;
+          this._streamCY = null;
+          this._unloadNeeded = true;
+          this._unloadIter = null;
         }
 
+        if (this._streamDZ != null) {
+          let budget = 48;
+          outer: for (let dz = this._streamDZ; dz <= detailRadius; dz++) {
+            let dxStart = (dz === this._streamDZ) ? this._streamDX : -detailRadius;
+            for (let dx = dxStart; dx <= detailRadius; dx++) {
+              const cx = pcx + dx, cz = pcz + dz;
+              const top = this.topChunkForColumn(cx, cz);
+              let cyStart = (dz === this._streamDZ && dx === this._streamDX && this._streamCY != null) ? this._streamCY : CHUNK_Y_MIN;
+              for (let cy = cyStart; cy <= top; cy++) {
+                if (budget-- <= 0) {
+                  this._streamDZ = dz; this._streamDX = dx; this._streamCY = cy;
+                  break outer;
+                }
+                const key = World.ck(cx, cy, cz);
+                if (!this.chunks.has(key)) {
+                  const c = new Chunk(this, cx, cy, cz);
+                  this.chunks.set(key, c);
+                  // A chunk that cannot hold a surface produces no mesh at all,
+                  // so its sample grid never has to be loaded.
+                  if (this.canHaveMesh(c)) this.markDirty(c);
+                  else c.built = true;
 
-        const unloadR = detailRadius + 2;
-        for (const [key, c] of this.chunks) {
-          const dx = c.cx - pcx, dz = c.cz - pcz;
-          if (Math.abs(dx) > unloadR || Math.abs(dz) > unloadR
-            || c.cy > this.topChunkForColumn(c.cx, c.cz) || c.cy < CHUNK_Y_MIN) {
-            c.dispose();
-            this.chunks.delete(key);
+                  this.water.enqueue(cx * CHUNK_SIZE, cx * CHUNK_SIZE + CHUNK_SIZE - 1,
+                    cz * CHUNK_SIZE, cz * CHUNK_SIZE + CHUNK_SIZE - 1);
+                }
+              }
+              this._streamCY = null;
+              if (budget <= 0) { this._streamDZ = dz; this._streamDX = dx + 1; break outer; }
+            }
+            this._streamDX = -detailRadius;
+            if (dz === detailRadius && budget > 0) { this._streamDZ = null; }
+          }
+          if (this._streamDZ != null && this._streamDZ > detailRadius) this._streamDZ = null;
+        } else if (this._unloadNeeded) {
+          if (!this._unloadIter) this._unloadIter = this.chunks.entries();
+          let n = 80;
+          const unloadR = detailRadius + 2;
+          while (n-- > 0) {
+            const it = this._unloadIter.next();
+            if (it.done) { this._unloadIter = null; this._unloadNeeded = false; break; }
+            const [key, c] = it.value;
+            const dx = c.cx - pcx, dz = c.cz - pcz;
+            if (Math.abs(dx) > unloadR || Math.abs(dz) > unloadR
+              || c.cy > this.topChunkForColumn(c.cx, c.cz) || c.cy < CHUNK_Y_MIN) {
+              c.dispose();
+              this.chunks.delete(key);
+            }
           }
         }
       }
 
       async prewarm(px, py, pz, onProgress = () => {}) {
-        this.update(px, py, pz);
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
         const pcx = Math.floor(px / CHUNK_SIZE);
         const pcz = Math.floor(pz / CHUNK_SIZE);
-        const center = [];
-        for (let dz = -1; dz <= 1; dz++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let cy = CHUNK_Y_MIN; cy <= this.topChunkForColumn(pcx + dx, pcz + dz); cy++) {
-              const chunk = this.getChunk(pcx + dx, cy, pcz + dz);
-              if (chunk) center.push(chunk);
+        const detailRadius = Math.min(viewRadius, DETAIL_CHUNK_RADIUS);
+
+        // Stream/create every chunk in range, then build them all.
+        for (let pass = 0; pass < 2000; pass++) {
+          this.update(px, py, pz);
+          let want = 0, done = 0;
+          for (let dz = -detailRadius; dz <= detailRadius; dz++) {
+            for (let dx = -detailRadius; dx <= detailRadius; dx++) {
+              if (Math.abs(dx) + Math.abs(dz) > detailRadius + 1) continue;
+              const cx = pcx + dx, cz = pcz + dz;
+              const top = this.topChunkForColumn(cx, cz);
+              for (let cy = CHUNK_Y_MIN; cy <= top; cy++) {
+                const c = this.getChunk(cx, cy, cz);
+                if (!c) { want++; continue; }
+                want++;
+                if (c.built) done++;
+              }
             }
           }
+          onProgress(want ? done / want : 1);
+          if (this._streamDZ == null && this.loading.length === 0 && this.dirty.length === 0 && done >= want) break;
+          this.processDirty(12);
+          await nextFrame();
         }
-
-        const total = center.length;
-        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-        let built = 0;
-        while (built < total) {
-          this.processDirty(8);
-          built = center.reduce((n, chunk) => n + (chunk.built ? 1 : 0), 0);
-          onProgress(total ? built / total : 1);
-          if (built < total) await nextFrame();
+        // Final drain in case anything remains queued.
+        for (let i = 0; i < 400 && (this.loading.length || this.dirty.length); i++) {
+          this.processDirty(12);
+          if ((i & 1) === 0) await nextFrame();
         }
         onProgress(1);
       }
@@ -2200,13 +2489,40 @@
         this.dirty.push(c);
       }
 
-      markRegionDirty(x0, x1, y0, y1, z0, z1) {
-        const cx0 = Math.floor(x0 / CHUNK_SIZE) - 1;
-        const cx1 = Math.floor(x1 / CHUNK_SIZE) + 1;
-        const cy0 = Math.floor(y0 / CHUNK_SIZE) - 1;
-        const cy1 = Math.floor(y1 / CHUNK_SIZE) + 1;
-        const cz0 = Math.floor(z0 / CHUNK_SIZE) - 1;
-        const cz1 = Math.floor(z1 / CHUNK_SIZE) + 1;
+
+      // A chunk that sits above the surface of its own column is plain air: it
+      // cannot hold a surface, so it produces no mesh and its sample grid
+      // never has to be loaded. The column next to it draws the face they
+      // share, so nothing is lost by skipping it. The margin covers the
+      // detail noise (which can lift or drop the surface by a few metres) and
+      // the flattened industrial pads.
+      canHaveMesh(c) {
+        if (c.oy <= this.columnMaxHeight(c.cx, c.cz) + 16) return true;
+        // Only a cave could still put rock in that chunk.
+        return this.chunkHasCave(c);
+      }
+
+
+      chunkHasCave(c) {
+        for (const s of caveSitesAt(c.ox + 8, c.oz + 8)) {
+          if (s.minY - 4 <= c.oy + CHUNK_SIZE && s.maxY + 4 >= c.oy) return true;
+        }
+        return false;
+      }
+
+      // A chunk mesh is built from its own voxels plus the 1-voxel frame it
+      // samples around itself, so an edit only dirties the chunks the edited
+      // box overlaps plus the neighbour chunk on each side where the box
+      // reaches a chunk border. The old code padded every axis by a whole
+      // chunk, which queued up to 27 rebuilds for a single mined block.
+      dirtyRange(lo, hi, pad) {
+        return [Math.floor((lo - 1) / CHUNK_SIZE) - pad, Math.floor((hi + 1) / CHUNK_SIZE) + pad];
+      }
+
+      markRegionDirty(x0, x1, y0, y1, z0, z1, pad = 0) {
+        const [cx0, cx1] = this.dirtyRange(x0, x1, pad);
+        const [cy0, cy1] = this.dirtyRange(y0, y1, pad);
+        const [cz0, cz1] = this.dirtyRange(z0, z1, pad);
 
         for (let cx = cx0; cx <= cx1; cx++)
           for (let cy = cy0; cy <= cy1; cy++)
@@ -2215,6 +2531,41 @@
               if (c) this.markDirty(c);
             }
         this.water.waken(x0, x1, z0, z1);
+      }
+
+
+      // An edit changes the density of a few voxels. The chunk sample grid
+      // keeps the density of every voxel the chunk meshes from, so the edited
+      // voxels are recorded and only those are re-read on the next rebuild.
+      markEdited(x0, x1, y0, y1, z0, z1) {
+        const [cx0, cx1] = this.dirtyRange(x0, x1, 0);
+        const [cy0, cy1] = this.dirtyRange(y0, y1, 0);
+        const [cz0, cz1] = this.dirtyRange(z0, z1, 0);
+
+        for (let cx = cx0; cx <= cx1; cx++)
+          for (let cy = cy0; cy <= cy1; cy++)
+            for (let cz = cz0; cz <= cz1; cz++) {
+              const c = this.getChunk(cx, cy, cz);
+              if (!c) continue;
+              c.pending.push([x0, x1, y0, y1, z0, z1]);
+              this.markDirty(c);
+            }
+        this.water.waken(x0, x1, z0, z1);
+      }
+
+
+      // The same, for a caller that decides itself when the chunk is rebuilt.
+      noteEdited(x0, x1, y0, y1, z0, z1) {
+        const [cx0, cx1] = this.dirtyRange(x0, x1, 0);
+        const [cy0, cy1] = this.dirtyRange(y0, y1, 0);
+        const [cz0, cz1] = this.dirtyRange(z0, z1, 0);
+
+        for (let cx = cx0; cx <= cx1; cx++)
+          for (let cy = cy0; cy <= cy1; cy++)
+            for (let cz = cz0; cz <= cz1; cz++) {
+              const c = this.getChunk(cx, cy, cz);
+              if (c) c.pending.push([x0, x1, y0, y1, z0, z1]);
+            }
       }
 
 
@@ -2252,36 +2603,87 @@
 
       processDirty(budgetMs) {
         const t0 = performance.now();
+        const deadline = t0 + budgetMs;
         const px = this.playerPos.x, py = this.playerPos.y, pz = this.playerPos.z;
+        const perf = window.__chunkPerf || (window.__chunkPerf = { loadMs: 0, loadN: 0, rebuildMs: 0, rebuildN: 0, sortMs: 0, calls: 0 });
+        perf.calls++;
+
+        const loadSliceSome = (until) => {
+          let i = 0;
+          while (i < this.loading.length && performance.now() < until) {
+            const c = this.loading[i];
+            if (c.dead) { this.loading.splice(i, 1); continue; }
+            const tl = performance.now();
+            const done = c.loadSlice(SAMPLE_SLICE);
+            perf.loadMs += performance.now() - tl; perf.loadN++;
+            if (done) {
+              this.loading.splice(i, 1);
+              c.queued = false;
+              this.markDirty(c);
+            } else i++;
+          }
+        };
+
+        // Load samples first so nearby chunks become rebuildable sooner.
+        const loadShare = this.loading.length > 30 ? 0.75 : (this.loading.length > 10 ? 0.6 : 0.5);
+        loadSliceSome(t0 + budgetMs * loadShare);
+        if (performance.now() >= deadline) return;
 
         // Sort the queue by distance to the player once, then rebuild in that
         // order. The old code re-scanned the whole queue for every chunk it
         // rebuilt (O(n^2)) just to pick the nearest one each time.
-        if (this.dirty.length > 1) {
-          const d2 = (c) => {
+        const needSort = this.dirty.length > 1 && (!this._dirtySortedAt || this._dirtySortedAt.x !== Math.floor(px / 16) || this._dirtySortedAt.z !== Math.floor(pz / 16) || (this._dirtySortTick = (this._dirtySortTick || 0) + 1) % 30 === 0);
+        if (needSort) {
+          const ts = performance.now();
+          for (let i = 0; i < this.dirty.length; i++) {
+            const c = this.dirty[i];
             const dx = c.ox + 8 - px, dy = c.oy + 8 - py, dz = c.oz + 8 - pz;
-            return dx * dx + dy * dy + dz * dz;
-          };
+            c._sortD2 = dx * dx + dy * dy + dz * dz;
+          }
           // Farthest first, so popping off the end yields the nearest next.
-          this.dirty.sort((a, b) => d2(b) - d2(a));
+          this.dirty.sort((a, b) => b._sortD2 - a._sortD2);
+          perf.sortMs += performance.now() - ts;
+          this._dirtySortedAt = { x: Math.floor(px / 16), z: Math.floor(pz / 16) };
         }
 
-        while (this.dirty.length > 0 && performance.now() - t0 < budgetMs) {
-          const c = this.dirty.pop();
+        let rebuilt = 0;
+        while (this.dirty.length > 0 && performance.now() < deadline) {
+          const elapsed = performance.now() - t0;
+          const c = this.dirty[this.dirty.length - 1];
+          if (c.dead) { this.dirty.pop(); c.queued = false; continue; }
+          // A chunk that has not loaded its sample grid yet goes to the
+          // loading list and comes back for the rest of its grid.
+          if (!c.samplesLoaded) {
+            this.dirty.pop();
+            c.queued = true;
+            this.loading.push(c);
+            continue;
+          }
+          const est = this._avgRebuildMs || 4;
+          if (elapsed + est > budgetMs + 1 && rebuilt >= 1) break;
+          this.dirty.pop();
           c.queued = false;
-          if (!c.dead) c.rebuild();
+          const tr = performance.now();
+          c.rebuild();
+          const dur = performance.now() - tr;
+          perf.rebuildMs += dur; perf.rebuildN++;
+          this._avgRebuildMs = this._avgRebuildMs ? this._avgRebuildMs * 0.7 + dur * 0.3 : dur;
+          if (++rebuilt >= 3) break;
         }
+
+        // Spend any leftover budget on loading so chunks become ready sooner.
+        if (performance.now() < deadline) loadSliceSome(deadline);
       }
 
 
       mine(x, y, z, r) {
         const box = this.field.mineSphere(x, y, z, r);
-        this.markRegionDirty(box.x0, box.x1, box.y0, box.y1, box.z0, box.z1);
+        this.markEdited(box.x0, box.x1, box.y0, box.y1, box.z0, box.z1);
       }
 
       place(x, y, z, r) {
         const box = this.field.addSphere(x, y, z, r);
-        this.markRegionDirty(box.x0, box.x1, box.y0, box.y1, box.z0, box.z1);
+        this.markEdited(box.x0, box.x1, box.y0, box.y1, box.z0, box.z1);
       }
 
 
@@ -2424,6 +2826,9 @@
           if (b.x0 < ux0) ux0 = b.x0; if (b.x1 > ux1) ux1 = b.x1;
           if (b.y0 < uy0) uy0 = b.y0; if (b.y1 > uy1) uy1 = b.y1;
           if (b.z0 < uz0) uz0 = b.z0; if (b.z1 > uz1) uz1 = b.z1;
+          // The job wrote the density itself, so the chunks have to know
+          // which voxels to re-read.
+          this.noteEdited(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1);
           if (t >= 1) {
             if (j.yieldFn) j.yieldFn();
             this.jobs.splice(i, 1);
@@ -2540,23 +2945,27 @@
       }
 
 
-      save(player) {
+      buildSave(player) {
+        const key = SAVE_KEY;
         try {
           const arr = [];
           for (const [k, v] of this.field.edits) arr.push(k, Math.round(v * 1000) / 1000);
           const data = {
             seed: WORLD_SEED,
+            terrain: WORLD_TERRAIN,
             edits: arr,
             player: [player.pos.x, player.pos.y, player.pos.z, player.yaw, player.pitch],
             inv: { hot: inv.hot, main: inv.main, sel: inv.sel, dose: Math.round(inv.dose * 10) / 10, armor: inv.armor },
-            vitals: { hp: vitals.hp, hunger: vitals.hunger, wounds: vitals.wounds, immunity: vitals.infectionImmunity },
+            vitals: { hp: vitals.hp, hunger: vitals.hunger, wounds: vitals.wounds, immunity: vitals.infectionImmunity, foodNumb: vitals.foodNumb },
             day: clock.day, dayT: +clock.t.toFixed(1),
             playTime: +playTime.toFixed(1),
             guide: GUIDE_STEPS[guideIndex]?.id ?? null,
             achievements: ach,
             timeLock: timeLock !== null,
+            prayReadyAt: +prayReadyAt.toFixed(1),
             machines: machineSystem ? machineSystem.serialize() : [],
             pipes: pipeSystem ? pipeSystem.serialize() : [],
+            skyline: skylineSystem ? skylineSystem.serialize() : [],
             buildings: buildingSystem ? buildingSystem.serialize() : [],
             map: mapSystem ? mapSystem.serialize() : null,
             torches: torches.map(t => [
@@ -2565,80 +2974,126 @@
               t.id,
             ]),
           };
-          localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+          const json = JSON.stringify(data);
+          return { key, data, json };
+        } catch (e) {
+          console.error(`[save] build failed key=${SAVE_KEY}`, e);
+          return { key, data: null, json: null, error: e };
+        }
+      }
+
+      async save(player) {
+        // Never persist while a replay is driving the world: the replay
+        // temporarily overwrites terrain edits and must not be written to
+        // the save. Playback restores the edits on exit.
+        if (typeof replayPlay !== 'undefined' && replayPlay) return false;
+        const payload = this.buildSave(player);
+        this.lastSavePayload = payload;
+        this.lastSaveError = payload?.error || null;
+        const { key, data, json } = payload;
+        if (!json) {
+          try { notice('SAVE FAILED'); } catch { }
+          return false;
+        }
+        try {
+          await idbSet(key, json);
+          this.lastSaveError = null;
+          console.info(`[save] ok key=${key} bytes=${json.length} edits=${(data.edits.length / 2)} machines=${data.machines.length} buildings=${data.buildings.length} play=${data.playTime}s`);
           return true;
         } catch (e) {
-          console.warn('save failed', e);
+          this.lastSaveError = e;
+          const quota = e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || '') || e.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+          const msg = quota
+            ? 'save failed: storage full'
+            : `save failed: ${e && e.message ? e.message : e}`;
+          console.error(`[save] ${msg}`, { key, e });
+          try { notice(quota ? 'SAVE FAILED · STORAGE FULL' : 'SAVE FAILED'); } catch { }
           return false;
         }
       }
 
-      load() {
-        try {
-          const raw = localStorage.getItem(SAVE_KEY);
-          if (!raw) return null;
-          const data = JSON.parse(raw);
-          if (!data || !Array.isArray(data.edits)) return null;
-          for (let i = 0; i < data.edits.length; i += 2) {
-            this.field.edits.set(data.edits[i], data.edits[i + 1]);
-          }
-          if (data.inv) {
-            const clean = (arr, len) => {
-              const out = Array(len).fill(null);
-              if (Array.isArray(arr)) for (let i = 0; i < Math.min(len, arr.length); i++) {
-                const s = arr[i];
-                if (s && ITEMS[s.id] && Number.isFinite(s.n)) {
-                  const stack = { id: s.id, n: Math.max(1, Math.min(ITEMS[s.id].stack, s.n | 0)) };
-                  if (Array.isArray(s.plates)) stack.plates = s.plates.filter((p) => ITEMS[p]?.plate);
-                  if (ITEMS[s.id]?.container && s.liquid) {
-                    stack.liquid = { id: s.liquid.id, amount: +s.liquid.amount || 0 };
-                    Liquid.sanitize(stack, ITEMS[s.id]);
-                  }
-                  out[i] = stack;
-                }
-              }
-              return out;
-            };
-            inv.hot = clean(data.inv.hot, 7);
-            inv.main = clean(data.inv.main, 28);
-            if (Number.isInteger(data.inv.sel)) inv.sel = Math.max(0, Math.min(6, data.inv.sel));
-            if (Number.isFinite(data.inv.dose)) inv.dose = Math.max(0, data.inv.dose);
-            if (data.inv.armor) {
-              for (const slot of ['head', 'chest', 'legs', 'feet', 'hands']) {
-                const s = data.inv.armor[slot];
-                if (s && ITEMS[s.id]?.armor) {
-                  inv.armor[slot] = { id: s.id, n: 1 };
-                  if (Array.isArray(s.plates)) inv.armor[slot].plates = s.plates.filter((p) => ITEMS[p]?.plate);
-                }
-              }
-            }
-          }
-          if (data.vitals) {
-            if (Number.isFinite(data.vitals.hp)) vitals.hp = Math.max(0, Math.min(100, data.vitals.hp));
-            if (Number.isFinite(data.vitals.hunger)) vitals.hunger = Math.max(0, Math.min(100, data.vitals.hunger));
-            if (Number.isFinite(data.vitals.immunity)) vitals.infectionImmunity = Math.max(0, data.vitals.immunity);
-            for (const t of Object.keys(WOUNDS)) {
-              if (data.vitals.wounds && Number.isFinite(data.vitals.wounds[t])) vitals.wounds[t] = Math.max(0, data.vitals.wounds[t]);
-            }
-          }
-          if (Number.isInteger(data.day) && data.day > 0) clock.day = data.day;
-          if (Number.isFinite(data.dayT)) clock.t = Math.max(0, Math.min(900, data.dayT));
-          if (data.timeLock === true) {
-            timeLock = TUNING.DAY_SECONDS * 0.25;
-            clock.t = timeLock;
-          }
-          if (Array.isArray(data.torches)) {
-            for (const t of data.torches) {
-              if (Array.isArray(t) && t.length >= 6 && t.slice(0, 6).every(Number.isFinite)) {
-                addTorch(t[0], t[1], t[2], t[3], t[4], t[5], t[6] || 'torch');
-              }
-            }
-          }
-          return data;
-        } catch (e) {
-          console.warn('load failed', e);
-          return null;
+      async readSave() {
+        return readSaveData(SAVE_KEY);
+      }
+
+      applySave(data) {
+        if (!data) return null;
+        for (let i = 0; i < data.edits.length; i += 2) {
+          this.field.edits.set(data.edits[i], data.edits[i + 1]);
         }
+        if (data.inv) {
+          const clean = (arr, len) => {
+            const out = Array(len).fill(null);
+            if (Array.isArray(arr)) for (let i = 0; i < Math.min(len, arr.length); i++) {
+              const s = arr[i];
+              if (s && ITEMS[s.id] && Number.isFinite(s.n)) {
+                const stack = { id: s.id, n: Math.max(1, Math.min(ITEMS[s.id].stack, s.n | 0)) };
+                if (Array.isArray(s.plates)) stack.plates = s.plates.filter((p) => ITEMS[p]?.plate);
+                if (ITEMS[s.id]?.container && s.liquid) {
+                  stack.liquid = { id: s.liquid.id, amount: +s.liquid.amount || 0 };
+                  Liquid.sanitize(stack, ITEMS[s.id]);
+                }
+                out[i] = stack;
+              }
+            }
+            return out;
+          };
+          inv.hot = clean(data.inv.hot, 7);
+          inv.main = clean(data.inv.main, 28);
+          if (Number.isInteger(data.inv.sel)) inv.sel = Math.max(0, Math.min(6, data.inv.sel));
+          if (Number.isFinite(data.inv.dose)) inv.dose = Math.max(0, data.inv.dose);
+          if (data.inv.armor) {
+            for (const slot of ['head', 'chest', 'legs', 'feet', 'hands']) {
+              const s = data.inv.armor[slot];
+              if (s && ITEMS[s.id]?.armor) {
+                inv.armor[slot] = { id: s.id, n: 1 };
+                if (Array.isArray(s.plates)) inv.armor[slot].plates = s.plates.filter((p) => ITEMS[p]?.plate);
+              }
+            }
+          }
+        }
+        if (data.vitals) {
+          if (Number.isFinite(data.vitals.hp)) vitals.hp = Math.max(0, Math.min(100, data.vitals.hp));
+          if (Number.isFinite(data.vitals.hunger)) vitals.hunger = Math.max(0, Math.min(100, data.vitals.hunger));
+          if (Number.isFinite(data.vitals.immunity)) vitals.infectionImmunity = Math.max(0, data.vitals.immunity);
+          if (data.vitals.foodNumb && typeof data.vitals.foodNumb === 'object') {
+            for (const [id, n] of Object.entries(data.vitals.foodNumb)) {
+              if (ITEMS[id]?.consumable?.food && Number.isFinite(n)) vitals.foodNumb[id] = Math.max(-2, Math.min(2, n));
+            }
+          }
+          for (const t of Object.keys(WOUNDS)) {
+            if (data.vitals.wounds && Number.isFinite(data.vitals.wounds[t])) vitals.wounds[t] = Math.max(0, data.vitals.wounds[t]);
+          }
+        }
+        if (Number.isInteger(data.day) && data.day > 0) clock.day = data.day;
+        if (Number.isFinite(data.dayT)) clock.t = Math.max(0, Math.min(TUNING.DAY_SECONDS - 1, data.dayT));
+        if (data.timeLock === true) {
+          timeLock = TUNING.DAY_SECONDS * ((TUNING.DAY_FRACTION ?? 0.5) / 2);
+          clock.t = timeLock;
+        }
+        if (Number.isFinite(data.prayReadyAt)) prayReadyAt = Math.max(0, data.prayReadyAt);
+        if (Array.isArray(data.torches)) {
+          for (const t of data.torches) {
+            if (Array.isArray(t) && t.length >= 6 && t.slice(0, 6).every(Number.isFinite)) {
+              const id = t[6] || 'torch';
+              const dx = t[3], dy = t[4], dz = t[5];
+              const len = Math.hypot(dx, dy, dz) || 1;
+              const nx = dx / len, ny = dy / len, nz = dz / len;
+              // Saved delta was pos-anchor; old saves used different anchor depths
+              // (wall at surface, floor 0.29m below), so recompute a solid anchor.
+              const floor = ITEMS[id]?.light?.mount === 'floor';
+              const depth = floor ? 0.09 : 0.38;
+              addTorch(t[0], t[1], t[2], nx, ny, nz, id, t[0] - nx * depth, t[1] - ny * depth, t[2] - nz * depth);
+            }
+          }
+        }
+        return data;
+      }
+
+      async load() {
+        const data = await this.readSave();
+        if (!data) return null;
+        return this.applySave(data);
       }
     }
 
@@ -2649,6 +3104,38 @@
 
 
 
+
+    // Long-wavelength ridge field for the distant-range backdrop. It works at
+    // a scale the world's own terrain does not have (10-20 km belts), so the
+    // far rings can carry a horizon that the near terrain cannot.
+    // How far the far ring follows the real ground before it eases into the
+    // smooth terrain trend. The ring used to sit a flat 6 m under the trend,
+    // so where the detailed chunks ended the world visibly dropped off in a
+    // straight line in front of the player.
+    const FAR_RING_BLEND = 48;
+
+    // The detail square: the chunks the player can walk on span
+    // centre-96 .. centre+112 in both axes (the player's own chunk plus six
+    // in each direction). These two helpers say how far a ring cell is
+    // outside that square, and how much of the real ground it keeps there.
+    function farRingEdge(coord, centre) {
+      return coord >= centre ? (DETAIL_CHUNK_RADIUS + 1) * CHUNK_SIZE : DETAIL_CHUNK_RADIUS * CHUNK_SIZE;
+    }
+    function farRingBeyond(wx, wz, centerX, centerZ) {
+      return Math.max(Math.abs(wx - centerX) - farRingEdge(wx, centerX),
+        Math.abs(wz - centerZ) - farRingEdge(wz, centerZ));
+    }
+    function farRingBlendWeight(beyond) {
+      const t = Math.max(0, Math.min(1, beyond / FAR_RING_BLEND));
+      return t * t * (3 - 2 * t);
+    }
+
+    function farRidge(sx, sz) {
+      const belt = fbm3(sx * 0.00008, 91.3, sz * 0.00008, 2) * 2 - 1;
+      const warp = fbm3(sx * 0.00013, 12.7, sz * 0.00013, 2) * 2 - 1;
+      const ridge = 1 - Math.abs(fbm3((sx + warp * 900) * 0.00011, 55.1, (sz + warp * 900) * 0.00011, 2) * 2 - 1);
+      return Math.max(0, belt - 0.12) * (0.4 + 0.6 * ridge * ridge);
+    }
 
     class FarTerrainRenderer {
       constructor(scene, biomeTextures, stoneTexture, world) {
@@ -2669,49 +3156,192 @@
           shader.uniforms.farSnowMap = { value: biomeTextures.snow };
           shader.uniforms.farAshMap = { value: biomeTextures.ash };
           shader.uniforms.farStoneMap = { value: stoneTexture };
+          shader.uniforms.farDirtMap = { value: world.dirtTexture };
           shader.uniforms.uHazeColor = { value: new THREE.Color(0x9ec9e8) };
           shader.uniforms.uHazeStart = { value: DETAIL_CHUNK_RADIUS * CHUNK_SIZE };
-          shader.uniforms.uHazeDensity = { value: 0 };
+          shader.uniforms.uHazeEnd = { value: 1 };
+          shader.uniforms.uHazeReach = { value: FAR_HAZE_REACH };
+          shader.uniforms.uFarStoneY = { value: WORLD_TERRAIN === 'realistic' ? 1e6 : 50 };
           shader.vertexShader = shader.vertexShader
-            .replace('#include <common>', '#include <common>\nattribute vec4 aFarSurf; varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal;')
+            .replace('#include <common>', '#include <common>\nattribute vec4 aFarSurf; attribute vec3 aFarCol; attribute vec3 aFarData; attribute float aFarY; varying vec4 vFarSurf; varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY; varying vec3 vFarPos; varying vec3 vFarNormal; varying float vFarDepth;')
             .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFarNormal = normalize(mat3(modelMatrix) * objectNormal);');
-          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarSurf = aFarSurf;');
+          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarSurf = aFarSurf;\nvFarCol = aFarCol;\nvFarData = aFarData;\nvFarY = aFarY;\nvFarDepth = -mvPosition.z;');
           shader.fragmentShader = shader.fragmentShader
             .replace('#include <common>', `#include <common>
             uniform sampler2D farGrassMap; uniform sampler2D farSandMap; uniform sampler2D farDryMap;
             uniform sampler2D farSnowMap; uniform sampler2D farAshMap; uniform sampler2D farStoneMap;
-            uniform vec3 uHazeColor; uniform float uHazeStart; uniform float uHazeDensity;
-            varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal;
+            uniform sampler2D farDirtMap;
+            uniform vec3 uHazeColor; uniform float uHazeStart; uniform float uHazeEnd;
+            uniform float uHazeReach;
+            uniform float uFarStoneY;
+            varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY;
+            varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal; varying float vFarDepth;
             vec3 farTri(sampler2D m, vec3 p, vec3 n, float s) {
               vec3 w = pow(abs(n), vec3(4.0)); w /= w.x + w.y + w.z;
               return texture2D(m, p.zy * s).rgb * w.x + texture2D(m, p.xz * s).rgb * w.y + texture2D(m, p.xy * s).rgb * w.z;
+            }
+            vec3 farRotY(vec3 p, float a) {
+              float c = cos(a), s = sin(a);
+              return vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c);
             }`)
+            // Same surface rules as the near terrain shader (game.js): the same
+            // stone / dirt / grass masks, the same textures and the same scales.
+            // Anything less and the seam where the fake rings meet the real
+            // chunks shows as a colour jump.
             .replace('#include <map_fragment>', `#include <map_fragment>
             vec3 farN = normalize(vFarNormal);
-            vec3 farGrass = farTri(farGrassMap, vFarPos, farN, 0.4);
-            vec3 farTop = farGrass * max(0.0, 1.0 - dot(vFarSurf, vec4(1.0)))
-              + farTri(farSandMap, vFarPos, farN, 0.30) * vFarSurf.x
-              + farTri(farDryMap, vFarPos, farN, 0.40) * vFarSurf.y
-              + farTri(farSnowMap, vFarPos, farN, 0.22) * vFarSurf.z
-              + farTri(farAshMap, vFarPos, farN, 0.35) * vFarSurf.w;
             vec3 farStone = farTri(farStoneMap, vFarPos, farN, 0.08);
-            diffuseColor.rgb = mix(farTop, farStone, step(50.0, vFarPos.y));`)
+            vec3 farBase = mix(vFarCol, farStone, vFarData.x);
+            farBase = mix(farBase, farTri(farDirtMap, vFarPos, farN, 0.1), vFarData.y);
+            vec3 farTop = farTri(farGrassMap, vFarPos, farN, 0.4);
+            farTop = mix(farTop, farTri(farSandMap, vFarPos, farN, 0.30), vFarSurf.x);
+            farTop = mix(farTop, farTri(farDryMap,  vFarPos, farN, 0.40), vFarSurf.y);
+            farTop = mix(farTop, farTri(farSnowMap, vFarPos, farN, 0.22), vFarSurf.z);
+            vec3 farAsh = (farTri(farAshMap, farRotY(vFarPos, 0.0),    farN, 0.35)
+                         + farTri(farAshMap, farRotY(vFarPos, 2.0944), farN, 0.35)
+                         + farTri(farAshMap, farRotY(vFarPos, 4.1888), farN, 0.35)) * (1.0 / 3.0);
+            farTop = mix(farTop, farAsh, vFarSurf.w);
+            farBase = mix(farBase, farTop, vFarData.z);
+            farBase = mix(farBase, farStone, step(uFarStoneY, vFarY));
+            diffuseColor.rgb = farBase;`)
             // Own distance haze: the far rings fade into the sky exactly at the
             // outer edge of the outermost ring, so its border is never visible.
             .replace('#include <fog_fragment>', `
-            float hazeD = distance(cameraPosition, vFarPos);
-            float hazeF = 1.0 - exp(-pow(max(0.0, hazeD - uHazeStart) * uHazeDensity, 2.0));
+            float hazeD = vFarDepth;
+            float hazeU = clamp((hazeD - uHazeStart) / max(1.0, uHazeEnd - uHazeStart), 0.0, 1.0);
+            float hazeF = 1.0 - exp(-uHazeReach * hazeU * hazeU * hazeU * hazeU);
             gl_FragColor.rgb = mix(gl_FragColor.rgb, uHazeColor, hazeF);`);
         };
         this.meshes = [];
+        this.treeMeshes = [];
+        this.treeGeo = this._makeTreeGeo();
+        this.treeMat = this._makeTreeMat();
+        this.treeShader = null;
         this.centerKey = '';
         this.token = 0;
       }
 
-      disposeMeshes(meshes = this.meshes) {
+      _makeTreeGeo() {
+        const w = 0.55, h = 1;
+        const pos = new Float32Array([
+          -w, 0, 0,  w, 0, 0,  w, h, 0,  -w, h, 0,
+           0, 0,-w,  0, 0, w,  0, h, w,   0, h,-w,
+        ]);
+        const uv = new Float32Array([
+          0,0, 1,0, 1,1, 0,1,
+          0,0, 1,0, 1,1, 0,1,
+        ]);
+        const idx = [0,1,2, 0,2,3, 4,5,6, 4,6,7];
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        g.setIndex(idx);
+        g.computeVertexNormals();
+        return g;
+      }
+
+      _makeTreeMat() {
+        const c = document.createElement('canvas');
+        c.width = 16; c.height = 32;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, 16, 32);
+        // neutral white silhouette; per-instance color comes from actual models
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.ellipse(8, 11, 7, 10, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#d8d8d8';
+        ctx.beginPath(); ctx.ellipse(8, 9, 5, 6, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#b0b0b0';
+        ctx.fillRect(6, 18, 4, 14);
+        const tex = new THREE.CanvasTexture(c);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.45, side: THREE.DoubleSide, fog: false, vertexColors: true });
+        mat.onBeforeCompile = (shader) => {
+          this.treeShader = shader;
+          shader.uniforms.uHazeColor = { value: new THREE.Color(0x9ec9e8) };
+          shader.uniforms.uHazeStart = { value: DETAIL_CHUNK_RADIUS * CHUNK_SIZE };
+          shader.uniforms.uHazeEnd = { value: 1 };
+          shader.uniforms.uHazeReach = { value: FAR_HAZE_REACH };
+          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarDepth = -mvPosition.z;');
+          shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying float vFarDepth;');
+          shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uHazeColor; uniform float uHazeStart; uniform float uHazeEnd; uniform float uHazeReach;\nvarying float vFarDepth;');
+          shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `
+            float hazeD = vFarDepth;
+            float hazeU = clamp((hazeD - uHazeStart) / max(1.0, uHazeEnd - uHazeStart), 0.0, 1.0);
+            float hazeF = 1.0 - exp(-uHazeReach * hazeU * hazeU * hazeU * hazeU);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, uHazeColor, hazeF);`);
+        };
+        return mat;
+      }
+
+      _vegModelColor(sp) {
+        if (sp._farCol) return sp._farCol;
+        let r = 0, g = 0, b = 0, n = 0;
+        if (sp.parts) {
+          for (const part of sp.parts) {
+            const m = part.mat || (part.mesh && part.mesh.material);
+            if (!m) continue;
+            let cr = m.color ? m.color.r : 1, cg = m.color ? m.color.g : 1, cb = m.color ? m.color.b : 1;
+            const img = m.map && m.map.image;
+            if (img && (img.width || img.naturalWidth)) {
+              try {
+                const cw = 8, ch = 8;
+                const cv = document.createElement('canvas');
+                cv.width = cw; cv.height = ch;
+                const cx = cv.getContext('2d');
+                cx.drawImage(img, 0, 0, cw, ch);
+                const d = cx.getImageData(0, 0, cw, ch).data;
+                let tr = 0, tg = 0, tb = 0, tn = 0;
+                for (let i = 0; i < d.length; i += 4) {
+                  if (d[i + 3] < 40) continue;
+                  tr += d[i]; tg += d[i + 1]; tb += d[i + 2]; tn++;
+                }
+                if (tn) { cr *= tr / (tn * 255); cg *= tg / (tn * 255); cb *= tb / (tn * 255); }
+              } catch (e) {}
+            }
+            r += cr; g += cg; b += cb; n++;
+          }
+        }
+        if (!n) sp._farCol = (/dead|waste/i.test(sp.n)) ? new THREE.Color(0.38, 0.33, 0.27) : new THREE.Color(0.24, 0.42, 0.18);
+        else {
+          const c = new THREE.Color(r / n, g / n, b / n);
+          const m = Math.max(c.r, c.g, c.b);
+          if (m > 0 && m < 0.22) c.multiplyScalar(0.22 / m);
+          sp._farCol = c;
+        }
+        return sp._farCol;
+      }
+
+      _farCanopyResolve(pl) {
+        const sp = pl.sp;
+        if (industrialInside(pl.x, pl.z)) return null;
+        const wsurf = this.world.surfaceAt(pl.x, pl.z);
+        const wet = wsurf !== -Infinity;
+        if (wet) return null;
+        const fromY = Math.ceil(terrainTrend(pl.x + WORLD_SEED, pl.z + WORLD_SEED)) + 12;
+        const y = this.world.surfaceY(pl.x, pl.z, fromY);
+        if (y <= -8) return null;
+        if (mountainRockAt(pl.x, pl.z)) return null;
+        if (WORLD_TERRAIN === 'realistic' && y > 112) return null;
+        if (caveCarveAt(pl.x + WORLD_SEED, y + 0.4, pl.z + WORLD_SEED) > 0.02) return null;
+        if (groundDepth(pl.x, y, pl.z) >= 1.2) return null;
+        const n = this.world.getSurfaceNormal(pl.x, y, pl.z);
+        if (n.y < sp.slope) return null;
+        const root = (sp.trunk && sp.align === 'upright') ? 0.7 : 0;
+        pl.y = y - (sp.sink + root) + 0.02;
+        return pl;
+      }
+
+      disposeMeshes(meshes = this.meshes, trees = this.treeMeshes) {
         for (const mesh of meshes) {
           this.scene.remove(mesh);
           mesh.geometry.dispose();
+        }
+        for (const mesh of trees) {
+          this.scene.remove(mesh);
+          if (mesh.instanceMatrix) mesh.instanceMatrix = null;
+          if (mesh.instanceColor) mesh.instanceColor = null;
         }
       }
 
@@ -2737,28 +3367,36 @@
         this.centerKey = key;
         const token = ++this.token;
         const nextMeshes = [];
+        const nextTreeMeshes = [];
 
         if (!steps.length) {
-          this.disposeMeshes();
+          this.disposeMeshes(this.meshes, this.treeMeshes);
           this.meshes = [];
+          this.treeMeshes = [];
           progress(1);
           return;
         }
 
-        const side = 64;
+        const side = radius > 4096 ? 32 : 48;
         const row = side + 1;
         const vertexCount = row * row;
         const totalSamples = steps.length * vertexCount;
         let sampled = 0;
         let batch = 0;
+        let tBuild = performance.now();
         const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
         for (let level = 0; level < steps.length; level++) {
           const step = steps[level];
-          const innerCells = level === 0 ? 5 : 8;
+          // Meet the neighbouring ring exactly: level 0 leaves the detailed
+          // area open, outer rings start where the previous ring ends.
+          const innerCells = level === 0 ? Math.ceil(((DETAIL_CHUNK_RADIUS + 1) * CHUNK_SIZE) / step) : side / 8;
           const positions = new Float32Array(vertexCount * 3);
           const uvs = new Float32Array(vertexCount * 2);
           const farSurf = new Float32Array(vertexCount * 4);
+          const farCol = new Float32Array(vertexCount * 3);
+          const farData = new Float32Array(vertexCount * 3);
+          const farHeight = new Float32Array(vertexCount);
           const indices = [];
 
           for (let z = 0; z <= side; z++) {
@@ -2773,32 +3411,62 @@
 
               if (Math.abs(x - side / 2) >= innerCells || Math.abs(z - side / 2) >= innerCells) {
                 const wx = centerX + lx, wz = centerZ + lz;
-                for (const biome of biomeWeights(wx + WORLD_SEED, wz + WORLD_SEED)) {
-                  const surf = BIOME_DEFS[biome.id].surf;
-                  const channel = surf === 'sand' ? 0 : surf === 'dry' ? 1 : surf === 'snow' ? 2 : surf === 'ash' ? 3 : -1;
-                  if (channel >= 0) farSurf[i * 4 + channel] += biome.w;
-                }
                 const baseY = terrainTrend(wx + WORLD_SEED, wz + WORLD_SEED);
+                // Classify the surface exactly the way the near terrain does:
+                // dominant-biome surf flags and the stone / dirt / grass masks.
+                // The far rings used to blend the biome weights instead, which
+                // tinted the fake terrain a different colour from the real
+                // chunks it butts against.
+                const colY = columnDensity(wx + WORLD_SEED, wz + WORLD_SEED).h;
+                // Classify at the real ground level, so the far rings see the
+                // same "this is the surface" reading the near mesh does.
+                const surfY = WORLD_TERRAIN === 'realistic'
+                  ? groundYAt(wx + WORLD_SEED, wz + WORLD_SEED)
+                  : colY;
+                const col = surfaceColor(wx, surfY, wz);
+                farCol[i * 3] = col[0]; farCol[i * 3 + 1] = col[1]; farCol[i * 3 + 2] = col[2];
+                farData[i * 3] = stoneMask; farData[i * 3 + 1] = dirtMask; farData[i * 3 + 2] = grassMask;
+                farSurf[i * 4] = _surf[0]; farSurf[i * 4 + 1] = _surf[1];
+                farSurf[i * 4 + 2] = _surf[2]; farSurf[i * 4 + 3] = _surf[3];
+                farHeight[i] = colY;
                 const pad = level === 0 ? industrialPadAt(wx, wz) : null;
                 const terrainY = pad ? baseY + (pad.site.y0 - baseY) * pad.w : baseY;
-                const edgeDistance = Math.max(Math.abs(x - side / 2), Math.abs(z - side / 2)) - innerCells;
-                let y = terrainY - 6;
-                if (level === 0 && edgeDistance <= 2) {
-                  const actualY = this.world.surfaceY(wx, wz, Math.ceil(terrainY + 16));
-                  const t = Math.max(0, Math.min(1, edgeDistance / 2));
-                  const blend = t * t * (3 - 2 * t);
-                  y = actualY + (terrainY - 6 - actualY) * blend;
+                // Distant-range backdrop: a ridge line the near terrain cannot
+                // show, scaled so it keeps the same apparent size at any
+                // distance, and faded out as the player gets close to it.
+                const dist = Math.hypot(wx - px, wz - pz);
+                let fade = (dist - FAR_RANGE_START) / (FAR_RANGE_FULL - FAR_RANGE_START);
+                fade = fade < 0 ? 0 : fade > 1 ? 1 : fade;
+                const backdrop = FAR_RANGE_AMP * (dist / FAR_RANGE_REF) * fade * fade * (3 - 2 * fade)
+                  * farRidge(wx + WORLD_SEED, wz + WORLD_SEED);
+                const farY = (pad ? terrainY : colY) + backdrop;
+                // The ring has to continue the ground the player is standing on.
+                // Inside the detail square (the chunks the player can walk on)
+                // it follows the real surface, 0.75 m under it: the chunk mesh
+                // hides it there and it must not fight the mesh for depth.
+                // Just outside, it eases into the smooth trend over the next
+                // 48 m, so where the detailed chunks end there is no step in
+                // front of the player and no cliff down to a smoothed world.
+                const beyond = farRingBeyond(wx, wz, centerX, centerZ);
+                let y = farY;
+                if (level === 0 && beyond <= FAR_RING_BLEND) {
+                  const realY = this.world.getSurfaceHeight(wx, wz, Math.ceil(Math.max(terrainY, colY) + 24)) - 0.75;
+                  y = realY + (farY - realY) * farRingBlendWeight(beyond);
                 }
                 positions[i * 3 + 1] = y;
               }
               sampled++;
-              if (++batch >= 256) {
-                batch = 0;
-                progress((sampled - batch) / totalSamples);
-                await nextFrame();
-                if (token !== this.token) {
-                  this.disposeMeshes(nextMeshes);
-                  return;
+              if (++batch >= 32) {
+                const _tb = (batch & 31) === 0;
+                if (batch >= 256 || (_tb && performance.now() - tBuild > 6)) {
+                  batch = 0;
+                  progress(sampled / totalSamples);
+                  await nextFrame();
+                  tBuild = performance.now();
+                  if (token !== this.token) {
+                    this.disposeMeshes(nextMeshes, nextTreeMeshes);
+                    return;
+                  }
                 }
               }
             }
@@ -2835,6 +3503,12 @@
           meshUvs.set(uvs);
           const meshFarSurf = new Float32Array((vertexCount + skirtCount) * 4);
           meshFarSurf.set(farSurf);
+          const meshFarCol = new Float32Array((vertexCount + skirtCount) * 3);
+          meshFarCol.set(farCol);
+          const meshFarData = new Float32Array((vertexCount + skirtCount) * 3);
+          meshFarData.set(farData);
+          const meshFarHeight = new Float32Array(vertexCount + skirtCount);
+          meshFarHeight.set(farHeight);
           let skirtIndex = vertexCount;
           for (const edge of boundaries) {
             const lower = [];
@@ -2848,6 +3522,11 @@
               for (let channel = 0; channel < 4; channel++) {
                 meshFarSurf[bottom * 4 + channel] = farSurf[top * 4 + channel];
               }
+              for (let c = 0; c < 3; c++) {
+                meshFarCol[bottom * 3 + c] = farCol[top * 3 + c];
+                meshFarData[bottom * 3 + c] = farData[top * 3 + c];
+              }
+              meshFarHeight[bottom] = farHeight[top];
               lower.push(bottom);
             }
             for (let i = 0; i < edge.length; i++) {
@@ -2860,6 +3539,9 @@
           geometry.setAttribute('position', new THREE.BufferAttribute(meshPositions, 3));
           geometry.setAttribute('uv', new THREE.BufferAttribute(meshUvs, 2));
           geometry.setAttribute('aFarSurf', new THREE.BufferAttribute(meshFarSurf, 4));
+          geometry.setAttribute('aFarCol', new THREE.BufferAttribute(meshFarCol, 3));
+          geometry.setAttribute('aFarData', new THREE.BufferAttribute(meshFarData, 3));
+          geometry.setAttribute('aFarY', new THREE.BufferAttribute(meshFarHeight, 1));
           geometry.setIndex(indices);
           geometry.computeVertexNormals();
           geometry.computeBoundingSphere();
@@ -2867,16 +3549,78 @@
           mesh.position.set(centerX, 0, centerZ);
           mesh.frustumCulled = true;
           nextMeshes.push(mesh);
+
+          const treeMesh = this._buildFarTrees(level, step, innerCells, side, centerX, centerZ);
+          if (treeMesh) nextTreeMeshes.push(treeMesh);
         }
 
         if (token !== this.token) {
-          this.disposeMeshes(nextMeshes);
+          this.disposeMeshes(nextMeshes, nextTreeMeshes);
           return;
         }
         for (const mesh of nextMeshes) this.scene.add(mesh);
-        this.disposeMeshes();
+        for (const mesh of nextTreeMeshes) this.scene.add(mesh);
+        this.disposeMeshes(this.meshes, this.treeMeshes);
         this.meshes = nextMeshes;
+        this.treeMeshes = nextTreeMeshes;
         progress(1);
+      }
+
+      _buildFarTrees(level, step, innerCells, side, centerX, centerZ) {
+        if (typeof VEG_LAYERS === 'undefined' || typeof vegCell !== 'function') return null;
+        // Fake billboard trees read poorly up close; keep them for distant rings only.
+        if (level < 2) return null;
+        if (viewRadius * CHUNK_SIZE > 8192 && level > 2) return null;
+        const cell = VEG_LAYERS.canopy.cell;
+        const half = (side / 2) * step;
+        const hole = innerCells * step;
+        const stride = level <= 0 ? 1 : (level === 1 ? 2 : (level === 2 ? 3 : 4));
+        const gx0 = Math.floor((centerX - half) / cell);
+        const gx1 = Math.floor((centerX + half) / cell);
+        const gz0 = Math.floor((centerZ - half) / cell);
+        const gz1 = Math.floor((centerZ + half) / cell);
+        const cap = viewRadius * CHUNK_SIZE > 4096 ? 450 : 900;
+        const mats = [];
+        const cols = [];
+        let n = 0;
+        const m = new THREE.Matrix4();
+        const q = new THREE.Quaternion();
+        const p = new THREE.Vector3();
+        const s = new THREE.Vector3();
+        const up = new THREE.Vector3(0, 1, 0);
+        for (let gz = gz0; gz <= gz1 && n < cap; gz += stride) {
+          for (let gx = gx0; gx <= gx1 && n < cap; gx += stride) {
+            const base = vegCell('canopy', gx, gz);
+            if (!base) continue;
+            const lx = base.x - centerX, lz = base.z - centerZ;
+            if (Math.abs(lx) > half || Math.abs(lz) > half) continue;
+            if (Math.abs(lx) < hole && Math.abs(lz) < hole) continue;
+            if (level === 0 && farRingBeyond(base.x, base.z, centerX, centerZ) <= 24) continue;
+            const pl = this._farCanopyResolve({ ...base, sp: base.sp, x: base.x, z: base.z, b: base.b, scale: base.scale, yaw: base.yaw, gx: base.gx, gz: base.gz });
+            if (!pl) continue;
+            p.set(base.x - centerX, pl.y, base.z - centerZ);
+            q.setFromAxisAngle(up, base.yaw);
+            s.set(base.scale, base.scale, base.scale);
+            m.compose(p, q, s);
+            mats.push(m.clone());
+            cols.push(this._vegModelColor(base.sp));
+            n++;
+          }
+        }
+        if (!n) return null;
+        const mesh = new THREE.InstancedMesh(this.treeGeo, this.treeMat, n);
+        mesh.count = n;
+        mesh.frustumCulled = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.position.set(centerX, 0, centerZ);
+        if (!mesh.instanceColor) mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+        for (let i = 0; i < n; i++) {
+          mesh.setMatrixAt(i, mats[i]);
+          mesh.setColorAt(i, cols[i]);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
+        return mesh;
       }
 
       update(px, pz) {
@@ -2888,16 +3632,23 @@
         const centerX = Math.floor(px / CHUNK_SIZE) * CHUNK_SIZE;
         const centerZ = Math.floor(pz / CHUNK_SIZE) * CHUNK_SIZE;
         const key = `${centerX},${centerZ},${steps.join(':')}`;
-        if (key !== this.centerKey) this.rebuild(px, pz).catch((e) => console.warn('far terrain build failed', e));
+        if (key === this.centerKey) return;
+        this.rebuild(px, pz).catch((e) => console.warn('far terrain build failed', e));
       }
 
       // Fade the rings into the sky. The haze is complete at `visFar` (the outer
       // ring edge or the camera's far plane, whichever comes first), so the fake
       // terrain has no visible border.
       setHaze(visFar) {
-        if (!this.shader) return;
-        this.shader.uniforms.uHazeColor.value.copy(this.scene.fog.color);
-        this.shader.uniforms.uHazeDensity.value = visFar > 0 ? FAR_HAZE_REACH / visFar : 0;
+        const col = this.scene.fog ? this.scene.fog.color : null;
+        if (this.shader) {
+          if (col) this.shader.uniforms.uHazeColor.value.copy(col).convertLinearToSRGB();
+          this.shader.uniforms.uHazeEnd.value = Math.max(1, visFar);
+        }
+        if (this.treeShader) {
+          if (col) this.treeShader.uniforms.uHazeColor.value.copy(col).convertLinearToSRGB();
+          this.treeShader.uniforms.uHazeEnd.value = Math.max(1, visFar);
+        }
       }
 
       async prewarm(px, pz, progress = () => {}) {
@@ -2906,85 +3657,305 @@
     }
 
 
+    // Entity movement and pathfinding (walkers/wrappers).
+    function entityBlocked(x, y, z, r, h) {
+      const f = world.field;
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2;
+        const dx = Math.cos(ang) * r, dz = Math.sin(ang) * r;
+        for (let yy = 0.2; yy <= h; yy += 0.5) {
+          if (f.sample(x + dx, y + yy, z + dz) > 0) return true;
+        }
+      }
+      for (let yy = 0.2; yy <= h; yy += 0.5) {
+        if (f.sample(x, y + yy, z) > 0) return true;
+      }
+      if (buildingSystem?.collidesBody(x, y, z, r, h)) return true;
+      if (structureCollidesBody(x, y, z, r, h)) return true;
+      return false;
+    }
+
+    function entityGroundY(x, z, hintY) {
+      const fromY = hintY + 6;
+      const sy = world.surfaceY(x, z, fromY);
+      // surfaceY returns fromY when it finds no crossing.
+      if (!Number.isFinite(sy) || sy >= fromY - 0.001 || sy < hintY - 40) {
+        return world.getSurfaceHeight(x, z, Math.max(fromY, 90));
+      }
+      return sy;
+    }
+
+    function entityStandY(x, z, hintY, r, h) {
+      const gy = entityGroundY(x, z, hintY);
+      if (!Number.isFinite(gy)) return null;
+      // Try terrain surface, then nudge up to clear small lips/precision.
+      for (let up = 0; up <= 1.25; up += 0.25) {
+        const y = gy + up;
+        if (!entityBlocked(x, y, z, r, h)) return y;
+      }
+      // If embedded (terrain edited underfoot), scan upward a bit.
+      for (let up = 1.5; up <= 3.0; up += 0.5) {
+        const y = gy + up;
+        if (!entityBlocked(x, y, z, r, h)) return y;
+      }
+      return null;
+    }
+
+    function entityPath(sx, sz, sy, tx, tz, r, h) {
+      const step = 1;
+      const maxStep = 1.15;
+      const ox = Math.floor(sx), oz = Math.floor(sz);
+      const gx = Math.floor(tx), gz = Math.floor(tz);
+      const key = (x, z) => `${x},${z}`;
+
+      const stand = new Map();
+      const getStand = (x, z, hint) => {
+        const k = key(x, z);
+        if (stand.has(k)) return stand.get(k);
+        const wy = entityStandY(x + 0.5, z + 0.5, hint, r, h);
+        stand.set(k, wy);
+        return wy;
+      };
+
+      const sy0 = getStand(ox, oz, sy);
+      const gy0 = getStand(gx, gz, sy);
+      if (sy0 == null) return null;
+      const goalY = gy0 == null ? sy : gy0;
+
+      const open = [{ x: ox, z: oz, y: sy0, g: 0, f: 0, p: null }];
+      const gScore = new Map([[key(ox, oz), 0]]);
+      const closed = new Set();
+      const dirs = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+      let best = open[0], bestH = Infinity;
+      let expanded = 0;
+
+      while (open.length && expanded < 500) {
+        // Pick lowest f (small open set, linear scan is fine).
+        let bi = 0;
+        for (let i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
+        const cur = open.splice(bi, 1)[0];
+        const ck = key(cur.x, cur.z);
+        if (closed.has(ck)) continue;
+        closed.add(ck);
+        expanded++;
+
+        const hdist = Math.hypot(gx - cur.x, gz - cur.z);
+        if (hdist < bestH) { bestH = hdist; best = cur; }
+        if (cur.x === gx && cur.z === gz) { best = cur; break; }
+
+        for (const [dx, dz, cost] of dirs) {
+          const nx = cur.x + dx, nz = cur.z + dz;
+          const nk = key(nx, nz);
+          if (closed.has(nk)) continue;
+          // Keep search local.
+          if (Math.abs(nx - ox) > 28 || Math.abs(nz - oz) > 28) continue;
+          if (dx && dz) {
+            const ay = getStand(cur.x + dx, cur.z, cur.y);
+            const by = getStand(cur.x, cur.z + dz, cur.y);
+            if (ay == null || by == null) continue;
+            if (Math.abs(ay - cur.y) > maxStep || Math.abs(by - cur.y) > maxStep) continue;
+          }
+          const ny = getStand(nx, nz, cur.y);
+          if (ny == null) continue;
+          if (Math.abs(ny - cur.y) > maxStep) continue;
+          // Clearance along the move (midpoint) to avoid clipping corners.
+          const mx = (cur.x + nx) * 0.5 + 0.5, mz = (cur.z + nz) * 0.5 + 0.5;
+          const my = Math.max(cur.y, ny);
+          if (entityBlocked(mx, my, mz, r, h)) continue;
+
+          const ng = cur.g + cost;
+          if (ng >= (gScore.get(nk) ?? Infinity)) continue;
+          gScore.set(nk, ng);
+          const nh = Math.hypot(gx - nx, gz - nz);
+          open.push({ x: nx, z: nz, y: ny, g: ng, f: ng + nh, p: cur });
+        }
+      }
+
+      // Reconstruct path (skip start cell).
+      const path = [];
+      let n = best;
+      while (n && n.p) { path.push({ x: n.x + 0.5, z: n.z + 0.5, y: n.y }); n = n.p; }
+      path.reverse();
+      if (!path.length) return null;
+      // Aim final step at the actual goal point.
+      const end = path[path.length - 1];
+      end.x = tx; end.z = tz;
+      if (gy0 != null) end.y = gy0; else end.y = goalY;
+      return path;
+    }
+
     class Walker {
       constructor(world, x, z) {
         this.world = world;
         this.speed = 3.2;
+        this.radius = 0.4;
+        this.height = 1.6;
+        this.vy = 0;
+        this.onGround = false;
 
-        const y = world.getSurfaceHeight(x, z);
-        this.pos = new THREE.Vector3(x, y, z);
+        const y = entityStandY(x, z, world.getSurfaceHeight(x, z, 90), this.radius, this.height);
+        this.pos = new THREE.Vector3(x, Number.isFinite(y) ? y : world.getSurfaceHeight(x, z, 90), z);
 
         const geo = new THREE.SphereGeometry(0.55, 12, 10);
         const mat = new THREE.MeshLambertMaterial({ color: 0xff5f7a, emissive: 0x330011 });
         this.mesh = new THREE.Mesh(geo, mat);
+        world.scene.add(this.mesh);
+        this.syncMesh();
+
+        this.path = null;
+        this.pathIdx = 0;
+        this.repathT = 0;
+        this.lastGoal = new THREE.Vector3();
+        this.stuckT = 0;
+        this.lastMove = new THREE.Vector3(x, this.pos.y, z);
+      }
+
+      syncMesh() {
         this.mesh.position.copy(this.pos);
         this.mesh.position.y += 0.55;
-        world.scene.add(this.mesh);
-
-        this.stuckTimer = 0;
       }
 
       update(dt, playerPos) {
-        const dx = playerPos.x - this.pos.x;
-        const dz = playerPos.z - this.pos.z;
-        const dist = Math.hypot(dx, dz);
-
-        if (dist > 0.8) {
-          const nx = dx / dist;
-          const nz = dz / dist;
-
-
-          let moved = this.tryStep(nx, nz, dt);
-
-
-          if (!moved) {
-            const angles = [0.6, -0.6, 1.2, -1.2];
-            for (const a of angles) {
-              const ca = Math.cos(a), sa = Math.sin(a);
-              const rx = nx * ca - nz * sa;
-              const rz = nx * sa + nz * ca;
-              if (this.tryStep(rx, rz, dt)) { moved = true; break; }
-            }
-          }
-
-          if (!moved) {
-            this.stuckTimer += dt;
-            if (this.stuckTimer > 1.2) {
-
-              this.pos.y += 0.35;
-              this.stuckTimer = 0;
-            }
-          } else {
-            this.stuckTimer = 0;
-          }
-        }
-
-
-        const ground = this.world.getSurfaceHeight(this.pos.x, this.pos.z, this.pos.y + 4);
-        this.pos.y += (ground - this.pos.y) * Math.min(1, dt * 12);
-
-        this.mesh.position.copy(this.pos);
-        this.mesh.position.y += 0.55;
+        this.moveToward(dt, playerPos);
+        this.syncMesh();
       }
 
-      tryStep(nx, nz, dt) {
-        const step = this.speed * dt;
-        const tx = this.pos.x + nx * step;
-        const tz = this.pos.z + nz * step;
-        const ground = this.world.getSurfaceHeight(tx, tz, this.pos.y + 3);
+      moveToward(dt, targetPos) {
+        const dtStep = Math.min(dt, 0.05);
+        const tx = targetPos.x, tz = targetPos.z;
+        const dx = tx - this.pos.x, dz = tz - this.pos.z;
+        const dist = Math.hypot(dx, dz);
 
-        if (Math.abs(ground - this.pos.y) > 1.6) return false;
-        if (!this.world.isWalkable(tx, ground, tz, 0.4, 1.6, 1.6)) return false;
+        this.repathT -= dtStep;
+        const goalMoved = Math.hypot(tx - this.lastGoal.x, tz - this.lastGoal.z);
+        if (!this.path || this.repathT <= 0 || goalMoved > 2.5 || this.pathIdx >= this.path.length) {
+          this.path = entityPath(this.pos.x, this.pos.z, this.pos.y, tx, tz, this.radius, this.height);
+          this.pathIdx = 0;
+          this.repathT = this.path ? 0.6 : 0.3;
+          this.lastGoal.set(tx, 0, tz);
+        }
 
-        this.pos.x = tx;
-        this.pos.z = tz;
-        return true;
+        let mx = 0, mz = 0;
+        if (dist > 0.8) {
+          let wx = tx, wz = tz;
+          if (this.path && this.pathIdx < this.path.length) {
+            const wp = this.path[this.pathIdx];
+            wx = wp.x; wz = wp.z;
+            if (Math.hypot(wx - this.pos.x, wz - this.pos.z) < 0.7) {
+              this.pathIdx++;
+              if (this.pathIdx < this.path.length) { wx = this.path[this.pathIdx].x; wz = this.path[this.pathIdx].z; }
+              else { wx = tx; wz = tz; }
+            }
+          } else {
+            wx = tx; wz = tz;
+          }
+          const sdx = wx - this.pos.x, sdz = wz - this.pos.z;
+          const sl = Math.hypot(sdx, sdz);
+          if (sl > 1e-4) { mx = sdx / sl; mz = sdz / sl; }
+        }
+
+        // Gravity and ground.
+        this.vy -= 26 * dtStep;
+        if (this.vy < -40) this.vy = -40;
+
+        const ground = entityGroundY(this.pos.x, this.pos.z, this.pos.y);
+        const tryMoveY = (ny) => {
+          if (entityBlocked(this.pos.x, ny, this.pos.z, this.radius, this.height)) return false;
+          this.pos.y = ny; return true;
+        };
+
+        let ny = this.pos.y + this.vy * dtStep;
+        if (!tryMoveY(ny)) {
+          if (this.vy < 0) {
+            // Land: find contact.
+            for (let i = 0; i < 8; i++) {
+              const mid = (this.pos.y + ny) * 0.5;
+              if (entityBlocked(this.pos.x, mid, this.pos.z, this.radius, this.height)) ny = mid; else this.pos.y = mid;
+            }
+            if (entityBlocked(this.pos.x, ny, this.pos.z, this.radius, this.height)) { /* keep pos.y */ } else this.pos.y = ny;
+            this.vy = 0;
+            this.onGround = true;
+          } else {
+            this.vy = 0; // head bump
+          }
+        } else {
+          this.onGround = false;
+        }
+        // Snap to ground if close.
+        if (this.onGround || (Number.isFinite(ground) && this.pos.y <= ground + 0.05 && this.vy <= 0)) {
+          if (Number.isFinite(ground) && !entityBlocked(this.pos.x, ground, this.pos.z, this.radius, this.height)) {
+            if (this.pos.y - ground < 1.2 || this.vy <= 0) {
+              this.pos.y = ground;
+              this.vy = 0;
+              this.onGround = true;
+            }
+          }
+        }
+        // Stay above terrain when sinking/floating badly.
+        if (Number.isFinite(ground) && this.pos.y < ground - 0.5) {
+          if (!entityBlocked(this.pos.x, ground, this.pos.z, this.radius, this.height)) this.pos.y = ground;
+        }
+
+        // Horizontal movement with stepping.
+        const speed = Math.max(0, this.speed);
+        if ((mx || mz) && speed > 0) {
+          const stepLen = speed * dtStep;
+          const tryMoveXZ = (nx, nz) => {
+            const gy = entityGroundY(nx, nz, this.pos.y);
+            // Try at current height, and step up onto higher ground if needed.
+            const tries = [this.pos.y];
+            if (Number.isFinite(gy)) {
+              const rise = gy - this.pos.y;
+              if (rise > 0.05 && rise <= 1.1) tries.unshift(gy);
+              // Small downhill: allow moving at target ground level to avoid hovering.
+              if (rise < -0.05 && rise >= -1.5 && !entityBlocked(nx, this.pos.y, nz, this.radius, this.height)) {
+                // keep current y, gravity will settle
+              } else if (rise < -0.05 && rise >= -1.5) {
+                tries.push(gy);
+              }
+            }
+            for (const ty of tries) {
+              if (!Number.isFinite(ty)) continue;
+              if (entityBlocked(nx, ty, nz, this.radius, this.height)) continue;
+              this.pos.x = nx; this.pos.z = nz;
+              if (ty > this.pos.y) this.pos.y = ty;
+              return true;
+            }
+            return false;
+          };
+
+          let moved = tryMoveXZ(this.pos.x + mx * stepLen, this.pos.z + mz * stepLen);
+          if (!moved) {
+            // Axis slide.
+            moved = tryMoveXZ(this.pos.x + mx * stepLen, this.pos.z) || tryMoveXZ(this.pos.x, this.pos.z + mz * stepLen);
+          }
+          if (!moved) {
+            // Steer around obstacle.
+            const angs = [0.5, -0.5, 1.0, -1.0, 1.5, -1.5];
+            for (const a of angs) {
+              const ca = Math.cos(a), sa = Math.sin(a);
+              const rx = mx * ca - mz * sa, rz = mx * sa + mz * ca;
+              if (tryMoveXZ(this.pos.x + rx * stepLen, this.pos.z + rz * stepLen)) { moved = true; break; }
+            }
+          }
+          if (!moved) {
+            this.stuckT += dtStep;
+            if (this.stuckT > 0.8) { this.path = null; this.repathT = 0; this.stuckT = 0; }
+          } else {
+            this.stuckT = 0;
+          }
+        } else {
+          this.stuckT = 0;
+        }
+
+        // Prevent drifting far below world in degenerate cases.
+        if (this.pos.y < -20) this.pos.y = entityGroundY(this.pos.x, this.pos.z, 60) || 0;
       }
 
       dispose() {
         this.world.scene.remove(this.mesh);
-        this.mesh.geometry.dispose();
-        this.mesh.material.dispose();
+        this.mesh.geometry?.dispose?.();
+        this.mesh.material?.dispose?.();
       }
     }
 
@@ -3011,6 +3982,12 @@
         world.scene.remove(this.mesh);
         this.mesh.geometry.dispose();
         this.mesh.material.dispose();
+
+        // Wrapper is a larger biped; use a taller body for pathing/collision.
+        this.radius = 0.45;
+        this.height = 1.75;
+        const sy = entityStandY(x, z, this.pos.y, this.radius, this.height);
+        if (Number.isFinite(sy)) this.pos.y = sy;
 
         this.root = cloneSkeleton(tpl.scene);
         this.root.scale.setScalar(WRAPPER.scale);
@@ -3040,10 +4017,14 @@
         this.dead = false;
         this.screamCd = 8 + Math.random() * 12;
         this.speed = WRAPPER.speedWalk;
-        this.pos.y = world.getSurfaceHeight(x, z);
         this.mesh = this.root;
         world.scene.add(this.mesh);
+        this.syncMesh();
         this.play('walk', 0);
+      }
+
+      syncMesh() {
+        this.mesh.position.copy(this.pos);
       }
 
       play(name, fade = 0.25) {
@@ -3074,7 +4055,6 @@
           this.play('walk', 0.3);
         }
 
-
         this.screamCd -= dt;
         if (this.screamCd <= 0) {
           this.screamCd = 14 + Math.random() * 16;
@@ -3082,8 +4062,6 @@
         }
 
         super.update(dt, playerPos);
-        this.mesh.position.y = this.pos.y;
-
 
         const dx = playerPos.x - this.pos.x, dz = playerPos.z - this.pos.z;
         if (Math.hypot(dx, dz) > 0.5) {
@@ -3110,7 +4088,296 @@
         this.world.scene.remove(this.mesh);
         this.mixer?.stopAllAction();
         this.mixer = null;
+      }
+    }
 
+
+
+
+
+    const CHICKEN = {
+      url: 'assets/models/animals/chicken.gltf',
+      height: 0.38,
+      speed: 1.05,
+      despawn: 80,
+    };
+    let chickenTemplate = null;
+    let chickenLoading = false;
+    let chickenSummonPending = false;
+
+    function loadChickenTemplate(onLoad, onError) {
+      if (chickenTemplate) { onLoad?.(chickenTemplate); return; }
+      if (chickenLoading) return;
+      chickenLoading = true;
+      new GLTFLoader().load(CHICKEN.url, (gltf) => {
+        chickenTemplate = { scene: gltf.scene, clips: gltf.animations };
+        chickenLoading = false;
+        if (chickenSummonPending) {
+          chickenSummonPending = false;
+          notice(trySummonEntity('chicken'));
+        }
+        onLoad?.(chickenTemplate);
+      }, undefined, (err) => {
+        chickenLoading = false;
+        if (chickenSummonPending) {
+          chickenSummonPending = false;
+          notice('CHICKEN NOT READY');
+        }
+        console.warn('chicken model failed to load', err);
+        onError?.(err);
+      });
+    }
+
+    function loadChickenForSummon() {
+      if (chickenTemplate) return trySummonEntity('chicken');
+      chickenSummonPending = true;
+      loadChickenTemplate();
+      return chickenLoading || chickenTemplate ? 'LOADING CHICKEN...' : 'CHICKEN NOT READY';
+    }
+
+    loadChickenTemplate();
+
+    class Chicken {
+      constructor(world, x, z, tpl) {
+        this.world = world;
+        this.radius = 0.18;
+        this.height = CHICKEN.height;
+        this.speed = CHICKEN.speed * (0.85 + Math.random() * 0.3);
+        this.hp = 20;
+        this.dead = false;
+
+        const y = entityStandY(x, z, world.getSurfaceHeight(x, z, 90), this.radius, this.height);
+        this.pos = new THREE.Vector3(x, Number.isFinite(y) ? y : world.getSurfaceHeight(x, z, 90), z);
+
+        this.root = cloneSkeleton(tpl.scene);
+
+        // Scale to a sensible chicken height regardless of authoring units.
+        const box = new THREE.Box3().setFromObject(this.root);
+        const size = box.getSize(new THREE.Vector3());
+        const h = Math.max(0.001, size.y);
+        this.root.scale.setScalar(CHICKEN.height / h);
+        box.setFromObject(this.root);
+        this.footOffset = -box.min.y;
+
+        this.root.traverse((o) => {
+          if (!o.isMesh) return;
+          o.frustumCulled = false;
+          o.castShadow = false;
+          const m = o.material;
+          if (m?.map) {
+            m.map.magFilter = THREE.NearestFilter;
+            m.map.minFilter = THREE.NearestFilter;
+            m.map.generateMipmaps = false;
+            m.map.needsUpdate = true;
+          }
+        });
+
+        this.legs = this.findLegs();
+        this.legBase = this.legs.map((l) => ({ x: l.rotation.x, y: l.rotation.y, z: l.rotation.z }));
+        this.legVerts = this.findLegVerts();
+        this.walkPhase = Math.random() * Math.PI * 2;
+        this.walkAmt = 0;
+        this.bob = 0;
+
+        this.wanderTarget = null;
+        this.wanderT = 0;
+        this.idle = 0.5 + Math.random() * 1.5;
+        this.stuckT = 0;
+
+        this.mesh = this.root;
+        this.modelYawOffset = -Math.PI / 2;
+        this.mesh.rotation.y = this.modelYawOffset;
+        world.scene.add(this.mesh);
+        this.syncMesh();
+      }
+
+      hurtBy(amount) {
+        if (this.dead) return;
+        this.hp -= amount;
+        if (this.hp <= 0) {
+          this.dead = true;
+          spawnDrop('raw_chicken', 1, { x: this.pos.x, y: this.pos.y + 0.2, z: this.pos.z });
+        }
+      }
+
+      findLegs() {
+        const legs = [];
+        this.root.traverse((o) => {
+          if (/leg|foot|thigh|shin|ankle/i.test(o.name || '')) legs.push(o);
+        });
+        return legs;
+      }
+
+      findLegVerts() {
+        let mesh = null;
+        this.root.traverse((o) => {
+          if (!mesh && o.isMesh && o.geometry?.attributes?.position) mesh = o;
+        });
+        if (!mesh) return null;
+        const pos = mesh.geometry.attributes.position;
+        const base = Float32Array.from(pos.array);
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (let i = 0; i < pos.count; i++) {
+          const x = base[i * 3], y = base[i * 3 + 1], z = base[i * 3 + 2];
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        const cx = (minX + maxX) * 0.5;
+        const h = Math.max(1e-6, maxY - minY);
+        const legY = minY + h * 0.45;
+        const left = [], right = [];
+        for (let i = 0; i < pos.count; i++) {
+          const x = base[i * 3], y = base[i * 3 + 1];
+          if (y > legY) continue;
+          if (x < cx - 1e-5) left.push(i);
+          else if (x > cx + 1e-5) right.push(i);
+        }
+        if (!left.length || !right.length) return null;
+        return { mesh, pos, base, left, right, swing: h * 0.18, lift: h * 0.08 };
+      }
+
+      applyLegVerts(phase, amt) {
+        const lv = this.legVerts;
+        if (!lv) return false;
+        const arr = lv.pos.array;
+        arr.set(lv.base);
+        const lStep = Math.sin(phase);
+        const rStep = Math.sin(phase + Math.PI);
+        for (const i of lv.left) {
+          const o = i * 3;
+          arr[o + 1] += Math.max(0, lStep) * lv.lift * amt;
+          arr[o + 2] += lStep * lv.swing * amt;
+        }
+        for (const i of lv.right) {
+          const o = i * 3;
+          arr[o + 1] += Math.max(0, rStep) * lv.lift * amt;
+          arr[o + 2] += rStep * lv.swing * amt;
+        }
+        lv.pos.needsUpdate = true;
+        return true;
+      }
+
+      inWater(x, y, z) {
+        return this.world.waterAt(x, y + 0.15, z) > 0;
+      }
+
+      pickWanderTarget() {
+        for (let t = 0; t < 10; t++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = 2 + Math.random() * 6;
+          const x = this.pos.x + Math.cos(a) * d;
+          const z = this.pos.z + Math.sin(a) * d;
+          if (biomeAt(x, z) !== B.PLAINS) continue;
+          const y = entityStandY(x, z, this.pos.y, this.radius, this.height);
+          if (y == null) continue;
+          if (Math.abs(y - this.pos.y) > 1.4) continue;
+          if (this.inWater(x, y, z)) continue;
+          this.wanderTarget = new THREE.Vector3(x, y, z);
+          this.wanderT = 3 + Math.random() * 5;
+          return;
+        }
+        this.wanderTarget = null;
+        this.wanderT = 1 + Math.random() * 2;
+        this.idle = 0.5 + Math.random() * 1.5;
+      }
+
+      applyWalk(phase, amt) {
+        const swing = Math.sin(phase) * 0.6 * amt;
+        if (this.legs.length) {
+          for (let i = 0; i < this.legs.length; i++) {
+            const b = this.legBase[i], l = this.legs[i];
+            const dir = (i % 2 === 0 ? 1 : -1);
+            l.rotation.x = b.x + swing * dir;
+          }
+          this.bob = Math.abs(Math.sin(phase)) * 0.012 * amt;
+        } else if (this.applyLegVerts(phase, amt)) {
+          this.bob = Math.abs(Math.sin(phase)) * 0.01 * amt;
+        } else {
+          // No leg nodes/verts found: bob and rock the whole body so it still reads as walking.
+          this.bob = Math.abs(Math.sin(phase)) * 0.02 * amt;
+          this.root.rotation.z = Math.sin(phase) * 0.06 * amt;
+        }
+      }
+
+      syncMesh() {
+        this.mesh.position.set(this.pos.x, this.pos.y + this.footOffset + this.bob, this.pos.z);
+      }
+
+      update(dt) {
+        if (this.dead) return;
+        const dtStep = Math.min(dt, 0.05);
+        this.wanderT -= dtStep;
+
+        let moving = false, vx = 0, vz = 0;
+
+        if (this.idle > 0) {
+          this.idle -= dtStep;
+        } else {
+          if (!this.wanderTarget || this.wanderT <= 0) this.pickWanderTarget();
+          if (this.wanderTarget) {
+            const dx = this.wanderTarget.x - this.pos.x;
+            const dz = this.wanderTarget.z - this.pos.z;
+            const d = Math.hypot(dx, dz);
+            if (d < 0.3) {
+              this.wanderTarget = null;
+              this.idle = 0.6 + Math.random() * 2.4;
+            } else {
+              vx = dx / d; vz = dz / d;
+              const step = this.speed * dtStep;
+              const nx = this.pos.x + vx * step;
+              const nz = this.pos.z + vz * step;
+              let ny = entityStandY(nx, nz, this.pos.y, this.radius, this.height);
+              if (ny == null || this.inWater(nx, ny, nz)) {
+                const nyx = entityStandY(nx, this.pos.z, this.pos.y, this.radius, this.height);
+                const nyz = entityStandY(this.pos.x, nz, this.pos.y, this.radius, this.height);
+                if (nyx != null && !this.inWater(nx, nyx, this.pos.z)) {
+                  this.pos.x = nx; this.pos.y = nyx; moving = true; ny = nyx; vx = Math.sign(vx) || 0; vz = 0;
+                } else if (nyz != null && !this.inWater(this.pos.x, nyz, nz)) {
+                  this.pos.z = nz; this.pos.y = nyz; moving = true; ny = nyz; vx = 0; vz = Math.sign(vz) || 0;
+                } else {
+                  ny = null;
+                }
+              } else {
+                this.pos.x = nx; this.pos.z = nz; this.pos.y = ny; moving = true;
+              }
+              if (ny == null) {
+                this.stuckT += dtStep;
+                if (this.stuckT > 0.4) { this.wanderTarget = null; this.stuckT = 0; }
+              } else {
+                this.stuckT = 0;
+              }
+            }
+          }
+        }
+
+        if (moving && (vx || vz)) {
+          const yaw = Math.atan2(vx, vz) + this.modelYawOffset;
+          let diff = yaw - this.mesh.rotation.y;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          this.mesh.rotation.y += diff * Math.min(1, dtStep * 10);
+        }
+
+        const targetAmt = moving ? 1 : 0;
+        this.walkAmt += (targetAmt - this.walkAmt) * Math.min(1, dtStep * 10);
+        if (this.walkAmt > 0.01) this.walkPhase += dtStep * (7 + this.speed * 2) * this.walkAmt;
+        this.applyWalk(this.walkPhase, this.walkAmt);
+        const gy = entityStandY(this.pos.x, this.pos.z, this.pos.y, this.radius, this.height);
+        if (gy != null) this.pos.y = gy;
+
+        if (!Number.isFinite(this.pos.x) || !Number.isFinite(this.pos.y) || !Number.isFinite(this.pos.z)) {
+          console.warn('[chicken] invalid position', this.pos.x, this.pos.y, this.pos.z);
+          this.dead = true;
+          this.syncMesh();
+          return;
+        }
+
+        this.syncMesh();
+      }
+
+      dispose() {
+        this.world.scene.remove(this.mesh);
       }
     }
 
@@ -3123,8 +4390,14 @@
     let PIXEL = getSetting('resolution');
     renderer.setPixelRatio(1);
     let postTarget = null;
+    // While a replay is exported the renderer draws at the export size
+    // instead of the window size, so the captured frames are the export
+    // resolution and not a screen recording of it.
+    let exportRes = null;
     function applyPixelSize() {
-      const w = Math.ceil(innerWidth / PIXEL), h = Math.ceil(innerHeight / PIXEL);
+      const ex = exportRes;
+      const w = ex ? (ex.pixels ? Math.ceil(ex.w / PIXEL) : ex.w) : Math.ceil(innerWidth / PIXEL);
+      const h = ex ? (ex.pixels ? Math.ceil(ex.h / PIXEL) : ex.h) : Math.ceil(innerHeight / PIXEL);
       renderer.setSize(w, h, false);
       renderer.domElement.style.width = '100vw';
       renderer.domElement.style.height = '100vh';
@@ -3212,11 +4485,13 @@
     camera.rotation.order = 'YXZ';
     scene.add(camera);
 
-    const flashlightLight = new THREE.SpotLight(0xf4f9ff, 0, 90, Math.PI / 7, 0.2, 2.0);
+    const flashlightLight = new THREE.SpotLight(0xf4f9ff, 0, 270, Math.PI / 7, 0.2, 1);
     flashlightLight.position.set(0.18, -0.18, -0.12);
     flashlightLight.target.position.set(0, 0, -16);
     flashlightLight.castShadow = true;
     flashlightLight.shadow.mapSize.set(1024, 1024);
+    flashlightLight.shadow.camera.far = 270;
+    flashlightLight.shadow.camera.updateProjectionMatrix();
     flashlightLight.shadow.bias = -0.0005;
     flashlightLight.shadow.normalBias = 0.05;
     flashlightLight.visible = false;
@@ -3235,16 +4510,146 @@
     scene.add(fill);
 
 
+    // Radial sprite helper: soft-edged discs/halos built from a gradient, so the
+    // sun and the moon get a real limb instead of a hard vector circle.
+    // The gradient runs 0 (centre) to 1 (the circle inscribed in the square),
+    // so a plane of size 2*R shows a disc of radius R.
+    function radialSprite(stops, size = 256) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+      for (const [o, col] of stops) grad.addColorStop(o, col);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, size, size);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+
+    // Sun: hot core with limb darkening, plus two halo layers (near bloom and
+    // wide corona) so it reads as a light source instead of a pasted circle.
     const sunDisc = new THREE.Mesh(
-      new THREE.CircleGeometry(14, 32),
-      new THREE.MeshBasicMaterial({ color: 0xfff6d8, fog: false, transparent: true, opacity: 0.95 })
+      new THREE.PlaneGeometry(28, 28),
+      new THREE.MeshBasicMaterial({
+        map: radialSprite([
+          [0.0, 'rgba(255,255,252,1)'],
+          [0.52, 'rgba(255,250,228,1)'],
+          [0.72, 'rgba(255,231,168,0.96)'],
+          [0.86, 'rgba(255,196,110,0.42)'],
+          [1.0, 'rgba(255,170,90,0)'],
+        ]),
+        color: 0xfff6d8, fog: false, transparent: true, opacity: 0.95, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
     );
     scene.add(sunDisc);
     const sunGlow = new THREE.Mesh(
-      new THREE.CircleGeometry(26, 32),
-      new THREE.MeshBasicMaterial({ color: 0xfff2c0, fog: false, transparent: true, opacity: 0.25, depthWrite: false })
+      new THREE.PlaneGeometry(56, 56),
+      new THREE.MeshBasicMaterial({
+        map: radialSprite([
+          [0.0, 'rgba(255,240,190,0.85)'],
+          [0.30, 'rgba(255,214,140,0.34)'],
+          [0.84, 'rgba(255,178,104,0.10)'],
+          [1.0, 'rgba(255,160,90,0)'],
+        ]),
+        color: 0xfff2c0, fog: false, transparent: true, opacity: 0.25, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
     );
     scene.add(sunGlow);
+    const sunHalo = new THREE.Mesh(
+      new THREE.PlaneGeometry(180, 180),
+      new THREE.MeshBasicMaterial({
+        map: radialSprite([
+          [0.0, 'rgba(255,214,160,0.30)'],
+          [0.40, 'rgba(255,186,130,0.11)'],
+          [1.0, 'rgba(255,160,110,0)'],
+        ]),
+        color: 0xffd9a8, fog: false, transparent: true, opacity: 0.18, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    scene.add(sunHalo);
+
+    // Moon: cratered disc with limb shading, plus a cool halo. Placed off the
+    // exact antisolar point so it does not sit at a mirror angle of the sun.
+    function moonTexture(size = 256) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      const R = size / 2;
+      g.fillStyle = '#c9cdd4';
+      g.fillRect(0, 0, size, size);
+      // maria: broad dark patches
+      g.fillStyle = 'rgba(120,128,140,0.55)';
+      const patches = [[0.30, 0.34, 0.20], [0.62, 0.28, 0.16], [0.45, 0.66, 0.24], [0.72, 0.58, 0.12]];
+      for (const [px, py, pr] of patches) {
+        g.beginPath();
+        g.arc(R + (px - 0.5) * size, R + (py - 0.5) * size, pr * R, 0, Math.PI * 2);
+        g.fill();
+      }
+      // craters: rim highlight + dark floor
+      let seed = 1337;
+      const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      for (let i = 0; i < 42; i++) {
+        const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * R * 0.94;
+        const cx = R + Math.cos(a) * r, cy = R + Math.sin(a) * r;
+        const cr = (0.02 + rnd() * 0.075) * size;
+        g.beginPath(); g.arc(cx, cy, cr, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(96,102,112,0.5)'; g.fill();
+        g.beginPath(); g.arc(cx - cr * 0.18, cy - cr * 0.18, cr * 0.86, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(214,218,226,0.45)'; g.fill();
+      }
+      // limb shading: darken the rim so the disc reads spherical
+      const shade = g.createRadialGradient(R, R, R * 0.45, R, R, R);
+      shade.addColorStop(0, 'rgba(0,0,0,0)');
+      shade.addColorStop(1, 'rgba(0,0,0,0.55)');
+      g.fillStyle = shade;
+      g.fillRect(0, 0, size, size);
+      // clip to a circle: the plane is square, the moon is not
+      g.globalCompositeOperation = 'destination-in';
+      g.beginPath();
+      g.arc(R, R, R, 0, Math.PI * 2);
+      g.fillStyle = '#fff';
+      g.fill();
+      // feather the rim so the edge does not cut hard against the sky
+      g.globalCompositeOperation = 'destination-out';
+      const feather = g.createRadialGradient(R, R, R * 0.88, R, R, R);
+      feather.addColorStop(0, 'rgba(0,0,0,0)');
+      feather.addColorStop(1, 'rgba(0,0,0,1)');
+      g.fillStyle = feather;
+      g.fillRect(0, 0, size, size);
+      g.globalCompositeOperation = 'source-over';
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    }
+    const moonDisc = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 18),
+      new THREE.MeshBasicMaterial({ map: moonTexture(), fog: false, transparent: true, opacity: 0, depthWrite: false })
+    );
+    scene.add(moonDisc);
+    const moonGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(80, 80),
+      new THREE.MeshBasicMaterial({
+        map: radialSprite([
+          [0.0, 'rgba(200,214,255,0.42)'],
+          [0.42, 'rgba(170,190,240,0.16)'],
+          [1.0, 'rgba(140,160,220,0)'],
+        ]),
+        color: 0xc8d6ff, fog: false, transparent: true, opacity: 0, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    scene.add(moonGlow);
+    // A cold key light so the night is lit by the moon, not just by ambient.
+    const moonLight = new THREE.DirectionalLight(0xaec4ff, 0);
+    scene.add(moonLight);
+    scene.add(moonLight.target);
+
+    // The sky bodies draw before the cloud layer, so clouds pass in front of them.
+    for (const m of [sunDisc, sunGlow, sunHalo, moonDisc, moonGlow]) m.renderOrder = -1;
 
 
 
@@ -3393,16 +4798,11 @@
 
 
 
-    const ICON_CACHE_KEY = 'idte.icon.v9.';
-    const modelIconCache = new Map();
+    const modelIconCache = new Map(_iconCachePreload);
 
 
     function loadModelIcon(id) {
-      if (modelIconCache.has(id)) return modelIconCache.get(id);
-      let url = null;
-      try { url = localStorage.getItem(ICON_CACHE_KEY + id); } catch {                          }
-      modelIconCache.set(id, url);
-      return url;
+      return modelIconCache.has(id) ? modelIconCache.get(id) : null;
     }
 
     function cachedModelIcon(id) {
@@ -3494,12 +4894,12 @@
         const id = ids[i++];
         renderModelIcon(modelIconSource(id)).then((url) => {
           modelIconCache.set(id, url);
-          try { localStorage.setItem(ICON_CACHE_KEY + id, url); } catch {                                    }
+          idbSet(ICON_CACHE_KEY + id, url).catch(() => { });
           if (i % 4 === 0) syncBars();
         }).catch(() => {
 
           modelIconCache.set(id, '');
-          try { localStorage.setItem(ICON_CACHE_KEY + id, ''); } catch {                   }
+          idbSet(ICON_CACHE_KEY + id, '').catch(() => { });
         }).finally(next);
       };
       next();
@@ -3601,7 +5001,7 @@
       hot: Array(7).fill(null), main: Array(28).fill(null), sel: 0, dose: 0,
       armor: { head: null, chest: null, legs: null, feet: null, hands: null },
     };
-    if (!localStorage.getItem(SAVE_KEY)) {
+    if (!savedData) {
       inv.hot[0] = { id: 'flashlight', n: 1 };
     }
 
@@ -3610,7 +5010,20 @@
     const vitals = {
       hp: 100, maxHp: 100, hunger: 100, maxHunger: 100,
       wounds: Object.create(null), infectionImmunity: 0,
+      foodNumb: Object.create(null),
     };
+
+    function foodNumb(id) {
+      const n = vitals.foodNumb[id];
+      return Number.isFinite(n) ? Math.max(-2, Math.min(2, n)) : 2;
+    }
+    function foodFactor(id) {
+      const n = foodNumb(id);
+      return n >= 0 ? 1 + n / 2 : 0.01 + (1 + n / 2) * 0.99;
+    }
+    function effectiveFood(id, base) {
+      return base * foodFactor(id);
+    }
     const WOUNDS = {
       bleeding: { name: 'BLEEDING', dps: 1.1, color: '#e2453c' },
       infection: { name: 'INFECTION', dps: 0.35, color: '#9acd32' },
@@ -3620,6 +5033,7 @@
       eye: { name: 'EYE IRRITATION', blur: 0.45, color: '#7ec8ff' },
       respiratory: { name: 'RESPIRATORY', dps: 0.6, color: '#8fd6e8' },
       bloodloss: { name: 'BLOOD LOSS', dps: 0.9, speed: 0.82, color: '#d23b3b' },
+      paranoia: { name: 'PARANOIA', color: '#b06cff' },
     };
 
     function addWound(type) {
@@ -3656,11 +5070,18 @@
         vitals.hunger = vitals.maxHunger;
         vitals.wounds = Object.create(null);
         vitals.infectionImmunity = 0;
+        vitals.foodNumb = Object.create(null);
+        const cap = ITEMS.fuel_carton.container?.capacity || 5;
+        for (const g of [inv.hot, inv.main]) for (const s of g) if (s && s.id === 'fuel_carton' && (!s.liquid || s.liquid.amount < cap)) s.liquid = { id: 'gasoline', amount: cap };
         return;
       }
 
       vitals.hunger = Math.max(0, vitals.hunger - TUNING.HUNGER_DRAIN * dt);
       if (vitals.infectionImmunity > 0) vitals.infectionImmunity = Math.max(0, vitals.infectionImmunity - dt);
+      for (const id of Object.keys(vitals.foodNumb)) {
+        if (!Number.isFinite(vitals.foodNumb[id])) delete vitals.foodNumb[id];
+        else if (vitals.foodNumb[id] >= 1.999) vitals.foodNumb[id] = 2;
+      }
 
       let dps = 0;
       for (const t of Object.keys(vitals.wounds)) {
@@ -3687,8 +5108,14 @@
     const dragDrop = workbenchUI.dragDrop;
 
 
+    function fillGasCarton(stack) {
+      if (WORLD_MODE !== 'sandbox' || !stack || stack.id !== 'fuel_carton') return stack;
+      stack.liquid = { id: 'gasoline', amount: (ITEMS.fuel_carton.container?.capacity || 5) };
+      return stack;
+    }
     function giveStack(stack) {
       if (!stack || !stack.id) return false;
+      fillGasCarton(stack);
       for (const g of [inv.hot, inv.main]) {
         for (let i = 0; i < g.length; i++) if (!g[i]) { g[i] = stack; syncBars(); return true; }
       }
@@ -3703,6 +5130,16 @@
 
     const clock = { day: 1, t: 0 };
     let playTime = 0;
+    function formatPlayTime(sec) {
+      const s = Math.max(0, Math.floor(Number(sec) || 0));
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      if (d > 0) return `${d}d ${h}h ${m}m`;
+      if (h > 0) return `${h}h ${m}m`;
+      return `${m}m ${s % 60}s`;
+    }
+    let prayReadyAt = 0;
     let guideIndex = 0;
     let guidePaintSig = '';
     let guideTick = 0;
@@ -3772,7 +5209,12 @@
       let dx = src.x - px, dz = src.z - pz;
       const d = Math.hypot(dx, dz) || 1;
       dx /= d; dz /= d;
-      const ambient = ambientRad() * radTransmission(dx, 0, 0);
+      // Overhead cover: rock above the player shields the ambient fallout field
+      // strongly, so being underground cuts dose by a lot.
+      const surfY = world.surfaceY(px, pz, Math.ceil(terrainTrend(px + WORLD_SEED, pz + WORLD_SEED)) + 30);
+      const depth = Math.max(0, surfY - py);
+      const burial = depth <= 0.5 ? 1 : Math.pow(0.45, Math.min(depth, 40));
+      const ambient = ambientRad() * radTransmission(dx, 0, dz) * burial;
 
       let machine = 0, best = ambient, bx = dx, bz = dz, bdist = d;
       if (machineSystem) {
@@ -3797,7 +5239,13 @@
       for (const s of TUNING.RAD_STAGES) if (inv.dose >= s.at) stage = s;
       return stage;
     }
-    function isDay() { return clock.t < TUNING.DAY_SECONDS * 0.5; }
+    function dayFrac() { return TUNING.DAY_FRACTION ?? 0.5; }
+    function isDay() { return clock.t < TUNING.DAY_SECONDS * dayFrac(); }
+    function sunCycleT() {
+      const df = dayFrac();
+      const f = (clock.t % TUNING.DAY_SECONDS) / TUNING.DAY_SECONDS;
+      return f < df ? (f / df) * 0.5 : 0.5 + ((f - df) / (1 - df)) * 0.5;
+    }
 
 
     const DAY_SKY = new THREE.Color(0x9ec9e8);
@@ -3805,12 +5253,16 @@
     const NIGHT_SKY = new THREE.Color(0x070b17);
     const skyNow = new THREE.Color(DAY_SKY);
     let sunVis = 1;
+    let moonVis = 0;
 
     function updateDaylight() {
-      const f = (clock.t % TUNING.DAY_SECONDS) / TUNING.DAY_SECONDS;
-      const a = f * Math.PI * 2;
+      const a = sunCycleT() * Math.PI * 2;
       const elev = Math.sin(a);
       SUN_DIR.set(Math.cos(a) * 0.82, elev, 0.38 + Math.cos(a) * 0.22).normalize();
+      // The moon rides just over half a cycle out of phase with the sun: it
+      // rises before dusk, crosses at midnight and sets after dawn.
+      const ma = (sunCycleT() + 0.44) * Math.PI * 2;
+      MOON_DIR.set(Math.cos(ma) * 0.82, Math.sin(ma), 0.38 + Math.cos(ma) * 0.22).normalize();
 
       const day = Math.max(0, Math.min(1, elev * 2.2 + 0.12));
       const dusk = Math.max(0, 1 - Math.abs(elev) * 4) * (elev > -0.25 ? 1 : 0);
@@ -3819,16 +5271,50 @@
       sun.intensity = 1.35 * day;
       sun.color.copy(SUN_COL).lerp(DUSK_SKY, dusk * 0.6);
       sunDisc.material.color.copy(sun.color);
+      sunGlow.material.color.copy(sun.color);
+      sunHalo.material.color.copy(sun.color);
       hemi.intensity = 0.22 + 0.53 * day;
       hemi.color.copy(NIGHT_SKY).lerp(SKY_COL, day);
       fill.intensity = 0.10 + 0.08 * day;
       cloudUniforms.uDay.value = day;
       sunVis = Math.max(0, Math.min(1, elev * 8 + 0.15));
+
+      // The moon is out when it is above the horizon: full at night, a pale
+      // daytime disc in the day.
+      const moonUp = Math.max(0, Math.min(1, (MOON_DIR.y - 0.02) * 6 + 0.15));
+      moonVis = moonUp * (0.30 + 0.70 * (1 - day));
+      moonLight.intensity = 0.16 * (1 - day) * moonUp;
+      moonLight.color.setHex(0xaec4ff);
     }
 
 
     let noticeMsg = '', noticeT = 0;
     function notice(msg) { noticeMsg = msg; noticeT = 1.8; }
+
+    const gainCard = document.getElementById('gainCard');
+    let gainEvents = [];
+    function showGain(id, n = 1, kind = 'PICKED UP') {
+      if (!gainCard || !id || n <= 0) return;
+      const now = performance.now();
+      const last = gainEvents[gainEvents.length - 1];
+      if (last && last.id === id && last.kind === kind && now - last.t < 1200) {
+        last.n += n;
+        last.t = now;
+      } else {
+        gainEvents.push({ id, n, kind, t: now });
+        if (gainEvents.length > 4) gainEvents.shift();
+      }
+      paintGainCard(now);
+    }
+    function paintGainCard(now = performance.now()) {
+      if (!gainCard) return;
+      gainEvents = gainEvents.filter((e) => now - e.t < 2200);
+      if (!gainEvents.length) { gainCard.classList.remove('show'); gainCard.innerHTML = ''; return; }
+      const e = gainEvents[gainEvents.length - 1];
+      const name = ITEMS[e.id]?.name || e.id;
+      gainCard.innerHTML = `<span class="gk">${e.kind}</span><span class="gi">+${e.n} ${name}</span>`;
+      gainCard.classList.add('show');
+    }
     function hasGardeningGloves() {
       const g = inv.armor.hands;
       return !!(g && ITEMS[g.id]?.armor?.gardening);
@@ -3847,13 +5333,14 @@
           if (s && s.id === id && s.n < def.stack) {
             const take = Math.min(n, def.stack - s.n);
             s.n += take; n -= take;
+            fillGasCarton(s);
           }
         }
       for (const g of grids)
         for (let i = 0; i < g.length && n > 0; i++) {
           if (!g[i]) {
             const take = Math.min(n, def.stack);
-            g[i] = { id, n: take }; n -= take;
+            g[i] = fillGasCarton({ id, n: take }); n -= take;
           }
         }
       syncBars();
@@ -3877,8 +5364,8 @@
     const TOOL_MODELS = {
       pick:    { dir: 'assets/models/tools/pickaxe/', obj: 'Pickaxe', len: 1.02, swing: { x: 0.95, y: 0.20, z: 0.55, reach: 0.24, dur: 0.46 } },
       shovel:  { dir: 'assets/models/tools/shovel/',  obj: 'Shovel',  len: 1.10, swing: { x: 0.30, y: 0.05, z: 0.05, reach: 0.24 } },
-      axe:     { dir: 'assets/models/tools/axe/',     obj: 'Axe',     len: 1.00, swing: { toX: -9, dur: 0.5 } },
-      hatchet: { dir: 'assets/models/tools/hatchet/', obj: 'Hatchet', len: 0.82, swing: { x: 0.35, y: 0.90, z: 0.55, reach: 0.05 } },
+      axe:     { dir: 'assets/models/tools/axe/',     obj: 'Axe',     len: 1.00, swing: { poseWind: 24, poseStrike: -46, dur: 0.44 } },
+      hatchet: { dir: 'assets/models/tools/hatchet/', obj: 'Hatchet', len: 0.82, swing: { poseWind: 20, poseStrike: -38, dur: 0.40 } },
       hoe:     { dir: 'assets/models/tools/hoe/',     obj: 'Hoe',     len: 1.04, swing: { x: 0.55, y: 0.14, z: 0.10, reach: 0.12 } },
       fast_ar: { dir: 'assets/models/tools/fast_ar/', obj: 'fast_ar', len: 1.05, swing: { x: 0.16, y: 0.03, z: 0.04, reach: 0.04 } },
       smg:     { dir: 'assets/models/tools/smg/',     obj: 'smg',     len: 0.95, swing: { x: 0.14, y: 0.03, z: 0.04, reach: 0.04 } },
@@ -3996,8 +5483,31 @@
     vmRig.add(vmHeld);
     const heldIconGeo = new THREE.PlaneGeometry(1, 1);
     const heldIconTex = new Map();
-    const heldIconMesh = new THREE.Mesh(heldIconGeo, new THREE.MeshBasicMaterial({
-      transparent: true, alphaTest: 0.05, depthWrite: false, side: THREE.DoubleSide,
+    // uCut is the messy bite line: 1.2 = whole icon, below 0 = fully eaten.
+    const heldIconU = {
+      uMap: { value: null },
+      uCut: { value: 1.2 },
+      uSeed: { value: 0 },
+    };
+    const heldIconMesh = new THREE.Mesh(heldIconGeo, new THREE.ShaderMaterial({
+      uniforms: heldIconU,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: `varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform sampler2D uMap;
+        uniform float uCut;
+        uniform float uSeed;
+        varying vec2 vUv;
+        void main() {
+          vec4 c = texture2D(uMap, vUv);
+          // Blocky hash + a wobble so the cut is chewed, not a straight slice.
+          float jag = fract(sin(dot(floor(vUv * vec2(37.0, 19.0)), vec2(12.9898, 78.233)) + uSeed) * 43758.5453) - 0.5;
+          float edge = uCut + jag * 0.14 + 0.03 * sin(vUv.x * 43.0 + uSeed * 2.7);
+          if (c.a < 0.05 || vUv.y > edge) discard;
+          gl_FragColor = c;
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
     }));
     heldIconMesh.scale.setScalar(0.34);
     vmHeld.add(heldIconMesh);
@@ -4021,8 +5531,7 @@
       if (heldIconItem !== id) {
         heldIconItem = id;
         heldIconBob = 0;
-        heldIconMesh.material.map = tex;
-        heldIconMesh.material.needsUpdate = true;
+        heldIconU.uMap.value = tex;
       }
       const speed = Math.hypot(player.vel.x, player.vel.z);
       heldIconBob += dt * (speed > 0.3 ? 6.0 + speed * 0.7 : 1.6);
@@ -4060,6 +5569,7 @@
       item: null, model: null,
       swingT: 1e9, swingDur: 0.3,
       equipT: 1e9,
+      _lastHeld: null,
       bob: 0, swayX: 0, swayY: 0,
       prevYaw: null, prevPitch: null,
     };
@@ -4100,6 +5610,50 @@
     function endDrink() {
       drink = null;
       for (const h of Object.values(drinkModels)) h.visible = false;
+    }
+
+
+    // Eating a food that has no 3D model: the flat held icon is chewed down from
+    // the top (jagged bites, not a straight slice) and the effects only land when
+    // the last bite is gone. The animation *is* the eating time.
+    const EAT_TIME = 1.4;
+    const EAT_REST = { x: 0.02, y: -0.15, z: -0.50 };
+    let eat = null;
+
+    function stopEat() {
+      eat = null;
+      heldIconU.uCut.value = 1.2;
+      vmHeld.visible = false;
+    }
+
+    function startEat(s, def) {
+      const tex = heldIconTexture(s.id);
+      if (tex) { heldIconU.uMap.value = tex; heldIconItem = s.id; }
+      eat = { id: s.id, stack: s, def, t: 0 };
+      heldIconU.uSeed.value = Math.random() * 100;
+      heldIconU.uCut.value = 1.15;
+    }
+
+    function updateEat(dt) {
+      eat.t += dt;
+      const show = !invOpen && !workbenchUI.opened && locked
+        && inv.hot[inv.sel] === eat.stack && heldIconItem === eat.id;
+      vmRig.visible = show;
+      vmRig.position.set(0, 0, 0);
+      vmRig.rotation.set(0, 0, 0);
+      vmHeld.visible = show;
+      for (const m of propModels.values()) m.visible = false;
+      if (!show) { stopEat(); return; }
+      const u = Math.min(1, eat.t / EAT_TIME);
+      heldIconU.uCut.value = 1.15 - u * 1.3;
+      const nibble = Math.sin(eat.t * 9) * 0.004 * u;
+      vmHeld.position.set(EAT_REST.x + nibble, EAT_REST.y + Math.sin(eat.t * 4) * 0.004, EAT_REST.z);
+      vmHeld.rotation.set(0.22 + u * 0.35, 0, -0.08 + Math.sin(eat.t * 3.5) * 0.05 * u);
+      if (eat.t >= EAT_TIME) {
+        const e = eat;
+        stopEat();
+        applyConsumable(e.stack, e.def);
+      }
     }
 
 
@@ -4184,9 +5738,9 @@
       if (!treeChopSound) {
         treeChopSound = new Audio(TREE_CHOP_SOUND);
         treeChopSound.preload = 'auto';
-        treeChopSound.volume = 0.75;
       }
       try {
+        treeChopSound.volume = 0.75 * masterVolume;
         treeChopSound.currentTime = 0;
         treeChopSound.play().catch(() => {});
       } catch (e) {
@@ -4202,35 +5756,55 @@
 
     function heldFlashlight() {
       const s = inv.hot[inv.sel];
-      return !!(s && ITEMS[s.id]?.tool?.flashlight && !invOpen && !workbenchUI.opened && locked);
+      const id = replayHeld ? replayHeld.id : (s ? s.id : null);
+      const ok = !invOpen && !workbenchUI.opened && (locked || !!replayHeld);
+      return !!(id && ITEMS[id]?.tool?.flashlight && ok);
     }
 
     function updateViewmodel(dt) {
+      if (eat) { updateEat(dt); return; }
       if (drink) { updateDrink(dt); return; }
 
       const s = inv.hot[inv.sel];
-      const held = s ? s.id : null;
+      // A replay holds the item it recorded, even though the bag does not.
+      const held = replayHeld ? replayHeld.id : (s ? s.id : null);
+      const showingHeld = !!(held && !invOpen && !workbenchUI.opened && (locked || !!replayHeld));
+      if (showingHeld !== !!vm._showingHeld || held !== vm._lastHeld) {
+        vm._showingHeld = showingHeld;
+        if (held !== vm._lastHeld) { vm._lastHeld = held; if (showingHeld) vm.equipT = 0; }
+        else if (showingHeld) vm.equipT = 0;
+      }
       vmHeld.visible = false;
       flashlightLight.visible = heldFlashlight();
       if (flashlightLight.visible) {
         flashlightLight.intensity = 18;
-        flashlightLight.distance = 90;
+        flashlightLight.distance = 270;
+        flashlightLight.decay = 1;
         flashlightLight.angle = Math.PI / 7;
         flashlightLight.penumbra = 0.18;
+      }
+
+      let equipDrop = 0, equipRot = 0;
+      if (vm.equipT < 1e8) {
+        vm.equipT += dt / 0.35;
+        const e = Math.min(1, vm.equipT);
+        const ease = 1 - Math.pow(1 - e, 3);
+        equipDrop = -(1 - ease) * 1.15; // rise up from below the viewport
+        equipRot = -(1 - ease) * 0.18;
+        if (e >= 1) vm.equipT = 1e9;
       }
 
       if (held && propModelUrl(held)) {
         if (propItem !== held) { propItem = held; loadPropModel(held); }
         if (vm.model) { vm.model.visible = false; vm.model = null; vm.item = null; }
-        const show = !invOpen && !workbenchUI.opened && locked;
+        const show = !invOpen && !workbenchUI.opened && (locked || !!replayHeld);
         vmRig.visible = show;
         if (!show) return;
         for (const m of propModels.values()) m.visible = false;
         const model = propModels.get(held);
         if (!model) {
-          // Still loading, or this item has no model file: hold its icon instead.
-          vmRig.position.set(0, 0, 0);
-          vmRig.rotation.set(0, 0, 0);
+          vmRig.position.set(0, equipDrop, 0);
+          vmRig.rotation.set(equipRot * 0.4, 0, 0);
           showHeldIcon(held, dt);
           return;
         }
@@ -4241,8 +5815,8 @@
         model.visible = true;
         model.position.set(PROP_POS.x, PROP_POS.y + bob, PROP_POS.z);
         model.rotation.set(0.12, propAngle, 0);
-        vmRig.position.set(0, 0, 0);
-        vmRig.rotation.set(0, 0, 0);
+        vmRig.position.set(0, equipDrop, 0);
+        vmRig.rotation.set(equipRot * 0.4, 0, 0);
         return;
       }
       if (propItem) { const m = propModels.get(propItem); if (m) m.visible = false; propItem = null; }
@@ -4267,8 +5841,8 @@
       if (!vm.model) {
         if (s && ITEMS[s.id] && !TOOL_MODELS[s.id] && !invOpen && !workbenchUI.opened && locked) {
           vmRig.visible = true;
-          vmRig.position.set(0, 0, 0);
-          vmRig.rotation.set(0, 0, 0);
+          vmRig.position.set(0, equipDrop, 0);
+          vmRig.rotation.set(equipRot * 0.4, 0, 0);
           showHeldIcon(s.id, dt);
         }
         return;
@@ -4293,18 +5867,6 @@
       vm.swayY += (dpitch * 0.45 - vm.swayY) * k;
 
 
-      let equipDrop = 0, equipRot = 0;
-      if (vm.equipT < 1e8) {
-        vm.equipT += dt / 0.30;
-        const e = Math.min(1, vm.equipT);
-        const c1 = 1.70158, c3 = c1 + 1;
-        const ease = 1 + c3 * Math.pow(e - 1, 3) + c1 * Math.pow(e - 1, 2);
-        equipDrop = -(1 - ease) * 0.42;
-        equipRot = -(1 - ease) * 0.7;
-        if (e >= 1) vm.equipT = 1e9;
-      }
-
-
       const swingCfg = (TOOL_MODELS[vm.item] || {}).swing || { x: 0.62, y: 0.10, z: 0.07, reach: 0.10 };
       const poseGrp = vm.model.userData.poseGrp;
       const restRotX = poseGrp ? poseGrp.userData.restRotX : 0;
@@ -4313,8 +5875,23 @@
         vm.swingT += dt;
         const p = vm.swingT / vm.swingDur;
         if (p >= 1) vm.swingT = 1e9;
-        else if (swingCfg.toX != null && poseGrp) {
-
+        else if (swingCfg.poseWind != null && swingCfg.poseStrike != null && poseGrp) {
+          const wind = restRotX + THREE.MathUtils.degToRad(swingCfg.poseWind);
+          const strike = restRotX + THREE.MathUtils.degToRad(swingCfg.poseStrike);
+          if (p < 0.32) {
+            const u = p / 0.32;
+            const e = 1 - Math.pow(1 - u, 2);
+            poseX = restRotX + (wind - restRotX) * e;
+          } else if (p < 0.58) {
+            const u = (p - 0.32) / 0.26;
+            const e = u * u * (3 - 2 * u);
+            poseX = wind + (strike - wind) * e;
+          } else {
+            const u = (p - 0.58) / 0.42;
+            const e = 1 - Math.pow(1 - u, 3);
+            poseX = strike + (restRotX - strike) * e;
+          }
+        } else if (swingCfg.toX != null && poseGrp) {
           const to = THREE.MathUtils.degToRad(swingCfg.toX);
           poseX = restRotX + (to - restRotX) * Math.sin(p * Math.PI);
         } else {
@@ -4348,50 +5925,28 @@
 
     const torches = [];
     const TORCH_MAX = 64;
-    const DEFAULT_LIGHT = { mount: 'wall', range: 12, power: 1.2, color: 0xff9d1f };
-    const torchStickGeo = new THREE.BoxGeometry(0.09, 0.5, 0.09);
-    const torchStickMat = new THREE.MeshLambertMaterial({ color: 0x4a2f18 });
-    const torchFlameGeo = new THREE.SphereGeometry(0.11, 8, 6);
-    const torchFlameMat = new THREE.MeshBasicMaterial({ color: 0xff9d1f });
+    const _tn = new THREE.Vector3(0, 1, 0);
+  const DEFAULT_LIGHT = { mount: 'wall', range: 9, power: 0.7, color: 0xff7a1a };
+  const torchStickGeo = new THREE.BoxGeometry(0.09, 0.5, 0.09);
+  const torchStickMat = new THREE.MeshLambertMaterial({ color: 0x4a2f18 });
+  const torchFlameGeo = new THREE.SphereGeometry(0.11, 8, 6);
+  const torchFlameMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a });
     let torchTemplate = null;
-    const torchUniforms = {
-      torchTime: { value: 0 },
-    };
-    const rgbOf = (hex) => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
 
 
+    // Torches are plain point lights: one fixed pool, assigned to the nearest
+    // torches. Terrain, machines, building pieces and every model light the
+    // same way, with no per-material shader patching.
+    const TORCH_LIGHTS = 8;
+    const TORCH_LIGHT_GAIN = 16; // intensity per light.power, tuned against the night ambient
+    const torchLights = Array.from({ length: TORCH_LIGHTS }, () => {
+      const l = new THREE.PointLight(0xffffff, 0, 9, 2);
+      l.position.set(0, -999, 0);
+      scene.add(l);
+      return l;
+    });
 
 
-
-    const MACHINE_LIGHT_SLOTS = 8;
-    const machineLightPos = Array.from({ length: MACHINE_LIGHT_SLOTS }, () => new THREE.Vector3(0, -999, 0));
-    const machineLightCol = Array.from({ length: MACHINE_LIGHT_SLOTS }, () => new THREE.Vector3());
-    function patchMachineMaterial(mat) {
-      if (!mat || mat.isShaderMaterial || mat.userData.machineLit) return;
-      mat.userData.machineLit = true;
-      mat.onBeforeCompile = (shader) => {
-        shader.uniforms.uMLPos = { value: machineLightPos };
-        shader.uniforms.uMLCol = { value: machineLightCol };
-        shader.vertexShader = `varying vec3 vMLWorld;\n` + shader.vertexShader.replace(
-          '#include <worldpos_vertex>',
-          `#include <worldpos_vertex>
-          vMLWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-        );
-        shader.fragmentShader = `varying vec3 vMLWorld;
-          uniform vec3 uMLPos[${MACHINE_LIGHT_SLOTS}];
-          uniform vec3 uMLCol[${MACHINE_LIGHT_SLOTS}];
-        ` + shader.fragmentShader.replace(
-          '#include <emissivemap_fragment>',
-          `#include <emissivemap_fragment>
-          for (int i = 0; i < ${MACHINE_LIGHT_SLOTS}; i++) {
-            float mld = distance(vMLWorld, uMLPos[i]);
-            totalEmissiveRadiance += uMLCol[i] / (1.0 + 0.5 * mld + 0.12 * mld * mld);
-          }`
-        );
-      };
-      mat.customProgramCacheKey = () => 'machine-light-v1';
-      mat.needsUpdate = true;
-    }
 
 
 
@@ -4416,6 +5971,12 @@
     const _v = new THREE.Vector3(), _sc = new THREE.Vector3();
     const _m = new THREE.Matrix4(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 
+
+
+    // Textured plants wear the colour of the ground they grow on: the savanna's
+    // take the tint of its dry grass texture.
+    const _vegWhite = new THREE.Color(1, 1, 1);
+    const VEG_BIOME_TINT = new Map([[B.SAVANNA, new THREE.Color(...vegTint('savanna'))]]);
 
 
     const VEG_LAYERS = {
@@ -4484,13 +6045,32 @@
     }
 
 
+    // Tree density is not uniform: broad groves and copses with scattered
+    // singles between them. Forests keep their cover but thin out in clearings.
+    function canopyFill(x, z, b, base) {
+      if (b === B.FOREST || b === B.JUNGLE) return base;
+      const sx = x + WORLD_SEED, sz = z + WORLD_SEED;
+      const broad = fbm3(sx * 0.008, 51.7, sz * 0.008, 3);
+      const local = fbm3(sx * 0.035, 18.3, sz * 0.035, 2);
+      const grove = smoothstep01(0.47, 0.61, broad);
+      const clump = 0.4 + 1.4 * smoothstep01(0.44, 0.66, local);
+      return base * (0.12 + 3.2 * grove * clump);
+    }
+
+    function smoothstep01(a, b, x) {
+      const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    }
+
     function vegCell(layer, gx, gz) {
       const cell = VEG_LAYERS[layer].cell;
       const x = (gx + 0.12 + 0.76 * _vegHash(gx, gz, 1)) * cell;
       const z = (gz + 0.12 + 0.76 * _vegHash(gx, gz, 2)) * cell;
       const b = biomeAt(x, z);
-      const fill = VEG_LAYERS[layer].fill[b];
-      if (!fill || _vegHash(gx, gz, 3) >= fill) return null;
+      let fill = VEG_LAYERS[layer].fill[b];
+      if (!fill) return null;
+      if (layer === 'canopy' && WORLD_TERRAIN === 'realistic') fill = Math.min(1, canopyFill(x, z, b, fill));
+      if (_vegHash(gx, gz, 3) >= fill) return null;
       const cand = [];
       for (const sp of VEG_SPECIES) {
         if (sp.layer !== layer) continue;
@@ -4551,6 +6131,7 @@
         if (y <= -8) return null;
 
         if (mountainRockAt(pl.x, pl.z)) return null;
+        if (WORLD_TERRAIN === 'realistic' && y > 112) return null; // treeline
 
         if (caveCarveAt(pl.x + WORLD_SEED, y + 0.4, pl.z + WORLD_SEED) > 0.02) return null;
         if ((sp.layer === 'canopy' || sp.layer === 'ground' || sp.layer === 'cover' || sp.layer === 'floor') && groundDepth(pl.x, y, pl.z) >= 1.2) return null;
@@ -4606,8 +6187,11 @@
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      // vertexColors carries the per-instance biome tint (instanceColor) into
+      // the fragment shader; the card itself stays untinted white.
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3));
       geo.setIndex(idx);
-      const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide });
+      const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, vertexColors: true });
 
       const cell = VEG_LAYERS[sp.layer].cell;
       const cap = Math.min(900, Math.ceil(Math.PI * sp.dist * sp.dist / (cell * cell)) + 16);
@@ -4888,60 +6472,7 @@
 
     const industrialPreload = Promise.all(Object.keys(INDUSTRIAL_MODELS).map((id) =>
       loadIndustrialTemplate(id).catch((e) => console.warn('industrial model failed', id, e))));
-    let starterContainerSpawned = false;
 
-    function spawnStarterContainerNearPlayer(x, z) {
-      if (starterContainerSpawned || !Number.isFinite(x) || !Number.isFinite(z)) return;
-      const baseX = x + 8;
-      const baseZ = z + 6;
-      const y0 = world.getSurfaceHeight(baseX, baseZ, 50);
-      const pack = [
-        { id: 'pick', n: 1 },
-        { id: 'wood', n: 2 },
-        { id: 'carbon', n: 3 },
-      ];
-      const t = _indTemplates.get('container_01');
-      if (!t) return;
-      const inst = t.clone(true);
-      inst.position.set(baseX, y0 + 0.02, baseZ);
-      inst.rotation.y = 0;
-      inst.scale.setScalar(0.75);
-      scene.add(inst);
-      addOutlineToMesh(inst, 1.04, 0xffffff);
-      const machine = {
-        x: baseX,
-        y: y0 + 1.5,
-        z: baseZ,
-        radius: 6.0,
-        label: 'OPEN CONTAINER',
-        mesh: inst,
-        activate() {
-          if (machine._opened) return;
-          machine._opened = true;
-          const dir = new THREE.Vector3(1, 0, 0);
-          for (let i = 0; i < pack.length; i++) {
-            const item = pack[i];
-            const left = give(item.id, item.n);
-            if (left > 0) {
-              const outX = baseX + dir.x * (2.4 + i * 0.7);
-              const outZ = baseZ + dir.z * (2.4 + i * 0.7);
-              const outY = world.getSurfaceHeight(outX, outZ, 12) + 0.5;
-              spawnDrop(item.id, left, { x: outX, y: outY, z: outZ });
-            }
-          }
-          notice('STARTER CONTAINER OPENED');
-          const root = inst.userData.outlineRoot;
-          if (root && root.parent) root.parent.remove(root);
-          const rIdx = outlineTargets.indexOf(root);
-          if (rIdx >= 0) outlineTargets.splice(rIdx, 1);
-          const idx = machineActivators.indexOf(machine);
-          if (idx >= 0) machineActivators.splice(idx, 1);
-          scene.remove(inst);
-        }
-      };
-      machineActivators.push(machine);
-      starterContainerSpawned = true;
-    }
 
     function industrialCreate(site, key) {
       const group = new THREE.Group();
@@ -4994,6 +6525,7 @@
               if (idx >= 0) machineActivators.splice(idx, 1);
             },
           };
+          bindInteractEntry(inst, { target: machine, type: 'machine', label: machine.label, activate: () => machine.activate() });
           machineActivators.push(machine);
         }
 
@@ -5022,6 +6554,7 @@
               syncBars();
             },
           };
+          bindInteractEntry(inst, { target: tank, type: 'machine', label: tank.label, activate: () => tank.activate() });
           machineActivators.push(tank);
         }
       }
@@ -5076,7 +6609,7 @@
           } else {
             const swap = Math.abs(Math.sin(p.yaw)) > 0.5;
             industrialColliders.push({
-              kind: 'box', x, z, top,
+              kind: 'box', x, z, top, base: site.y0,
               hx: (swap ? dim.hz : dim.hx) * s,
               hz: (swap ? dim.hx : dim.hz) * s,
             });
@@ -5086,9 +6619,12 @@
     }
 
     const IND_MASK_KEY = 'idte.ind.masks.v1';
+    let _indMaskData = await idbGet(IND_MASK_KEY);
+    if (typeof _indMaskData === 'string') { try { _indMaskData = JSON.parse(_indMaskData); } catch { _indMaskData = {}; } }
+    if (!_indMaskData || typeof _indMaskData !== 'object') _indMaskData = {};
 
     function indMaskStore() {
-      try { return JSON.parse(localStorage.getItem(IND_MASK_KEY)) || {}; } catch { return {}; }
+      return _indMaskData;
     }
 
     function indApplyMaskEdits(id, mask) {
@@ -5127,7 +6663,9 @@
       });
       await industrialPreload;
       if (playBtnEl) { playBtnEl.textContent = 'RESUME'; playBtnEl.disabled = false; }
-      if (introBtnEl) { introBtnEl.textContent = 'ENTER THE ZONE'; introBtnEl.disabled = false; }
+      // The intro's button only opens once the world is really loaded; the
+      // loading screen above it is what shows the progress.
+      if (introBtnEl && window.__NUCLEARISM_READY_COMPLETE__) { introBtnEl.textContent = 'ENTER THE ZONE'; introBtnEl.disabled = false; }
     })();
     {
       const pb = document.getElementById('playBtn');
@@ -5142,6 +6680,7 @@
     const vegPerf = { stream: 0, inst: 0, trunks: 0, collide: 0, anim: 0, frames: 0 };
 
     const perf = { move: 0, jobs: 0, drops: 0, world: 0, water: 0, dirty: 0, wdirty: 0, entities: 0, render: 0, misc: 0 };
+    window.__framePerf = perf;
 
     function vegAdd(sp, key, pl) { if (!sp.ready) return; sp.placements.set(key, pl); sp.dirty = true; }
     function vegRemove(sp, key) { if (!sp.placements) return; sp.placements.delete(key); sp.dirty = true; }
@@ -5158,7 +6697,7 @@
 
 
 
-    const VEG_CHECK_STEP = 32;
+    const VEG_CHECK_STEP = 128;
     const _vegFallingPlants = new Set();
     let _vegCheckFrame = 0;
     const _vegTumble = new THREE.Quaternion(), _vegEuler = new THREE.Euler();
@@ -5183,22 +6722,24 @@
       }
 
 
-      const phase = _vegCheckFrame++ % VEG_CHECK_STEP;
-      let i = 0;
-      for (const layer of ['canopy', 'ground', 'cover', 'floor', 'aquatic']) {
-        const active = _vegActive[layer];
-        for (const [key, pl] of active) {
-          if (!pl || pl.sp.trunk || pl.falling) continue;
-          if ((i++ % VEG_CHECK_STEP) !== phase) continue;
-          const support = vegSupportY(pl);
-          if (support === -Infinity || support < pl.y - 0.18) {
-            pl.falling = true;
-            pl.fallT = 0;
-            pl.__layer = layer;
-            pl.__key = key;
-            pl.vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -(0.5 + Math.random() * 0.7), (Math.random() - 0.5) * 0.4);
-            pl.spin = (Math.random() - 0.5) * 1.8;
-            _vegFallingPlants.add(pl);
+      if ((_vegCheckFrame++ & 3) === 0) {
+        const phase = (_vegCheckFrame >>> 2) % VEG_CHECK_STEP;
+        let i = 0;
+        for (const layer of ['canopy', 'ground', 'cover', 'floor', 'aquatic']) {
+          const active = _vegActive[layer];
+          for (const [key, pl] of active) {
+            if (!pl || pl.sp.trunk || pl.falling) continue;
+            if ((i++ % VEG_CHECK_STEP) !== phase) continue;
+            const support = vegSupportY(pl);
+            if (support === -Infinity || support < pl.y - 0.18) {
+              pl.falling = true;
+              pl.fallT = 0;
+              pl.__layer = layer;
+              pl.__key = key;
+              pl.vel = new THREE.Vector3((Math.random() - 0.5) * 0.4, -(0.5 + Math.random() * 0.7), (Math.random() - 0.5) * 0.4);
+              pl.spin = (Math.random() - 0.5) * 1.8;
+              _vegFallingPlants.add(pl);
+            }
           }
         }
       }
@@ -5212,10 +6753,18 @@
         _v.set(pl.x, pl.y, pl.z);
         _sc.setScalar(pl.scale);
         _m.compose(_v, pl.q, _sc);
-        for (const part of sp.parts) part.mesh.setMatrixAt(i, _m);
+        for (const part of sp.parts) {
+          part.mesh.setMatrixAt(i, _m);
+          // Textured plants take the colour of the biome they stand in.
+          if (sp.tex) part.mesh.setColorAt(i, VEG_BIOME_TINT.get(pl.b) || _vegWhite);
+        }
         i++;
       }
-      for (const part of sp.parts) { part.mesh.count = i; part.mesh.instanceMatrix.needsUpdate = true; }
+      for (const part of sp.parts) {
+        part.mesh.count = i;
+        part.mesh.instanceMatrix.needsUpdate = true;
+        if (part.mesh.instanceColor) part.mesh.instanceColor.needsUpdate = true;
+      }
       sp.visible = i;
     }
 
@@ -5229,24 +6778,66 @@
       }
     }
 
-    function vegStream(px, pz) {
-      const t0 = performance.now();
-      for (const layer of ['canopy', 'ground', 'cover', 'floor', 'aquatic']) {
-        const L = VEG_LAYERS[layer];
-        let maxD = 0;
-        for (const sp of VEG_SPECIES) if (sp.layer === layer) maxD = Math.max(maxD, sp.dist);
-        const r = Math.ceil(maxD / L.cell);
-        const ccx = Math.floor(px / L.cell), ccz = Math.floor(pz / L.cell);
-        const active = _vegActive[layer];
-        const keep = new Set();
+    let _vegStreamTask = null;
 
-        for (let dz = -r; dz <= r; dz++) {
-          for (let dx = -r; dx <= r; dx++) {
-            const cx = ccx + dx, cz = ccz + dz;
-            const dd = Math.hypot((cx + 0.5) * L.cell - px, (cz + 0.5) * L.cell - pz);
-            if (dd > maxD + L.cell) continue;
-            const key = cx + ',' + cz;
-            keep.add(key);
+    function _vegBeginStream(px, pz) {
+      _vegStreamTask = {
+        px, pz, li: 0,
+        layers: ['canopy', 'ground', 'cover', 'floor', 'aquatic'],
+        layer: null, L: null, maxD: 0, r: 0, ccx: 0, ccz: 0, active: null, keep: null, dz: 0, dx: 0, phase: 0,
+      };
+    }
+
+    function _vegInitLayer(task) {
+      const layer = task.layers[task.li];
+      const L = VEG_LAYERS[layer];
+      let maxD = 0;
+      for (const sp of VEG_SPECIES) if (sp.layer === layer) maxD = Math.max(maxD, sp.dist);
+      task.layer = layer; task.L = L; task.maxD = maxD;
+      task.r = Math.ceil(maxD / L.cell);
+      task.ccx = Math.floor(task.px / L.cell); task.ccz = Math.floor(task.pz / L.cell);
+      task.active = _vegActive[layer];
+      task.keep = new Set();
+      task.dz = -task.r; task.dx = -task.r; task.phase = 1;
+    }
+
+    function _vegFinishLayer(task) {
+      const layer = task.layer, active = task.active, keep = task.keep;
+      for (const [key, pl] of active) {
+        if (keep.has(key)) continue;
+        if (pl && pl.sp.pickup) {
+          const pickupKey = key + ':' + pl.sp.n;
+          const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
+          if (pickup) {
+            _vegHarvested.add(`${layer}:${key}`);
+            if (pickup.mesh.parent) pickup.mesh.parent.remove(pickup.mesh);
+            if (pickup.mesh.userData.outlineRoot && pickup.mesh.userData.outlineRoot.parent) {
+              pickup.mesh.userData.outlineRoot.parent.remove(pickup.mesh.userData.outlineRoot);
+            }
+            const outIdx = outlineTargets.indexOf(pickup.mesh.userData.outlineRoot);
+            if (outIdx >= 0) outlineTargets.splice(outIdx, 1);
+            worldPickups.splice(worldPickups.indexOf(pickup), 1);
+          }
+        }
+        if (pl) vegRemove(pl.sp, key);
+        active.delete(key);
+      }
+    }
+
+    function vegStreamStep(budgetMs) {
+      const task = _vegStreamTask;
+      if (!task) return false;
+      const t0 = performance.now();
+      if (!task.layer) _vegInitLayer(task);
+      while (performance.now() - t0 < budgetMs) {
+        if (task.phase === 1) {
+          if (task.dz > task.r) { task.phase = 2; continue; }
+          const cx = task.ccx + task.dx, cz = task.ccz + task.dz;
+          const dd = Math.hypot((cx + 0.5) * task.L.cell - task.px, (cz + 0.5) * task.L.cell - task.pz);
+          const key = cx + ',' + cz;
+          if (dd <= task.maxD + task.L.cell) {
+            task.keep.add(key);
+            const layer = task.layer, active = task.active;
             if (_vegHarvested.has(`${layer}:${key}`)) {
               if (active.has(key)) {
                 const pl = active.get(key);
@@ -5265,85 +6856,70 @@
                 if (pl) vegRemove(pl.sp, key);
                 active.delete(key);
               }
-              continue;
-            }
-            if (active.has(key)) continue;
-            const pl = vegCell(layer, cx, cz);
-            if (pl && !pl.sp.ready) continue;
-            const rp = pl && dd <= pl.sp.dist ? vegResolve(pl) : null;
-
-
-            if (!rp) { if (!pl || dd <= pl.sp.dist) active.set(key, null); continue; }
-            active.set(key, rp);
-            if (rp.sp.pickup) {
-              const pickupKey = key + ':' + rp.sp.n;
-              const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
-              if (!pickup) {
-                const p = registerPickup({
-                  x: rp.x,
-                  y: rp.y + 0.6,
-                  z: rp.z,
-                  itemId: rp.sp.pickup.itemId || 'flower',
-                  count: rp.sp.pickup.count || 1,
-                  radius: rp.sp.pickup.radius ? rp.sp.pickup.radius * 2 : Math.max(2.4, (rp.sp.scale?.[0] || 1) * 3.2),
-                  label: rp.sp.pickup.label || `Pick ${rp.sp.pickup.itemId || 'flower'}`,
-                });
-                p.__vegKey = pickupKey;
-                p.__vegCellKey = key;
-                p.__vegLayer = layer;
-              } else {
-                pickup.x = rp.x;
-                pickup.y = rp.y + 0.6;
-                pickup.z = rp.z;
-                pickup.__vegCellKey = key;
-                pickup.__vegLayer = layer;
-                pickup.mesh.position.set(pickup.x, pickup.y, pickup.z);
-                if (pickup.mesh.userData.outlineRoot) pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
+            } else if (!active.has(key)) {
+              const pl = vegCell(layer, cx, cz);
+              if (pl && pl.sp.ready) {
+                const rp = dd <= pl.sp.dist ? vegResolve(pl) : null;
+                if (!rp) { if (dd <= pl.sp.dist) active.set(key, null); }
+                else {
+                  active.set(key, rp);
+                  if (rp.sp.pickup) {
+                    const pickupKey = key + ':' + rp.sp.n;
+                    const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
+                    if (!pickup) {
+                      const p = registerPickup({
+                        x: rp.x, y: rp.y + 0.6, z: rp.z,
+                        itemId: rp.sp.pickup.itemId || 'flower',
+                        count: rp.sp.pickup.count || 1,
+                        radius: rp.sp.pickup.radius ? rp.sp.pickup.radius * 2 : Math.max(2.4, (rp.sp.scale?.[0] || 1) * 3.2),
+                        label: rp.sp.pickup.label || `Pick ${rp.sp.pickup.itemId || 'flower'}`,
+                      });
+                      p.__vegKey = pickupKey; p.__vegCellKey = key; p.__vegLayer = layer;
+                    } else {
+                      pickup.x = rp.x; pickup.y = rp.y + 0.6; pickup.z = rp.z;
+                      pickup.__vegCellKey = key; pickup.__vegLayer = layer;
+                      pickup.mesh.position.set(pickup.x, pickup.y, pickup.z);
+                      if (pickup.mesh.userData.outlineRoot) pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
+                    }
+                  }
+                  vegAdd(rp.sp, key, rp);
+                }
               }
             }
-            vegAdd(rp.sp, key, rp);
           }
-        }
-        for (const [key, pl] of active) {
-          if (keep.has(key)) continue;
-          if (pl && pl.sp.pickup) {
-            const pickupKey = key + ':' + pl.sp.n;
-            const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
-            if (pickup) {
-              _vegHarvested.add(`${layer}:${key}`);
-              if (pickup.mesh.parent) pickup.mesh.parent.remove(pickup.mesh);
-              if (pickup.mesh.userData.outlineRoot && pickup.mesh.userData.outlineRoot.parent) {
-                pickup.mesh.userData.outlineRoot.parent.remove(pickup.mesh.userData.outlineRoot);
-              }
-              const outIdx = outlineTargets.indexOf(pickup.mesh.userData.outlineRoot);
-              if (outIdx >= 0) outlineTargets.splice(outIdx, 1);
-              worldPickups.splice(worldPickups.indexOf(pickup), 1);
-            }
+          task.dx++;
+          if (task.dx > task.r) { task.dx = -task.r; task.dz++; }
+        } else {
+          _vegFinishLayer(task);
+          task.li++;
+          if (task.li >= task.layers.length) {
+            const tt = performance.now();
+            vegRebuildTrunks();
+            vegPerf.trunks += performance.now() - tt;
+            _vegStreamTask = null;
+            vegPerf.stream += performance.now() - t0;
+            return false;
           }
-          if (pl) vegRemove(pl.sp, key);
-          active.delete(key);
+          _vegInitLayer(task);
         }
       }
-
-      const t1 = performance.now();
-      vegRebuildTrunks();
-      const t2 = performance.now();
-      vegPerf.stream += t1 - t0;
-      vegPerf.trunks += t2 - t1;
+      vegPerf.stream += performance.now() - t0;
+      return true;
     }
 
     function vegUpdate(px, pz) {
       if (Number.isFinite(px) && Number.isFinite(pz)) {
-        const gx = Math.floor(px / 2), gz = Math.floor(pz / 2);
+        const gx = Math.floor(px / 8), gz = Math.floor(pz / 8);
         if (gx !== _vegGX || gz !== _vegGZ) {
           _vegGX = gx; _vegGZ = gz;
-          vegStream(px, pz);
+          _vegBeginStream(px, pz);
         }
       }
+      if (_vegStreamTask) vegStreamStep(1.0);
 
 
       const ti = performance.now();
-      let budget = 6;
+      let budget = 2;
       for (const sp of VEG_SPECIES) {
         if (!sp.dirty) continue;
         if (budget-- <= 0) break;
@@ -5660,7 +7236,10 @@
     const TREE_FRUITS = ['apple', 'orange', 'pear'];
     const TREE_FRUIT_CHANCE = 0.10;
     const TREE_SHAKE_SOUND = 'assets/audio/tree-shake.flac';
+    const TREE_SHAKE_HOLD = 0.35; // keep rustling this long after the last punch
+    const TREE_SHAKE_FADE = 0.1;  // then fade out instead of cutting dead or running to the end
     let treeShakeAudio = null;
+    let treeShakeIdle = 0;
 
     function playTreeShakeSound() {
       if (!TREE_SHAKE_SOUND) return;
@@ -5668,16 +7247,24 @@
         if (!treeShakeAudio) {
           treeShakeAudio = new Audio(TREE_SHAKE_SOUND);
           treeShakeAudio.preload = 'auto';
-          treeShakeAudio.volume = 0.5;
         }
-        if (treeShakeAudio.paused) {
-          treeShakeAudio.currentTime = 0;
-          treeShakeAudio.play().catch(() => {});
-        } else {
+        treeShakeAudio.volume = 0.5 * masterVolume;
+        if (treeShakeAudio.paused || treeShakeAudio.ended) {
           treeShakeAudio.currentTime = 0;
           treeShakeAudio.play().catch(() => {});
         }
+        treeShakeIdle = 0;
       } catch (e) {}
+    }
+
+    function tickTreeShake(dt) {
+      if (!treeShakeAudio) return;
+      treeShakeIdle += dt;
+      if (treeShakeAudio.paused) return;
+      const want = treeShakeIdle < TREE_SHAKE_HOLD ? 0.5 * masterVolume : 0;
+      const v = treeShakeAudio.volume + (want - treeShakeAudio.volume) * Math.min(1, dt / (want > 0 ? 0.04 : TREE_SHAKE_FADE));
+      treeShakeAudio.volume = Math.max(0, v);
+      if (want === 0 && v <= 0.002) { treeShakeAudio.pause(); treeShakeAudio.currentTime = 0; }
     }
 
     function shakeTreeForFruit() {
@@ -5778,8 +7365,14 @@
       oxygen: 1,
     };
 
+    // Sandbox flight: double-tap Space toggles it. Space = up, Shift = down,
+    // WASD is yaw-only (never relative to the camera pitch) and you noclip.
+    let flying = false;
+    let lastSpaceTap = 0;
+
     const footsteps = createFootsteps();
     let stepAccum = 0;
+
     const stepPrev = new THREE.Vector3().copy(player.pos);
 
     function validSpawnPos(x, y, z) {
@@ -5799,6 +7392,26 @@
     const outlineTargets = [];
     const INTERACT_PROMPT_DELAY_MS = 220;
     const REACH = 7;
+
+    // Precise "straight beam from the middle of the camera" interaction: raycast
+    // actual meshes instead of fuzzy center/radius spheres so a right-click only
+    // hits what the crosshair is really on.
+    const interactRay = new THREE.Raycaster();
+    const _interactNdc = new THREE.Vector2(0, 0);
+
+    function bindInteractEntry(mesh, entry) {
+      if (!mesh || !entry) return mesh;
+      // Tag the root; hits land on child meshes, so lookups walk up to this.
+      mesh.userData.interactEntry = entry;
+      return mesh;
+    }
+
+    function findInteractEntry(object) {
+      for (let o = object; o; o = o.parent) {
+        if (o.userData && o.userData.interactEntry) return o.userData.interactEntry;
+      }
+      return null;
+    }
 
     function addOutlineToMesh(mesh, scale = 1.08, color = 0xffffff) {
       if (!mesh || mesh.userData.outlineRoot) return mesh;
@@ -5823,6 +7436,9 @@
           outline.center.copy(source.center);
           outline.scale.copy(source.scale).multiplyScalar(scale);
           outline.renderOrder = 100;
+          // shortcut: outline-only visuals, never an interaction target, so the
+          // crosshair beam always resolves to the real model beneath.
+          outline.raycast = () => {};
           root.add(outline);
           return;
         }
@@ -5843,6 +7459,9 @@
         outline.quaternion.copy(source.quaternion);
         outline.scale.copy(source.scale).multiplyScalar(scale);
         outline.renderOrder = 100;
+        // shortcut: outline-only visuals, never an interaction target, so the
+        // crosshair beam always resolves to the real model beneath.
+        outline.raycast = () => {};
         root.add(outline);
       };
 
@@ -5866,10 +7485,12 @@
 
     function makePickupMesh(itemId) {
       const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.18, 10, 10),
+        // Small, real hit volume: the crosshair beam must pass through it.
+        new THREE.SphereGeometry(0.28, 10, 10),
         new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })
       );
-      mesh.visible = false;
+      // Visible to the raycaster but fully transparent to the eye.
+      mesh.visible = true;
       mesh.userData.itemId = itemId;
       addOutlineToMesh(mesh, 1.5, 0xffffff);
       return mesh;
@@ -5886,6 +7507,8 @@
         activate() {
 
           if (pickup.__vegLayer && !hasGardeningGloves()) { notice('NEED GARDENING GLOVES'); return; }
+          // Keep the plant in the world when the bag cannot hold the drop.
+          if (!bagRoomFor(itemId, count)) { notice('INVENTORY FULL'); return; }
           give(itemId, count);
 
           if (pickup.__vegLayer && pickup.__vegCellKey) {
@@ -5912,6 +7535,7 @@
       if (pickup.mesh.userData.outlineRoot) {
         pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
       }
+      bindInteractEntry(pickup.mesh, { target: pickup, type: 'pickup', label: pickup.label, activate: () => pickup.activate() });
       scene.add(pickup.mesh);
       worldPickups.push(pickup);
       return pickup;
@@ -5935,89 +7559,47 @@
           if (typeof onActivate === 'function') onActivate();
         }
       };
+      bindInteractEntry(mesh, { target: machine, type: 'machine', label: machine.label, activate: () => machine.activate() });
       machineActivators.push(machine);
       return machine;
     }
 
-    function raySphereHit(origin, dir, center, radius) {
-      const oc = origin.clone().sub(center);
-      const b = oc.dot(dir);
-      const c = oc.lengthSq() - radius * radius;
-      const disc = b * b - c;
-      if (disc < 0) return null;
-      const sqrt = Math.sqrt(disc);
-      const tA = -b - sqrt;
-      const tB = -b + sqrt;
-      const pos = [tA, tB].find((t) => Number.isFinite(t) && t >= 0.05);
-      return pos === undefined ? null : pos;
-    }
-
     function resolveInteractTarget() {
-      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      const center = new THREE.Vector2(innerWidth * 0.5, innerHeight * 0.5);
-      let best = null;
-      let nearest = null;
+      if (!camera) return null;
+      // Straight beam out of the middle of the camera; the first real model hit
+      // along it is the thing you meant.
+      interactRay.setFromCamera(_interactNdc, camera);
+      interactRay.far = REACH;
 
-      const scoreCandidate = (t) => {
-        const hitPos = origin.clone().addScaledVector(dir, t);
-        const screen = hitPos.clone().project(camera);
-        const px = ((screen.x + 1) * 0.5) * innerWidth;
-        const py = ((-screen.y + 1) * 0.5) * innerHeight;
-        const screenDist = Math.hypot(px - center.x, py - center.y);
-        return { screenDist, t, hitPos };
-      };
-
-      const choose = (candidate, record) => {
-        if (!candidate) return record;
-        if (!record) return candidate;
-        if (candidate.screenDist < record.screenDist) return candidate;
-        if (Math.abs(candidate.screenDist - record.screenDist) < 0.001 && candidate.t < record.t) return candidate;
-        return record;
-      };
-
+      const roots = [];
       for (const pickup of worldPickups) {
-
         if (pickup.__vegLayer && !hasGardeningGloves()) continue;
-        const t = raySphereHit(origin, dir, new THREE.Vector3(pickup.x, pickup.y, pickup.z), pickup.radius + 0.25);
-        if (t === null || t > REACH) continue;
-        const scored = scoreCandidate(t);
-        nearest = choose({ ...scored, target: pickup, type: 'pickup', label: pickup.label, activate: () => pickup.activate() }, nearest);
-        if (scored.screenDist <= 340) {
-          best = choose({ ...scored, target: pickup, type: 'pickup', label: pickup.label, activate: () => pickup.activate() }, best);
-        }
+        if (pickup.mesh) roots.push(pickup.mesh);
       }
-
       for (const machine of machineActivators) {
-        const t = raySphereHit(origin, dir, new THREE.Vector3(machine.x, machine.y, machine.z), machine.radius);
-        if (t === null || t > REACH) continue;
-        const scored = scoreCandidate(t);
-        nearest = choose({ ...scored, target: machine, type: 'machine', label: machine.label, activate: () => machine.activate() }, nearest);
-        if (scored.screenDist <= 340) {
-          best = choose({ ...scored, target: machine, type: 'machine', label: machine.label, activate: () => machine.activate() }, best);
-        }
+        if (machine.mesh) roots.push(machine.mesh);
       }
+      if (!roots.length) return null;
 
-      if (buildingSystem) {
-        const origin2 = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
-        const dir2 = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const hit2 = doorHit(origin2, dir2);
-        if (hit2) {
-          const scored = scoreCandidate(hit2.t);
-          const door = hit2.piece;
-          const cand = {
-            ...scored, target: door, type: 'door', label: 'DOOR',
-            activate: () => (handFreeForDoor() ? toggleDoor(door) : false),
-          };
-          nearest = choose(cand, nearest);
-          if (scored.screenDist <= 340) best = choose(cand, best);
-        }
+      const hits = interactRay.intersectObjects(roots, true);
+      for (const hit of hits) {
+        const entry = findInteractEntry(hit.object);
+        if (!entry) continue;
+        return {
+          target: entry.target,
+          type: entry.type,
+          label: entry.label,
+          activate: entry.activate,
+          screenDist: 0,
+          t: hit.distance,
+          hitPos: hit.point,
+        };
       }
-
-      return best || nearest;
+      return null;
     }
 
     function refreshInteractPrompt() {
+      if (mineConfirm && (performance.now() - mineConfirm.t) > MINE_CONFIRM_MS) clearMineConfirm();
       if (player.vel.lengthSq() > 0.1) {
         if (activeInteractTarget || pendingInteractTarget) {
           hideAllOutlines();
@@ -6147,8 +7729,14 @@
     }
 
 
-    const saved = world.load();
+    const saved = savedData;
+    if (saved) world.applySave(saved);
     if (saved && Number.isFinite(saved.playTime)) playTime = Math.max(0, saved.playTime);
+    else if (saved) {
+      const d = Number.isInteger(saved.day) && saved.day > 0 ? saved.day : 1;
+      const t = Number.isFinite(saved.dayT) ? Math.max(0, saved.dayT) : 0;
+      playTime = Math.max(0, (d - 1) * TUNING.DAY_SECONDS + t);
+    }
     if (saved && saved.guide !== undefined) {
       if (saved.guide === null) guideIndex = GUIDE_STEPS.length;
       else {
@@ -6157,8 +7745,16 @@
       }
     }
     if (saved && saved.achievements) loadAchievements(saved.achievements);
+    if (saved && saved.seed !== undefined) WORLD_SEED = saved.seed;
+    if (WORLD_TERRAIN === 'realistic') {
+      // Bake erosion around the spawn point before anything samples heights,
+      // so prewarm does not mesh terrain that is about to change.
+      realisticTerrain().recenter(
+        (saved?.player?.[0] ?? 0.5) + WORLD_SEED,
+        (saved?.player?.[2] ?? 0.5) + WORLD_SEED,
+      );
+    }
     if (saved && saved.player && saved.seed !== undefined) {
-      WORLD_SEED = saved.seed;
       player.pos.set(saved.player[0], saved.player[1], saved.player[2]);
       player.yaw = saved.player[3] || 0;
       player.pitch = saved.player[4] || 0;
@@ -6175,9 +7771,7 @@
       spawnOnGround(0.5, 0.5);
     }
 
-    industrialPreload.then(() => {
-      spawnStarterContainerNearPlayer(player.pos.x, player.pos.z);
-    });
+
 
     mapSystem = new MapSystem({
       player: () => ({ x: player.pos.x, z: player.pos.z, yaw: player.yaw }),
@@ -6189,9 +7783,11 @@
       }),
       // Flat map colour: exposed mountain rock overrides the biome top colour.
       surfaceColor: (x, z, h) => (
-        h - SEA_LEVEL > 30
-          ? [0.33, 0.32, 0.36]
-          : (BIOME_DEFS[biomeAt(x, z)]?.top || [0.4, 0.5, 0.3])
+        WORLD_TERRAIN === 'realistic'
+          ? realisticTerrain().mapColor(x + WORLD_SEED, z + WORLD_SEED, h, BIOME_DEFS[biomeAt(x, z)])
+          : h - SEA_LEVEL > 30
+            ? [0.33, 0.32, 0.36]
+            : (BIOME_DEFS[biomeAt(x, z)]?.top || [0.4, 0.5, 0.3])
       ),
       industrialCell: IND_CELL,
       industrialDims: IND_DIMS,
@@ -6199,7 +7795,7 @@
       machines: () => (machineSystem ? machineSystem.instances : []),
       walls: () => (buildingSystem ? buildingSystem.pieces.values() : []),
       notice: (msg) => notice(msg),
-      save: () => { if (!wipeSave) world.save(player); },
+      save: () => { if (!wipeSave) void world.save(player); },
       onShow: () => {
         unlockPointer();
         setOverlay(false);
@@ -6214,7 +7810,7 @@
 
 
     machineSystem = new MachineSystem({
-      THREE, scene, world, player, inv, ITEMS, give, giveStack,
+      THREE, scene, world, player, inv, ITEMS, give, giveStack, spawnDrop,
       icon: (id) => itemIconUrl(id),
       onCraft: (id, n) => achCraft(id, n),
       showTip: (s, x, y) => showTip(s, x, y),
@@ -6222,9 +7818,9 @@
       syncBars,
       bagRoomFor,
       notice: (msg) => notice(msg),
-      mineDrops, groundBand,
+      mineDrops, groundBand, biomeAt, savannaBiome: B.SAVANNA,
       defs: MACHINE_DEFS, byId: MACHINE_BY_ID, craftRecipes: CRAFT_RECIPES, layoutFor,
-      GLTFLoader, registerMachine, machineActivators, patchMachineMaterial,
+      GLTFLoader, registerMachine, machineActivators,
       ui: workbenchUI,
       isDay,
       onOpen: () => { unlockPointer(); setOverlay(false); },
@@ -6240,7 +7836,20 @@
       if (saved && saved.machines && saved.machines.length) machineSystem.restore(saved.machines);
       if (saved && saved.guide === undefined) migrateGuideFromMachines();
       backfillAchievements();
+      if (saved && saved.skyline && saved.skyline.length) skylineSystem.restore(saved.skyline);
     }).catch((e) => console.warn('machine load failed', e));
+
+    // Skyline logistics: pylons, wires and the cargo pods that ride them.
+    const skylineSystem = new SkylineSystem({
+      THREE, scene, items: ITEMS, machines: machineSystem, craftRecipes: CRAFT_RECIPES,
+      GLTFLoader,
+      icon: (id) => itemIconUrl(id),
+      showTip: (s, x, y) => showTip(s, x, y),
+      hideTip: () => hideTip(),
+      notice: (msg) => notice(msg),
+      onOpen: () => { unlockPointer(); setOverlay(false); },
+      onClosed: () => { lockPointer(); },
+    });
 
     const pipeSystem = new PipeSystem({ THREE, scene, GLTFLoader, give });
     pipeSystem.load().then(() => {
@@ -6298,8 +7907,11 @@
       return MENU_WORLD ? `idte.intro.v1.${MENU_WORLD.id}` : 'idte.intro.v1';
     }
 
+    let _introSeen = (await idbGet(introSeenKey())) === '1';
+
     function markIntroSeen() {
-      try { localStorage.setItem(introSeenKey(), '1'); } catch (e) { }
+      _introSeen = true;
+      idbSet(introSeenKey(), '1').catch(() => { });
     }
 
     function flashGuideCard() {
@@ -6315,7 +7927,9 @@
       introOpen = true;
       introFirstRun = !!firstRun;
       introEl.classList.remove('hidden');
-      setOverlay(false);
+      // While the world is still loading, the loading screen belongs on top:
+      // the intro is only the modal that sits over it.
+      if (!overlay.classList.contains('loading-mode')) setOverlay(false);
       unlockPointer();
       if (introBtn) introBtn.textContent = introBtn.disabled ? 'LOADING' : 'ENTER THE ZONE';
     }
@@ -6327,8 +7941,14 @@
       markIntroSeen();
       const first = introFirstRun;
       introFirstRun = false;
+      if (first) flashGuideCard();
+      // The first-run intro is the way out of the loading screen: dismissing it
+      // takes the loading overlay and the menu with it.
+      if (overlay.classList.contains('loading-mode') && window.__NUCLEARISM_FINISH_LOADING__) {
+        window.__NUCLEARISM_FINISH_LOADING__();
+        return;
+      }
       if (first) {
-        flashGuideCard();
         lockPointer();
       } else {
         setOverlay(true);
@@ -6337,25 +7957,289 @@
 
     function maybeShowIntro() {
       if (!introEl || WORLD_MODE !== 'survival') return;
-      let seen = false;
-      try { seen = localStorage.getItem(introSeenKey()) === '1'; } catch (e) { }
-      if (!seen) openIntro(true);
+      if (!_introSeen) openIntro(true);
     }
 
     introBtn?.addEventListener('click', () => { if (!introBtn.disabled) closeIntro(); });
+
+    const prayModal = document.getElementById('prayModal');
+    const prayBtn = document.getElementById('prayBtn');
+    const prayStatus = document.getElementById('prayStatus');
+    const prayOath = document.getElementById('prayOath');
+    const prayOathPrompt = document.getElementById('prayOathPrompt');
+    const prayOptions = document.getElementById('prayOptions');
+    const prayInput = document.getElementById('prayInput');
+    const prayCount = document.getElementById('prayCount');
+    const praySug = document.getElementById('praySug');
+    let prayOpen = false;
+    let praySel = -1;
+    let prayMatches = [];
+    const PRAY_OATH = 'i swear that i trust 27';
+
+    function praySetOathMode(on) {
+      if (prayOath) prayOath.style.display = on ? '' : 'none';
+      if (prayOathPrompt) prayOathPrompt.style.display = on ? '' : 'none';
+      if (prayOptions) prayOptions.style.display = on ? 'none' : '';
+    }
+
+    function formatPrayTime(sec) {
+      const s = Math.max(0, Math.ceil(sec));
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return `${m}:${String(r).padStart(2, '0')}`;
+    }
+
+    function paintPray() {
+      if (!prayModal) return;
+      const left = Math.max(0, prayReadyAt - playTime);
+      const ready = left <= 0;
+      if (prayBtn) {
+        prayBtn.disabled = !ready;
+        prayBtn.textContent = ready ? 'PRAY' : 'COOLDOWN';
+      }
+      if (prayStatus) prayStatus.textContent = ready ? 'READY' : `COOLDOWN ${formatPrayTime(left)}`;
+    }
+
+    function renderPraySug() {
+      if (!praySug) return;
+      praySel = prayMatches.length ? 0 : -1;
+      if (!prayMatches.length) { praySug.classList.add('hidden'); praySug.innerHTML = ''; return; }
+      praySug.innerHTML = prayMatches.map((id, i) =>
+        `<div class="row${i === praySel ? ' sel' : ''}" data-id="${id}"><span>${itemLabel(id)}</span><span class="id">${id}</span></div>`
+      ).join('');
+      praySug.classList.remove('hidden');
+    }
+
+    function updatePraySug() {
+      if (!prayInput) return;
+      const q = prayInput.value.trim();
+      prayMatches = q ? nearestItems(q) : [];
+      renderPraySug();
+    }
+
+    function completePray(id) {
+      if (!prayInput) return;
+      prayInput.value = id;
+      prayMatches = [];
+      if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
+      prayInput.focus();
+    }
+
+    function openPray() {
+      if (!prayModal || prayOpen) return;
+      closeAllMenus();
+      prayOpen = true;
+      prayModal.classList.remove('hidden');
+      setOverlay(false);
+      unlockPointer();
+      if (prayOath) prayOath.value = '';
+      if (prayInput) prayInput.value = '';
+      if (prayCount) prayCount.value = '1';
+      prayMatches = [];
+      if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
+      praySetOathMode(true);
+      paintPray();
+      setTimeout(() => prayOath?.focus(), 0);
+    }
+
+    function closePray() {
+      if (!prayOpen) return;
+      prayOpen = false;
+      prayModal.classList.add('hidden');
+      if (prayInput) prayInput.value = '';
+      if (prayCount) prayCount.value = '1';
+      if (prayOath) prayOath.value = '';
+      prayMatches = [];
+      if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
+      praySetOathMode(true);
+      lockPointer();
+    }
+
+    function doGive() {
+      const nameQ = (prayInput?.value || '').trim();
+      if (!nameQ) return;
+      const id = resolveItem(nameQ);
+      if (!id) { notice(`NO ITEM "${nameQ}"`); return; }
+      let n = parseInt(prayCount?.value || '1', 10);
+      if (!Number.isFinite(n) || n < 1) n = 1;
+      const left = give(id, n);
+      notice(`+${n - (left || 0)} ${itemLabel(id)}`);
+      if (prayInput) prayInput.value = '';
+      if (prayCount) prayCount.value = '1';
+      prayMatches = [];
+      if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
+      world.save(player).catch(() => { });
+    }
+
+    function doPray() {
+      if (playTime < prayReadyAt) { paintPray(); return; }
+      const nameQ = (prayInput?.value || '').trim();
+      if (nameQ) {
+        const id = resolveItem(nameQ);
+        if (id) {
+          let n = parseInt(prayCount?.value || '1', 10);
+          if (!Number.isFinite(n) || n < 1) n = 1;
+          const left = give(id, n);
+          notice(`+${n - (left || 0)} ${itemLabel(id)}`);
+        } else {
+          notice(`NO ITEM "${nameQ}"`);
+        }
+      }
+      inv.dose = 0;
+      vitals.wounds = Object.create(null);
+      prayReadyAt = playTime + 30 * 60;
+      if (prayInput) prayInput.value = '';
+      if (prayCount) prayCount.value = '1';
+      prayMatches = [];
+      if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
+      paintRad();
+      paintVitals();
+      syncBars();
+      paintPray();
+      world.save(player).catch(() => { });
+    }
+
+    prayBtn?.addEventListener('click', doPray);
+
+    prayOath?.addEventListener('input', () => {
+      const v = (prayOath.value || '').trim().toLowerCase();
+      if (v === PRAY_OATH) {
+        praySetOathMode(false);
+        setTimeout(() => prayInput?.focus(), 0);
+      }
+    });
+    prayOath?.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closePray(); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const v = (prayOath.value || '').trim().toLowerCase();
+        if (v === PRAY_OATH) {
+          praySetOathMode(false);
+          setTimeout(() => prayInput?.focus(), 0);
+        }
+      }
+    });
+
+    prayInput?.addEventListener('input', updatePraySug);
+    prayInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (praySel >= 0 && prayMatches[praySel]) completePray(prayMatches[praySel]);
+        else doGive();
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); closePray(); return; }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (prayMatches.length) praySel = (praySel + 1) % prayMatches.length;
+        renderPraySug();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (prayMatches.length) praySel = (praySel - 1 + prayMatches.length) % prayMatches.length;
+        renderPraySug();
+      } else if (e.key === 'Tab') {
+        if (praySel >= 0 && prayMatches[praySel]) { e.preventDefault(); completePray(prayMatches[praySel]); }
+      }
+    });
+    praySug?.addEventListener('mousedown', (e) => {
+      const row = e.target.closest('.row');
+      if (!row) return;
+      e.preventDefault();
+      completePray(row.dataset.id);
+    });
 
     document.getElementById('playBtn').addEventListener('click', () => {
       lockPointer();
     });
 
-    document.getElementById('manualBtn')?.addEventListener('click', () => {
-      openIntro(false);
-    });
-    if (WORLD_MODE === 'sandbox') document.getElementById('manualBtn')?.remove();
+    document.getElementById('manualBtn')?.remove();
 
-    document.getElementById('menuBtn').addEventListener('click', () => {
-      if (!wipeSave) world.save(player);
+    const saveFailEl = document.getElementById('saveFail');
+    const saveFailMsgEl = document.getElementById('saveFailMsg');
+    const saveFailDownloadBtn = document.getElementById('saveFailDownload');
+    const saveFailRetryBtn = document.getElementById('saveFailRetry');
+    const saveFailQuitBtn = document.getElementById('saveFailQuit');
+    const saveFailBackBtn = document.getElementById('saveFailBack');
+    let saveFailPendingQuit = false;
+
+    function downloadSaveFile() {
+      let payload = world.lastSavePayload;
+      if (!payload || !payload.json) payload = world.buildSave(player);
+      if (!payload || !payload.json) {
+        notice('NO SAVE DATA TO DOWNLOAD');
+        return false;
+      }
+      try {
+        const name = (WORLD_NAME || 'world').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'world';
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([payload.json], { type: 'application/json' }));
+        a.download = `${name}-${payload.key}-${stamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        notice('SAVE FILE DOWNLOADED');
+        return true;
+      } catch (e) {
+        console.error('[save] download failed', e);
+        notice('DOWNLOAD FAILED');
+        return false;
+      }
+    }
+
+    function showSaveFailModal(pendingQuit = false, err) {
+      saveFailPendingQuit = !!pendingQuit;
+      const quota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || '') || err.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+      const bytes = world.lastSavePayload?.json?.length;
+      const size = Number.isFinite(bytes) ? ` (${Math.ceil(bytes / 1024)} KB)` : '';
+      if (saveFailMsgEl) {
+        saveFailMsgEl.textContent = quota
+          ? `Browser storage is full, so the game could not save${size}.`
+          : `The game could not save to browser storage${size}.`;
+      }
+      if (saveFailQuitBtn) saveFailQuitBtn.style.display = saveFailPendingQuit ? '' : 'none';
+      if (saveFailBackBtn) saveFailBackBtn.textContent = saveFailPendingQuit ? 'CANCEL' : 'CLOSE';
+      if (saveFailEl) saveFailEl.classList.remove('hidden');
+    }
+
+    function hideSaveFailModal() {
+      saveFailPendingQuit = false;
+      if (saveFailEl) saveFailEl.classList.add('hidden');
+    }
+
+    async function trySaveOrWarn(reason, pendingQuit = false) {
+      if (wipeSave) return true;
+      const ok = await world.save(player);
+      console.info(`[save] trigger=${reason} ok=${ok}`);
+      if (ok) return true;
+      showSaveFailModal(pendingQuit, world.lastSaveError);
+      return false;
+    }
+
+    saveFailDownloadBtn?.addEventListener('click', () => { downloadSaveFile(); });
+    saveFailRetryBtn?.addEventListener('click', async () => {
+      const wasQuit = saveFailPendingQuit;
+      const ok = await trySaveOrWarn('retry', wasQuit);
+      if (ok) {
+        hideSaveFailModal();
+        if (wasQuit) location.reload();
+      }
+    });
+    saveFailQuitBtn?.addEventListener('click', () => {
+      hideSaveFailModal();
       location.reload();
+    });
+    saveFailBackBtn?.addEventListener('click', () => {
+      const wasQuit = saveFailPendingQuit;
+      hideSaveFailModal();
+      if (wasQuit) setOverlay(true);
+    });
+
+    document.getElementById('menuBtn').addEventListener('click', async () => {
+      if (wipeSave) { location.reload(); return; }
+      const ok = await trySaveOrWarn('menu', true);
+      if (ok) location.reload();
     });
 
 
@@ -6386,7 +8270,10 @@
     document.addEventListener('pointerlockchange', () => {
       locked = document.pointerLockElement === renderer.domElement;
       blockLook();
-      setOverlay(!locked && !introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen);
+      // While the world is loading, the loading screen owns the overlay: the
+      // pause menu must not pop over it.
+      if (overlay.classList.contains('loading-mode')) return;
+      setOverlay(!locked && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen);
       if (!locked) {
         settingsView.classList.add('hidden');
         mainView.classList.remove('hidden');
@@ -6394,7 +8281,8 @@
     });
 
     document.addEventListener('pointerlockerror', () => {
-      if (!introOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !achieveOpen) setOverlay(true);
+      if (overlay.classList.contains('loading-mode')) return;
+      if (!introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen) setOverlay(true);
     });
 
 
@@ -6403,6 +8291,8 @@
 
     function lockPointer() {
       try {
+        const menuEl = document.getElementById('menu');
+        if (menuEl) { menuEl.classList.remove('loading-behind'); menuEl.classList.add('hidden'); }
         const p = renderer.domElement.requestPointerLock();
         if (p && p.catch) p.catch(() => { });
       } catch (e) {                                    }
@@ -6425,6 +8315,20 @@
     const tipEl = document.getElementById('tip');
     const tipTitle = tipEl.querySelector('.t');
     const tipBody = tipEl.querySelector('.b');
+
+    // "Urgent card": reusable, clean notice centered over the crosshair.
+    const urgentCard = document.getElementById('urgentCard');
+    const urgentCardTitle = urgentCard ? urgentCard.querySelector('.urgent-title') : null;
+    const urgentCardBody = urgentCard ? urgentCard.querySelector('.urgent-body') : null;
+    function showUrgentCard(body = '', title = '') {
+      if (!urgentCard) return;
+      if (urgentCardTitle) urgentCardTitle.textContent = title || '';
+      if (urgentCardBody) urgentCardBody.textContent = body || '';
+      urgentCard.hidden = false;
+    }
+    function hideUrgentCard() {
+      if (urgentCard) urgentCard.hidden = true;
+    }
     const radFill = document.getElementById('radFill');
     const radNum = document.getElementById('radNum');
     const radMeterEl = document.getElementById('radMeter');
@@ -6445,6 +8349,7 @@
     const achievePanelEl = document.getElementById('achievePanel');
     const achieveGridEl = document.getElementById('achieveGrid');
     const achieveCountEl = document.getElementById('achieveCount');
+    const achieveTimeEl = document.getElementById('achieveTime');
     const achieveDetailEl = document.getElementById('achieveDetail');
     const achieveNameEl = document.getElementById('achieveName');
     const achieveReqEl = document.getElementById('achieveReq');
@@ -6596,6 +8501,11 @@
       }
     }
 
+    function dropSolidAt(x, y, z) {
+      if (world.field.sample(x, y, z) > 0) return true;
+      return !!(buildingSystem && buildingSystem.solidAt(x, y, z));
+    }
+
     function updateDrops(dt, now) {
       const pp = player.pos;
       for (let i = drops.length - 1; i >= 0; i--) {
@@ -6604,11 +8514,12 @@
           d.vel.y -= 12 * dt;
           d.mesh.position.addScaledVector(d.vel, dt);
           d.mesh.rotation.y += dt * 3;
-          if (world.field.sample(d.mesh.position.x, d.mesh.position.y, d.mesh.position.z) > 0) {
-            for (let u = 0; u < 1.2; u += 0.1) {
-              d.mesh.position.y += 0.1;
-              if (world.field.sample(d.mesh.position.x, d.mesh.position.y, d.mesh.position.z) <= 0) break;
+          if (dropSolidAt(d.mesh.position.x, d.mesh.position.y, d.mesh.position.z)) {
+            for (let u = 0; u < 1.2; u += 0.05) {
+              d.mesh.position.y += 0.05;
+              if (!dropSolidAt(d.mesh.position.x, d.mesh.position.y, d.mesh.position.z)) break;
             }
+            d.vel.set(0, 0, 0);
             d.resting = true;
             d.rollT = 0;
           }
@@ -6618,10 +8529,10 @@
           if (d.rollT <= 0) {
             d.rollT = 0.2;
             const px = d.mesh.position.x, py = d.mesh.position.y, pz = d.mesh.position.z;
-            if (world.field.sample(px, py - 0.25, pz) <= 0) {
+            if (!dropSolidAt(px, py - 0.2, pz)) {
               d.resting = false;
               d.vel.set(0, 0, 0);
-            } else {
+            } else if (!buildingSystem || !buildingSystem.solidAt(px, py - 0.2, pz)) {
               let bx = 0, bz = 0, bh = py;
               for (const [ox, oz] of [[0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) {
                 const h = world.getSurfaceHeight(px + ox, pz + oz, py + 2);
@@ -6637,10 +8548,13 @@
         }
         const dx = d.mesh.position.x - pp.x, dy = d.mesh.position.y - pp.y, dz = d.mesh.position.z - pp.z;
         if (now - d.born > 800 && dx * dx + dy * dy + dz * dz < 4) {
-          const got = (d.liquid || d.plates)
-            ? giveStack({ id: d.id, n: d.n, ...(d.liquid ? { liquid: d.liquid } : {}), ...(d.plates ? { plates: d.plates } : {}) })
-            : (give(d.id, d.n), true);
-          if (got) { scene.remove(d.mesh); drops.splice(i, 1); }
+          // Leftovers stay on the ground: a full bag must not eat the drop.
+          const left = (d.liquid || d.plates)
+            ? (giveStack({ id: d.id, n: d.n, ...(d.liquid ? { liquid: d.liquid } : {}), ...(d.plates ? { plates: d.plates } : {}) }) ? 0 : d.n)
+            : give(d.id, d.n);
+          if (left < d.n) showGain(d.id, d.n - left, 'PICKED UP');
+          if (left <= 0) { scene.remove(d.mesh); drops.splice(i, 1); }
+          else d.n = left;
         } else if (now - d.born > 120000) {
           scene.remove(d.mesh);
           drops.splice(i, 1);
@@ -6760,7 +8674,7 @@
         advanced = true;
       }
       paintGuide(advanced);
-      if (advanced && !wipeSave) world.save(player);
+      if (advanced && !wipeSave) void world.save(player);
     }
 
     function migrateGuideFromMachines() {
@@ -6900,7 +8814,7 @@
       if (!achievePanelEl || achievePanelEl.classList.contains('hidden')) return;
       const sig = ACHIEVEMENT_TYPES.map((type) => type.tiers.map((tier) =>
         `${achievementDone(tier) ? 1 : 0}${Math.round(achievementProgress(tier) * 20)}`).join('.')).join('|')
-        + `#${achSelected ? `${achSelected.type}:${achSelected.tier}` : ''}`;
+        + `#${achSelected ? `${achSelected.type}:${achSelected.tier}` : ''}#t${Math.floor(playTime)}`;
       if (!force && sig === achPaintSig) return;
       achPaintSig = sig;
       for (const cell of achieveGridEl.querySelectorAll('.achCell')) {
@@ -6916,6 +8830,7 @@
       }
       const total = ACHIEVEMENT_TYPES.reduce((n, t) => n + t.tiers.length, 0);
       achieveCountEl.textContent = `${countUnlockedAchievements()} / ${total} UNLOCKED`;
+       if (achieveTimeEl) achieveTimeEl.textContent = `PLAY TIME ${formatPlayTime(playTime)}`;
       paintAchievementDetail();
     }
 
@@ -6944,7 +8859,7 @@
       const unlocked = countUnlockedAchievements();
       if (unlocked !== achUnlocked) {
         achUnlocked = unlocked;
-        if (!wipeSave) world.save(player);
+        if (!wipeSave) void world.save(player);
       }
       if (achieveOpen) paintAchievements();
     }
@@ -6964,7 +8879,7 @@
       achievePanelEl.classList.add('hidden');
       achieveTipEl.classList.add('hidden');
       achieveOpen = false;
-      if (!wipeSave) world.save(player);
+      if (!wipeSave) void world.save(player);
       setOverlay(true);
     }
 
@@ -7198,7 +9113,11 @@
       if (d.consumable) {
         if (d.consumable.cures) lines.push('TREATS ' + d.consumable.cures.map((t) => WOUNDS[t]?.name || t).join(' / '));
         if (d.consumable.heal) lines.push(`HEAL +${d.consumable.heal}`);
-        if (d.consumable.food) lines.push(`FOOD +${d.consumable.food}`);
+        if (d.consumable.food) {
+          const fn = foodNumb(s.id), eff = Math.round(effectiveFood(s.id, d.consumable.food) * 10) / 10;
+          lines.push(`FOOD +${eff} (BASE ${d.consumable.food})`);
+          lines.push(`NUMBNESS ${fn.toFixed(1)} / 2`);
+        }
         if (d.consumable.immunity) lines.push(`INFECTION IMMUNITY ${d.consumable.immunity}s`);
         if (d.consumable.dose) lines.push(`DOSE ${d.consumable.dose > 0 ? '+' : '-'}${formatRad(Math.abs(d.consumable.dose))}`);
         if (d.consumable.shieldTime) lines.push(`SHIELD ${d.consumable.shieldTime}s`);
@@ -7237,11 +9156,14 @@
 
 
     function closeAllMenus() {
-      const any = recipeOpen || workbenchUI.opened || invOpen || !!mapSystem?.isOpen();
+      const any = recipeOpen || workbenchUI.opened || skylineSystem?.isOpen() || invOpen || !!mapSystem?.isOpen() || prayOpen;
+      if (prayOpen) closePray();
       if (recipeOpen) toggleRecipes(false);
       if (workbenchUI.opened) workbenchUI.close();
+      if (skylineSystem?.isOpen()) skylineSystem.closeUI();
       if (invOpen) toggleInv(false);
       if (mapSystem?.isOpen()) mapSystem.hide();
+      hideTip();
       return any;
     }
 
@@ -7250,6 +9172,7 @@
       if (!invOpen) {
         dragDrop.cancel();
         if (recipeOpen) toggleRecipes(false);
+        hideTip();
       }
       hoverSlot = -1;
       invPanel.classList.toggle('hidden', !invOpen);
@@ -7325,10 +9248,10 @@
     }
     for (const c of CRAFT_RECIPES) {
       const id = Object.keys(c.out)[0];
-      addRecipe({ needs: c.needs, out: c.out, where: 'CRAFTING' + (TABLE_OUT.has(id) ? ' · POCKET TABLE' : '') });
+      addRecipe({ needs: c.needs, out: c.out, where: 'CRAFTING' + (TABLE_OUT.has(id) ? ' · POCKET TABLE' : ''), liquidNeeds: [] });
     }
     for (const m of MACHINE_DEFS) {
-      for (const mr of m.recipes || []) addRecipe({ needs: mr.in || {}, out: mr.out || {}, where: m.name, fuel: mr.fuel });
+      for (const mr of m.recipes || []) addRecipe({ needs: mr.in || {}, out: mr.out || {}, where: m.name, fuel: mr.fuel, liquidNeeds: mr.liquidIn || [] });
     }
 
     function recipeSlot(id, n) {
@@ -7338,8 +9261,9 @@
 
     function recipeCard(r) {
       const ins = Object.entries(r.needs).map(([id, n]) => recipeSlot(id, n)).join('') || '<div class="rslot"></div>';
+      const liqs = (r.liquidNeeds || []).map((l) => `<div class="rslot rliq"><div style="display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700">${String(l.id).toUpperCase()}<br>${l.amount}L</div></div>`).join('');
       const outs = Object.entries(r.out).map(([id, n]) => recipeSlot(id, n)).join('') || '<div class="rslot"></div>';
-      return `<div class="rcard"><div class="ring">${ins}</div><div class="rarrow"></div>`
+      return `<div class="rcard"><div class="ring">${ins}${liqs}</div><div class="rarrow"></div>`
         + `<div class="rout">${outs}</div><div class="rwhere">${r.where}${r.fuel ? ' · FUEL' : ''}</div></div>`;
     }
 
@@ -7674,6 +9598,7 @@
         vitals.hunger = vitals.maxHunger;
         vitals.wounds = Object.create(null);
         vitals.infectionImmunity = 0;
+        vitals.foodNumb = Object.create(null);
         return;
       }
 
@@ -7697,6 +9622,7 @@
       vitals.hunger = vitals.maxHunger;
       vitals.wounds = Object.create(null);
       vitals.infectionImmunity = 0;
+      vitals.foodNumb = Object.create(null);
       fallPeak = 0;
       deathT = 3;
       shakeT = 1.5;
@@ -7732,10 +9658,30 @@
     document.addEventListener('keydown', (e) => {
       const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
 
-      if (introOpen) return;
+      if (introOpen || prayOpen) {
+        if (prayOpen && e.code === 'Escape') { e.preventDefault(); closePray(); }
+        return;
+      }
 
       if (achieveOpen) {
         if (e.code === 'Escape') { e.preventDefault(); closeAchievements(); }
+        return;
+      }
+
+      if (replayPlay) {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          if (!e.repeat) replayPlay.playing = !replayPlay.playing;
+        } else if (e.code === 'Escape') {
+          e.preventDefault();
+          exitReplay();
+        } else if (e.code === 'ArrowLeft') {
+          e.preventDefault();
+          seekReplay(replayPlay.t - 5);
+        } else if (e.code === 'ArrowRight') {
+          e.preventDefault();
+          seekReplay(replayPlay.t + 5);
+        }
         return;
       }
 
@@ -7791,6 +9737,16 @@
       }
       keys[e.code] = true;
 
+      if (e.code === 'Space' && !e.repeat && WORLD_MODE === 'sandbox') {
+        const now = performance.now();
+        if (now - lastSpaceTap < 300) {
+          lastSpaceTap = 0;
+          flying = !flying;
+          if (!flying) player.vel.set(0, 0, 0);
+          notice(flying ? 'FLIGHT ON' : 'FLIGHT OFF');
+        } else lastSpaceTap = now;
+      }
+
       if (/^Digit[1-7]$/.test(e.code)) {
         inv.sel = +e.code.slice(5) - 1;
         syncBars();
@@ -7805,8 +9761,14 @@
       else if (e.code === 'Escape' && invOpen) toggleInv(false);
 
       if (e.code === 'KeyF') {
-        wireframe = !wireframe;
-        world.material.wireframe = wireframe;
+        const held = inv.hot[inv.sel];
+        if (held && ITEMS[held.id]?.workbench) {
+          machineGridSnap = !machineGridSnap;
+          notice(machineGridSnap ? 'WORKBENCH SNAP: GRID' : 'WORKBENCH SNAP: FREE');
+        } else {
+          wireframe = !wireframe;
+          world.material.wireframe = wireframe;
+        }
       }
 
       if (e.code === 'F2') {
@@ -7822,8 +9784,9 @@
       if (e.code === 'KeyO') {        tuneWaterOvershoot(-3);
       }
 
-      if (e.code === 'KeyP') {
-        tuneWaterOvershoot(3);
+      if (e.code === 'KeyP' && !e.repeat && e.target.tagName !== 'INPUT' && !cmdOpen) {
+        if (prayOpen) closePray();
+        else openPray();
       }
 
       if (e.code === 'KeyV') {
@@ -7832,9 +9795,31 @@
       }
 
       if (e.code === 'KeyI') {
+        const nowT = performance.now();
+        const windowMs = 8000;
+        const frames = (lagSheet.frames || []).filter(f => nowT - f.t <= windowMs);
+        const events = (lagSheet.events || []).filter(f => nowT - f.t <= windowMs);
+        const worst = [...frames].sort((a, b) => b.ms - a.ms).slice(0, 12);
+        const lines = [];
+        lines.push('NUCLEARISM LAG TIMESHEET');
+        lines.push(`window: last ${(windowMs / 1000) | 0}s  frames: ${frames.length}  events: ${events.length}`);
+        const avg = frames.length ? (frames.reduce((a, f) => a + f.ms, 0) / frames.length).toFixed(1) : '0';
+        const max = frames.length ? Math.max(...frames.map(f => f.ms)).toFixed(1) : '0';
+        lines.push(`avgMs: ${avg}  maxMs: ${max}`);
+        lines.push('');
+        lines.push('WORST FRAMES (ms, work, idle, other, dirty, loading, rebuild, load, worldMs, renderMs, dirtyMs)');
+        for (const f of worst) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} r=${f.renderMs} pd=${f.dirtyMs}`);
+        lines.push('');
+        lines.push('EVENTS (>34ms frame or chunk activity)');
+        const ev = events.slice(-80);
+        for (const f of ev) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} r=${f.renderMs} pd=${f.dirtyMs}`);
+        lines.push('');
         const spans = hudEl.querySelectorAll('.copy');
-        const text = spans.length ? Array.from(spans, (s) => s.innerText).join('\n') : hudEl.innerText;
-        if (navigator.clipboard) navigator.clipboard.writeText(text);
+        const hud = spans.length ? Array.from(spans, (s) => s.innerText).join(' | ') : hudEl.innerText.replace(/\s+/g, ' ').trim();
+        lines.push('HUD: ' + hud);
+        const text = lines.join('\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
+        notice('LAG TIMESHEET COPIED');
       }
 
       if (e.code === 'KeyC') {
@@ -7932,6 +9917,83 @@
 
     const cmdTargetLabel = (id) => TP_TARGETS.find((t) => t.id === id)?.label || id.toUpperCase();
 
+    const SUMMON_ENTITIES = [
+      { id: 'chicken', label: 'CHICKEN', aliases: ['chickens'] },
+      { id: 'wrapper', label: 'WRAPPER', aliases: ['warped', 'warpper', 'warpped', 'enemy', 'zombie'] },
+    ];
+
+    function nearestSummons(q) {
+      q = (q || '').trim().toUpperCase();
+      if (!q) return SUMMON_ENTITIES.map((e) => e.id);
+      const out = [];
+      for (const e of SUMMON_ENTITIES) {
+        const names = [e.id.toUpperCase(), e.label, ...e.aliases.map((a) => a.toUpperCase())];
+        let s = 99;
+        for (const nm of names) {
+          if (nm === q) s = Math.min(s, 0);
+          else if (nm.startsWith(q)) s = Math.min(s, 1);
+          else if (nm.includes(q)) s = Math.min(s, 2.5);
+          else {
+            const d = editDist(q, nm);
+            if (d <= 3) s = Math.min(s, 4 + d);
+          }
+        }
+        if (s < 99) out.push([s, e.id]);
+      }
+      out.sort((a, b) => a[0] - b[0]);
+      return out.slice(0, 8).map((x) => x[1]);
+    }
+
+    function resolveSummon(q) {
+      const Q = (q || '').trim().toUpperCase();
+      if (!Q) return null;
+      return SUMMON_ENTITIES.find((e) => e.id.toUpperCase() === Q)
+        || SUMMON_ENTITIES.find((e) => e.label === Q)
+        || SUMMON_ENTITIES.find((e) => e.aliases.some((a) => a.toUpperCase() === Q))
+        || SUMMON_ENTITIES.find((e) => e.id === nearestSummons(q)[0])
+        || null;
+    }
+
+    function cmdEntityLabel(id) {
+      return SUMMON_ENTITIES.find((e) => e.id === id)?.label || id.toUpperCase();
+    }
+
+    function trySummonEntity(id) {
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      dir.y = 0;
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+      dir.normalize();
+      const pos = player?.pos || camera.position;
+      for (const d of [3.5, 2, 4.5, 1, 5.5, 0]) {
+        const x = pos.x + dir.x * d;
+        const z = pos.z + dir.z * d;
+        if (id === 'chicken') {
+          if (!chickenTemplate) return 'CHICKEN NOT READY';
+          const y = world.getSurfaceHeight(x, z, 90);
+          if (!Number.isFinite(y)) continue;
+          if (world.waterAt(x, y + 0.3, z) > 0) continue;
+          const c = new Chicken(world, x, z, chickenTemplate);
+          chickens.push(c);
+          return 'SUMMONED CHICKEN';
+        }
+        if (id === 'wrapper') {
+          if (!wrapperTemplate) return 'WRAPPER NOT READY';
+          if (spawnWrapper(x, z)) return 'SUMMONED WRAPPER';
+        }
+      }
+      return `CANNOT SUMMON ${cmdEntityLabel(id)} HERE`;
+    }
+
+    function summonEntity(id) {
+      if (id === 'chicken' && !chickenTemplate) {
+        return loadChickenForSummon();
+      }
+      if (id === 'wrapper' && !wrapperTemplate) {
+        return loadWrapperForSummon();
+      }
+      return trySummonEntity(id);
+    }
+
     function cmdQuery(v) {
       if (/^\s*\/give\b/i.test(v)) {
         const parts = v.replace(/^\s*\/give\s*/i, '').split(/\s+/);
@@ -7943,13 +10005,20 @@
         if (parts.length > 1) return null;
         return { kind: 'target', q: parts[0] || '' };
       }
+      if (/^\s*\/summon\b/i.test(v)) {
+        const parts = v.replace(/^\s*\/summon\s*/i, '').split(/\s+/);
+        if (parts.length > 1) return null;
+        return { kind: 'entity', q: parts[0] || '' };
+      }
       return null;
     }
 
     let cmdMatchKind = 'item';
 
     function cmdLabel(id) {
-      return cmdMatchKind === 'target' ? cmdTargetLabel(id) : itemLabel(id);
+      if (cmdMatchKind === 'target') return cmdTargetLabel(id);
+      if (cmdMatchKind === 'entity') return cmdEntityLabel(id);
+      return itemLabel(id);
     }
 
     function renderSuggest(v) {
@@ -7957,7 +10026,8 @@
       cmdMatchKind = query ? query.kind : 'item';
       cmdMatches = !query ? []
         : query.kind === 'item' ? (query.q ? nearestItems(query.q) : [])
-          : nearestTargets(query.q);
+          : query.kind === 'target' ? nearestTargets(query.q)
+            : nearestSummons(query.q);
       cmdSel = cmdMatches.length ? 0 : -1;
       if (!cmdMatches.length) { cmdSug.classList.add('hidden'); cmdSug.innerHTML = ''; return; }
       cmdSug.innerHTML = cmdMatches.map((id, i) =>
@@ -7970,6 +10040,8 @@
       const v = cmdInput.value;
       if (/^\s*\/(?:tp|goto)\b/i.test(v)) {
         cmdInput.value = `${/^\s*\/goto\b/i.test(v) ? '/goto' : '/tp'} ${id} `;
+      } else if (/^\s*\/summon\b/i.test(v)) {
+        cmdInput.value = `/summon ${id} `;
       } else {
         const after = v.replace(/^\s*\/give\s*/i, '').split(/\s+/);
         after[0] = id;
@@ -7986,7 +10058,7 @@
       renderSuggest('');
       if (document.pointerLockElement) unlockPointer();
       setOverlay(false);
-      cmdInput.focus();
+      setTimeout(() => cmdInput.focus(), 0);
     }
     function closeCmd() {
       cmdOpen = false;
@@ -8160,7 +10232,7 @@
     }
 
     function clockStr() {
-      const f = (clock.t % TUNING.DAY_SECONDS) / TUNING.DAY_SECONDS;
+      const f = sunCycleT();
       const hh = Math.floor(f * 24), mm = Math.floor((f * 24 - hh) * 60);
       return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     }
@@ -8172,7 +10244,7 @@
       if (cmdHistory.length > 60) cmdHistory.shift();
       cmdHistIdx = cmdHistory.length;
       const m = line.match(/^\/(\w+)\s*(.*)$/);
-      if (!m) { notice('COMMANDS: /give, /time, /tp'); return; }
+      if (!m) { notice('COMMANDS: /give, /time, /tp, /summon, /sm'); return; }
       const cmd = m[1].toLowerCase(), rest = m[2].trim();
 
       if (cmd === 'tp' || cmd === 'goto') {
@@ -8180,6 +10252,16 @@
         const target = resolveTarget(rest);
         if (!target) { notice(`NO DESTINATION "${rest}"`); return; }
         if (!teleportTo(target)) { notice(`NO ${target.label} FOUND NEARBY`); return; }
+        closeCmd();
+        return;
+      }
+
+      if (cmd === 'summon') {
+        if (!rest) { notice(`USAGE: /summon <${SUMMON_ENTITIES.map((e) => e.id).join('|')}>`); return; }
+        const ent = resolveSummon(rest.split(/\s+/)[0]);
+        if (!ent) { notice(`NO ENTITY "${rest}"`); return; }
+        const msg = summonEntity(ent.id);
+        if (msg) notice(msg);
         closeCmd();
         return;
       }
@@ -8201,8 +10283,15 @@
         const p = rest.split(/\s+/).filter(Boolean);
         if (!p.length) { notice(`DAY ${clock.day} · ${clockStr()}${timeLock !== null ? ' (LOCKED)' : ''}`); return; }
         if (p[0].toLowerCase() === 'allday') {
-          if (timeLock === null) { timeLock = TUNING.DAY_SECONDS * 0.25; clock.t = timeLock; notice('TIME LOCKED · NOON'); }
+          if (timeLock === null) { timeLock = TUNING.DAY_SECONDS * ((TUNING.DAY_FRACTION ?? 0.5) / 2); clock.t = timeLock; notice('TIME LOCKED · NOON'); }
           else { timeLock = null; notice('TIME UNLOCKED'); }
+          return;
+        }
+        if (p[0].toLowerCase() === 'night') {
+          timeLock = null;
+          const f = TUNING.DAY_FRACTION ?? 0.5;
+          clock.t = TUNING.DAY_SECONDS * (f + (1 - f) / 2);
+          notice(`TIME → DAY ${clock.day} · ${clockStr()}`);
           return;
         }
         const set = p[0].toLowerCase() === 'set';
@@ -8218,6 +10307,20 @@
         return;
       }
 
+      if (cmd === 'sm') {
+        if (isDay()) { notice('SMILE · ONLY AT NIGHT'); return; }
+        spawnHungerSmile();
+        notice('SMILE');
+        return;
+      }
+
+      if (cmd === 'sb') {
+        if (WORLD_MODE !== 'sandbox') { notice('SANDBOX ONLY'); return; }
+        const left = give('infinite_battery', 1);
+        notice(left === 0 ? 'INFINITE BATTERY' : 'NO ROOM');
+        return;
+      }
+
       notice(`UNKNOWN COMMAND /${cmd}`);
     }
 
@@ -8226,7 +10329,7 @@
         if (WORLD_MODE !== 'sandbox') return;
         const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
         if (typing) return;
-        if (e.code === 'KeyL' || e.code === 'Backquote') { e.preventDefault(); openCmd(); }
+        if (e.code === 'Enter' || e.code === 'Backquote') { e.preventDefault(); openCmd(); }
         return;
       }
       if (e.code === 'Escape') { e.preventDefault(); closeCmd(); }
@@ -8281,6 +10384,14 @@
     }
 
     let mining = false, mineTimer = 0;
+    let mineConfirm = null;
+    const MINE_CONFIRM_MS = 2500;
+
+    function clearMineConfirm() {
+      if (!mineConfirm) return;
+      mineConfirm = null;
+      hideUrgentCard();
+    }
 
     function mineAim() {
       const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
@@ -8290,14 +10401,15 @@
 
     function doMine() {
       const tool = heldTool();
-      if (tool.chop && tryChopTree(tool)) return;
-      if (tool === BARE_HANDS && shakeTreeForFruit()) { triggerSwing(0.5); return; }
+      if (mineConfirm && (performance.now() - mineConfirm.t) > MINE_CONFIRM_MS) clearMineConfirm();
+      if (tool.chop && tryChopTree(tool)) { clearMineConfirm(); return; }
+      if (tool === BARE_HANDS && shakeTreeForFruit()) { clearMineConfirm(); triggerSwing(0.5); return; }
 
 
       {
         const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
         const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        let best = null, bestT = REACH;
+        let best = null, bestT = REACH, bestKind = '';
         for (const w of wrappers) {
           if (w.dying > 0) continue;
           const c = new THREE.Vector3(w.pos.x, w.pos.y + 0.9, w.pos.z);
@@ -8305,12 +10417,22 @@
           const t = to.dot(dir);
           if (t < 0 || t > bestT) continue;
           if (to.addScaledVector(dir, -t).length() > 0.9) continue;
-          best = w; bestT = t;
+          best = w; bestT = t; bestKind = 'wrapper';
+        }
+        for (const ch of chickens) {
+          if (ch.dead) continue;
+          const c = new THREE.Vector3(ch.pos.x, ch.pos.y + 0.2, ch.pos.z);
+          const to = c.clone().sub(origin);
+          const t = to.dot(dir);
+          if (t < 0 || t > bestT) continue;
+          if (to.addScaledVector(dir, -t).length() > 0.35) continue;
+          best = ch; bestT = t; bestKind = 'chicken';
         }
         if (best) {
+          clearMineConfirm();
           triggerSwing(Math.min(0.5, Math.max(0.2, tool.rate * 0.9)));
           best.hurtBy(22 + (tool.chop ? 18 : 0));
-          if (best.dying > 0) { achBump('kills', 1); notice('WRAPPER DOWN'); }
+          if (bestKind === 'wrapper' && best.dying > 0) { achBump('kills', 1); notice('WRAPPER DOWN'); }
           return;
         }
       }
@@ -8324,8 +10446,22 @@
           const inst = machineSystem.instances.find((i) => i.machine === aim.target);
           const eye = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
           const terrT = hit ? new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5).distanceTo(eye) : Infinity;
-          if (inst && aim.t < terrT) { machineSystem.remove(inst); return; }
+          if (inst && aim.t < terrT) {
+            // Workbenches/machines are easy to misclick: arm on first hit, remove
+            // only on a second confirmed hit while aimed at the same machine.
+            const now = performance.now();
+            if (mineConfirm && mineConfirm.kind === 'machine' && mineConfirm.uid === inst.uid && (now - mineConfirm.t) <= MINE_CONFIRM_MS) {
+              clearMineConfirm();
+              machineSystem.remove(inst);
+              return;
+            }
+            mineConfirm = { kind: 'machine', uid: inst.uid, t: now };
+            showUrgentCard('HIT AGAIN IF YOU WANT TO MINE IT', (inst.def?.label || 'MACHINE').toUpperCase());
+            return;
+          }
         }
+        // Aimed away from any mineable machine: drop a stale machine warning.
+        if (mineConfirm && mineConfirm.kind === 'machine') clearMineConfirm();
       }
 
       {
@@ -8335,7 +10471,7 @@
         if (pick) {
           const eye = origin;
           const terrT = hit ? new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5).distanceTo(eye) : Infinity;
-          if (pick.distance < terrT) { pipeSystem.removeAt(pick.cell.x, pick.cell.y, pick.cell.z); return; }
+          if (pick.distance < terrT) { clearMineConfirm(); pipeSystem.removeAt(pick.cell.x, pick.cell.y, pick.cell.z); return; }
         }
       }
       if (buildingSystem) {
@@ -8345,20 +10481,29 @@
         if (pick) {
           const terrT = hit ? new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5).distanceTo(origin) : Infinity;
           if (pick.distance < terrT) {
+            clearMineConfirm();
             const hammer = !!tool.build;
             const broke = buildingSystem.damage(pick.piece, hammer ? 1500 : 30);
             if (broke) {
               const id = Object.keys(ITEMS).find((k) => ITEMS[k].building?.kind === pick.piece.kind
                 && ITEMS[k].building?.tier === pick.piece.tier);
-              if (id) give(id, 1);
+              if (id) {
+                const left = give(id, 1);
+                if (left > 0) {
+                  const c = buildingSystem.kind(pick.piece.kind).center(pick.piece.x, pick.piece.y, pick.piece.z, pick.piece.rot);
+                  spawnDrop(id, left, { x: c.x, y: c.y, z: c.z });
+                }
+              }
               notice('WALL DOWN');
             }
             return;
           }
         }
       }
-      if (!hit) return;
+      if (!hit) { clearMineConfirm(); return; }
+      clearMineConfirm();
       const band = groundBand(hit.x, hit.y, hit.z);
+      footsteps.mine(band === 'grass' ? 'grass' : band === 'dirt' ? 'dirt' : 'stone', 0.55 * masterVolume * 0.7);
       const match = tool.good.includes(band);
       const hy = hit.y, yy = tool.yield;
       const stoneMult = tool.stone || 1;
@@ -8368,10 +10513,21 @@
           const bonus = yy - 1;
           for (const [id, n] of mineDrops(band, hy, hit.x, hit.z)) {
             const dup = bonus > 0 && Math.random() < bonus ? n : 0;
-            const amt = (n + dup) * (id === 'stone' ? stoneMult : 1);
-            give(id, amt);
+            let amt = (n + dup) * (id === 'stone' ? stoneMult : 1);
+            if (id === 'stone' && Math.random() < 0.5) amt = 0;
+            if (amt <= 0) continue;
+            const left = give(id, amt);
+            showGain(id, amt - left, 'MINED');
+            if (left > 0) spawnDrop(id, left, { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 });
             if (id === 'uranium' || id === 'thorium' || id === 'beryllium') inv.dose += 2;
           }
+        }
+        if (band === 'dirt' && hasGardeningGloves() && Math.random() < 0.18) {
+          const seeds = ['herb_seed', 'flower_seed', 'wheat_seed', 'potato_seed', 'carrot_seed', 'tomato_seed', 'corn_seed', 'cabbage_seed', 'onion_seed', 'peas_seed', 'spinach_seed', 'cucumber_seed', 'eggplant_seed', 'bell_pepper_seed', 'rice_seed'];
+          const sid = seeds[(Math.random() * seeds.length) | 0];
+          const left = give(sid, 1);
+          showGain(sid, 1 - left, 'FOUND');
+          if (left > 0) spawnDrop(sid, left, { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 });
         }
       });
     }
@@ -8389,14 +10545,20 @@
     function mineDrops(band, y, x, z) {
       if (band === 'grass') return [Math.random() < 0.5 ? ['carbon', 1] : ['dirt', 1]];
       if (band === 'dirt') return [['dirt', 1]];
-      const seam = regionOre(x, z);
-      if (seam !== 'stone') return Math.random() < MINE_ORE_CHANCE ? [['stone', 1], [seam, 1]] : [['stone', 1]];
+      const savanna = biomeAt(x, z) === B.SAVANNA;
+      const seam = regionOre(x, z, savanna);
+      if (seam !== 'stone') {
+        const chance = MINE_ORE_CHANCE * (savanna && seam === 'iron' ? 1.5 : 1);
+        if (Math.random() >= chance) return [['stone', 1]];
+        const n = savanna && seam === 'iron' ? 2 : 1;
+        return [['stone', 1], [seam, n]];
+      }
 
       const table = y < 12 ? MINE_TABLE_DEEP : MINE_TABLE_SHALLOW;
       if (Math.random() >= MINE_ORE_CHANCE * 0.5) return [['stone', 1]];
       let total = 0; for (const [, w] of table) total += w;
       let r = Math.random() * total;
-      for (const [id, w] of table) { r -= w; if (r <= 0) return [['stone', 1], [id, 1]]; }
+      for (const [id, w] of table) { r -= w; if (r <= 0) return [['stone', 1], [id, savanna && id === 'iron' ? 2 : 1]]; }
       return [['stone', 1]];
     }
 
@@ -8419,9 +10581,10 @@
 
 
     function groundBand(x, y, z) {
-      const t = y + (noise3(x * 0.15, y * 0.15, z * 0.15) - 0.5) * 4.0;
-      if (t < 17) return 'stone';
-      if (t < 21) return 'dirt';
+      const d = groundDepth(x, y, z);
+      if (d >= 3.0) return 'stone';
+      if (d < 3.0 && mountainRockAt(x, z)) return 'stone';
+      if (d >= 1.2) return 'dirt';
       return 'grass';
     }
 
@@ -8568,6 +10731,10 @@
 
     function toggleDoor(piece) {
       if (!piece || piece.kind !== 'door' || !buildingSystem) return false;
+      if (piece.open && buildingSystem.overlapsBody('door', piece.x, piece.y, piece.z, piece.rot, {
+        x: player.pos.x, y: player.pos.y, z: player.pos.z,
+        radius: player.radius, height: player.height,
+      })) { notice('DOOR BLOCKED'); return false; }
       if (!buildingSystem.toggle(piece)) return false;
       triggerSwing(0.25);
       notice(piece.open ? 'DOOR OPEN' : 'DOOR CLOSED');
@@ -8581,45 +10748,8 @@
       return toggleDoor(piece);
     }
 
-    // The runtime draws one box per piece, so the swing is applied here: the
-    // door mesh turns about its hinge edge while it opens.
-    const doorAngles = new Map();
-    function updateDoorSwings(dt) {
-      if (!buildingSystem) return;
-      const k = Math.min(1, dt * 9);
-      const m = new THREE.Matrix4();
-      const pos = new THREE.Vector3();
-      const scl = new THREE.Vector3();
-      const q = new THREE.Quaternion();
-      const e = new THREE.Euler();
-      const off = new THREE.Vector3();
-      const kind = buildingSystem.kind('door');
-      if (!kind) return;
-      for (const [key, mesh] of buildingSystem.meshes) {
-        if (!key.endsWith('|door')) continue;
-        const list = buildingSystem.meshPieces.get(key) || [];
-        list.forEach((p, i) => {
-          const fr = swingFrame(p.x, p.y, p.z, p.rot);
-          const target = p.open ? fr.sign * Math.PI / 2 : 0;
-          const cur = doorAngles.has(p.id) ? doorAngles.get(p.id) : target;
-          const a = cur + (target - cur) * k;
-          doorAngles.set(p.id, a);
-          const c = fr.center;
-          const s = kind.scale(p.x, p.y, p.z, p.rot);
-          q.setFromEuler(e.set(0, a, 0));
-          off.set(c.x - fr.hinge.x, c.y - fr.hinge.y, c.z - fr.hinge.z).applyQuaternion(q);
-          pos.set(fr.hinge.x + off.x, fr.hinge.y + off.y, fr.hinge.z + off.z);
-          scl.set(s.x, s.y, s.z);
-          m.compose(pos, q, scl);
-          mesh.setMatrixAt(i, m);
-        });
-        mesh.instanceMatrix.needsUpdate = true;
-        // The panel moved, so the sphere the raycast uses has to follow it.
-        mesh.computeBoundingSphere();
-      }
-      // forget doors that were mined away
-      for (const id of [...doorAngles.keys()]) if (!buildingSystem.pieces.has(id)) doorAngles.delete(id);
-    }
+    // Doors are now static wall frames with a cutout; no swing animation.
+    function updateDoorSwings() {}
 
     function pickItemToHand(id) {
       if (!id || !ITEMS[id]) return false;
@@ -8662,26 +10792,114 @@
       if (!pickItemToHand(id)) notice('NOT IN INVENTORY');
     }
 
-    // Where a building piece would land. Pieces snap against the piece the
-    // player is aiming at, so they line up with each other instead of with
-    // the world grid; on bare ground they fall back to the grid.
+    // The ghost and placement both consume this exact target. A piece masks
+    // the ground behind it; an invalid socket stays red instead of falling
+    // through to a seemingly unrelated position on the terrain.
     function buildingTarget(b, aim) {
       const kind = buildingSystem?.kind(b.kind);
       if (!kind) return null;
       const { dir, hit } = aim;
-      if (!hit) return null;
-      let gx = Math.floor(hit.x + dir.x * 1.5);
-      let gz = Math.floor(hit.z + dir.z * 1.5);
-      let rot = Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1);
+      const rot = ((Math.round(placeRot / (Math.PI / 2)) % (kind.rot || 1)) + (kind.rot || 1)) % (kind.rot || 1);
       const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
-      // Only snap to a piece that is closer than the ground: a piece behind a
-      // hill must not steal the placement.
-      const reach = Math.min(REACH, origin.distanceTo(hit) + 0.05);
-      const snap = buildingSystem.snap(b.kind, origin, dir, rot, reach);
-      if (snap) { gx = snap.x; gz = snap.z; rot = snap.rot; }
-      const base = kind.base(buildingSystem, gx, gz, rot);
-      return { gx, gz, rot, base };
+      const groundDistance = hit ? origin.distanceTo(hit) : Infinity;
+
+      // Standing on a floor/roof and looking up: place a floor/roof above, aligned to the grid and wall tops.
+      if ((b.kind === 'floor' || b.kind === 'roof') && dir.y > 0.35) {
+        const px = player.pos.x, pz = player.pos.z, feet = player.pos.y;
+        let standingOn = null;
+        for (const p of buildingSystem.pieces.values()) {
+          if (!['floor', 'roof', 'triangle'].includes(p.kind)) continue;
+          const top = buildingSystem.pieceTop(p);
+          if (Math.abs(top - feet) > 0.45) continue;
+          const fp = buildingSystem.pieceFootprint(p);
+          if (!fp || px < fp.x0 - 0.2 || px > fp.x1 + 0.2 || pz < fp.z0 - 0.2 || pz > fp.z1 + 0.2) continue;
+          standingOn = { p, top };
+          break;
+        }
+        if (standingOn) {
+          const lx = standingOn.p.x + Math.floor((Math.floor(px) - standingOn.p.x) / 3) * 3;
+          const lz = standingOn.p.z + Math.floor((Math.floor(pz) - standingOn.p.z) / 3) * 3;
+          // Prefer the top of nearby walls on this platform so the ceiling sits flush with wall height.
+          let wallTop = null;
+          for (const p of buildingSystem.pieces.values()) {
+            if (!['wall', 'door'].includes(p.kind)) continue;
+            const fp = buildingSystem.pieceFootprint(p);
+            if (!fp) continue;
+            if (fp.x1 < lx - 0.5 || fp.x0 > lx + 3.5 || fp.z1 < lz - 0.5 || fp.z0 > lz + 3.5) continue;
+            const wt = buildingSystem.pieceTop(p);
+            if (wt <= feet + 0.5) continue;
+            if (wallTop === null || wt > wallTop) wallTop = wt;
+          }
+          // Floor slab sits at the top of its cell; subtract 1 so it rests flush on the wall top.
+          const base = wallTop !== null ? wallTop - 1 : standingOn.top + 1;
+          return { gx: lx, gz: lz, rot, base, anchored: true };
+        }
+      }
+
+      const pick = buildingSystem.pick(origin, dir, REACH);
+      if (pick && pick.distance <= groundDistance + 0.02) {
+        const snap = buildingSystem.snap(b.kind, origin, dir, rot, REACH);
+        if (snap) return { gx: snap.x, gz: snap.z, rot: snap.rot, base: snap.y, anchored: true };
+
+        // Fallback: always show a BB-on-BB preview target when snap can't resolve.
+        const af = buildingSystem.pieceFootprint(pick.piece);
+        if (af) {
+          const fps = [];
+          for (let r = 0; r < (kind.rot || 1); r++) {
+            const fp = buildingSystem.kindFootprint(b.kind, r);
+            if (fp) fps.push({ rot: r, ...fp });
+          }
+          const cand = snapPlan(fps, af, pick.point, dir, rot, pick.normal)[0];
+          if (cand) {
+            const onTop = pick.normal?.y > 0.35 || pick.point.y >= af.y1 - 0.4;
+            const base = onTop ? buildingSystem.pieceTop(pick.piece) : pick.piece.y;
+            return { gx: cand.x, gz: cand.z, rot: cand.rot, base, anchored: true };
+          }
+        }
+        return null;
+      }
+      if (!hit) return null;
+      // Raycast points are just inside the terrain. Step back to the visible
+      // side, then use a full-piece lattice instead of adding 1.5 m of drift.
+      const p = hit.clone().addScaledVector(dir, -0.08);
+      const fp = buildingSystem.kindFootprint(b.kind, rot);
+      const sx = fp.cx1 - fp.cx0 + 1, sz = fp.cz1 - fp.cz0 + 1;
+      const gx = Math.floor(p.x / sx) * sx - fp.cx0;
+      const gz = Math.floor(p.z / sz) * sz - fp.cz0;
+      // Floors/foundations sit at the looked-at ground level; other pieces
+      // follow the local terrain base so underground placement stays local.
+      const base = ['floor', 'roof', 'triangle'].includes(b.kind)
+        ? Math.floor(hit.y + 0.01)
+        : buildingSystem.groundBase(b.kind, gx, gz, rot, Math.ceil(hit.y + 3));
+      return { gx, gz, rot, base, anchored: false };
     }
+
+    function groundSweep(b, t) {
+      // Uneven ground can poke into the underside of a foundation placed on it.
+      return !t.anchored && ['floor', 'roof', 'triangle'].includes(b.kind) ? 0.45 : 0;
+    }
+
+    function buildingPlaceIssue(b, t) {
+      const sweep = groundSweep(b, t);
+      if (!buildingSystem.canPlace(b.kind, t.gx, t.base, t.gz, t.rot, sweep)) {
+        const kind = buildingSystem.kind(b.kind);
+        for (const [key, box] of kind.cells(t.gx, t.base, t.gz, t.rot)) {
+          if (buildingSystem.terrainOverlap(box, sweep)) return 'GROUND IS COVERING THIS AREA';
+          for (const c of buildingSystem._cellEntries(key)) {
+            if (buildingSystem._boxesOverlap(c.box, box) && !buildingSystem._allowedClip(b.kind, c.piece.kind)) return 'ANOTHER BUILDING BLOCK IS HERE';
+          }
+        }
+        return 'CANNOT PLACE HERE';
+      }
+      const kind = buildingSystem.kind(b.kind);
+      if (kind.support && !kind.support(buildingSystem, t.gx, t.base, t.gz, t.rot)) return 'NEEDS SUPPORT UNDER IT';
+      if (buildingSystem.overlapsBody(b.kind, t.gx, t.base, t.gz, t.rot, {
+        x: player.pos.x, y: player.pos.y, z: player.pos.z,
+        radius: player.radius, height: player.height,
+      })) return 'YOU ARE STANDING IN THE WAY';
+      return null;
+    }
+    function buildingBlocked(b, t) { return !!buildingPlaceIssue(b, t); }
 
     function doPlace(opts = {}) {
       const drag = !!opts.drag;
@@ -8716,8 +10934,21 @@
       if (ITEMS[s.id].workbench) {
         if (!machineSystem || !machineSystem.templates.has(ITEMS[s.id].workbench)) return null;
         const { dir, hit } = mineAim();
-        if (!hit) return null;
-        const x = Math.floor(hit.x + dir.x * 1.5) + 0.5, z = Math.floor(hit.z + dir.z * 1.5) + 0.5;
+        const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+        const rayDir = new THREE.Vector3(dir.x, dir.y, dir.z);
+        const bpick = buildingSystem?.pick(origin, rayDir, REACH);
+        let onBuilding = false, placeY;
+        let x, z;
+        if (bpick && ['floor', 'roof', 'triangle'].includes(bpick.piece.kind) && bpick.normal?.y > 0.4) {
+          onBuilding = true;
+          placeY = buildingSystem.pieceTop(bpick.piece);
+          if (machineGridSnap) { x = Math.floor(bpick.point.x) + 0.5; z = Math.floor(bpick.point.z) + 0.5; }
+          else { x = bpick.point.x; z = bpick.point.z; }
+        } else {
+          if (!hit) return null;
+          if (machineGridSnap) { x = Math.floor(hit.x + dir.x * 1.5) + 0.5; z = Math.floor(hit.z + dir.z * 1.5) + 0.5; }
+          else { x = hit.x + dir.x * 1.5; z = hit.z + dir.z * 1.5; }
+        }
         if (Math.hypot(x - player.pos.x, z - player.pos.z) < 1.4) return null;
         if (machineSystem.at(x, z, 1.4)) return null;
         const def = machineSystem.templates.get(ITEMS[s.id].workbench).def;
@@ -8727,7 +10958,7 @@
             && Math.hypot(x - holdPlace.lastPos.x, z - holdPlace.lastPos.z) < space
             && !(def.kind === 'cable' && uncoveredMachineNear(x, z, 6))) return null;
         }
-        if (!machineSystem.place(ITEMS[s.id].workbench, x, z, { rot: placeRot })) return null;
+        if (!machineSystem.place(ITEMS[s.id].workbench, x, z, { rot: placeRot, y: placeY, onBuilding })) return null;
         achBump('machines', 1);
         achBump('placed', 1);
         ach.built[ITEMS[s.id].workbench] = true;
@@ -8744,16 +10975,10 @@
         const t = buildingTarget(b, mineAim());
         if (!t) return null;
         const { gx, gz, rot, base } = t;
-        if (!buildingSystem.canPlace(b.kind, gx, base, gz, rot)) return null;
-        // Never wall the player in.
-        const pr = player.radius, ph = player.height;
-        for (const [, box] of kind.cells(gx, base, gz, rot)) {
-          if (player.pos.x + pr > box.minX && player.pos.x - pr < box.maxX
-            && player.pos.z + pr > box.minZ && player.pos.z - pr < box.maxZ
-            && player.pos.y + ph > box.minY && player.pos.y < box.maxY) return null;
-        }
-        const piece = buildingSystem.place(b.kind, b.tier, gx, base, gz, rot);
-        if (!piece) return null;
+        const issue = buildingPlaceIssue(b, t);
+        if (issue) { notice(issue); return null; }
+        const piece = buildingSystem.place(b.kind, b.tier, gx, base, gz, rot, false, groundSweep(b, t));
+        if (!piece) { notice('CANNOT PLACE HERE'); return null; }
         achBump('placed', 1);
         triggerSwing(0.26);
         if (--s.n <= 0) inv.hot[inv.sel] = null;
@@ -8761,6 +10986,7 @@
         return { type: 'building' };
       }
       if (!ITEMS[s.id].block) return null;
+      if (!TERRAIN_BLOCKS.includes(s.id)) { notice('ONLY DIRT, STONE AND SAND CAN BE PLACED'); return null; }
       const { dir, hit } = mineAim();
       if (!hit) return null;
       const r = Math.min(6, heldTool().radius * 2.2);
@@ -8777,8 +11003,58 @@
     let placeGhost = null;
     let placeGhostKey = '';
     let placeRot = 0;
+    let machineGridSnap = true;
+    let bbEdgeHelper = null;
+    let bbEdgeKind = '';
+    let _bbEdgePickAt = 0;
+    let _bbEdgeLast = null;
+    // The piece's own outline, so a wedge or a doorway traces its real shape.
+    const pieceEdgeGeoms = new Map();
+    function pieceEdgeGeometry(kind) {
+      if (!pieceEdgeGeoms.has(kind.name)) {
+        pieceEdgeGeoms.set(kind.name, new THREE.EdgesGeometry(buildingSystem.geometryFor(kind)));
+      }
+      return pieceEdgeGeoms.get(kind.name);
+    }
     function hidePlaceGhost() {
       if (placeGhost) { scene.remove(placeGhost.group); placeGhost = null; placeGhostKey = ''; }
+    }
+    function updateBbEdgeHelper(now = 0) {
+      const s = inv.hot[inv.sel];
+      const relevant = !!(s && (ITEMS[s.id]?.building || s.id === 'hammer'));
+      if (!relevant || !buildingSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) {
+        if (bbEdgeHelper) bbEdgeHelper.visible = false;
+        _bbEdgeLast = null;
+        return;
+      }
+      if (now - _bbEdgePickAt > 80) {
+        _bbEdgePickAt = now;
+        const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        _bbEdgeLast = buildingSystem.pick(origin, dir, REACH);
+      }
+      const pick = _bbEdgeLast;
+      if (!pick) { if (bbEdgeHelper) bbEdgeHelper.visible = false; return; }
+      const p = pick.piece, kind = buildingSystem.kind(p.kind);
+      if (!kind) { if (bbEdgeHelper) bbEdgeHelper.visible = false; return; }
+      if (!bbEdgeHelper || bbEdgeKind !== kind.name) {
+        if (bbEdgeHelper) scene.remove(bbEdgeHelper);
+        bbEdgeHelper = new THREE.LineSegments(
+          pieceEdgeGeometry(kind),
+          new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false })
+        );
+        bbEdgeHelper.renderOrder = 998;
+        bbEdgeKind = kind.name;
+        scene.add(bbEdgeHelper);
+      }
+      const c = kind.center(p.x, p.y, p.z, p.rot);
+      const sc = kind.scale(p.x, p.y, p.z, p.rot);
+      bbEdgeHelper.position.set(c.x, c.y, c.z);
+      // A few millimetres of margin keeps the lines on the near side of the
+      // faces instead of sinking into them.
+      bbEdgeHelper.scale.set(sc.x + 0.006, sc.y + 0.006, sc.z + 0.006);
+      bbEdgeHelper.rotation.y = kind.rotY ? kind.rotY(p.rot) : 0;
+      bbEdgeHelper.visible = true;
     }
     function buildPlaceGhost(model) {
       const group = new THREE.Group();
@@ -8787,25 +11063,56 @@
       group.traverse((o) => {
         if (!o.isMesh) return;
         const list = Array.isArray(o.material) ? o.material : [o.material];
-        o.material = list.map((m) => { const c = m.clone(); c.transparent = true; c.depthWrite = false; mats.push(c); return c; });
+        o.material = list.map((m) => {
+          const c = m.clone();
+          c.transparent = true; c.depthWrite = false;
+          c.polygonOffset = true; c.polygonOffsetFactor = -1; c.polygonOffsetUnits = -1;
+          mats.push(c); return c;
+        });
         if (o.material.length === 1) o.material = o.material[0];
       });
       return { group, mats };
     }
     function updatePlacePreview(now) {
+      updateBbEdgeHelper(now);
       const s = inv.hot[inv.sel];
       if (s && ITEMS[s.id].building) { updateWallPreview(now, s.id); return; }
       hideWallGhost();
+      if (s && ITEMS[s.id].torch) {
+        if (!locked || invOpen || cmdOpen || workbenchUI.opened) { hidePlaceGhost(); return; }
+        const t = torchPlaceTarget(s);
+        if (!t) { hidePlaceGhost(); return; }
+        const key = 'torch:' + s.id;
+        if (placeGhostKey !== key) { hidePlaceGhost(); placeGhost = buildPlaceGhost(torchMesh(s.id)); placeGhostKey = key; scene.add(placeGhost.group); }
+        const n = new THREE.Vector3(t.nx, t.ny, t.nz);
+        orientTorch(placeGhost.group, n, s.id);
+        placeGhost.group.position.set(t.x, t.y, t.z);
+        const op = 0.22 + 0.3 * (0.5 + 0.5 * Math.sin(now * 0.006));
+        const tint = t.blocked ? 0xff5555 : 0xffffff;
+        for (const m of placeGhost.mats) { m.opacity = op; m.color.setHex(tint); }
+        return;
+      }
       const wb = s && ITEMS[s.id].workbench;
       if (!wb || !machineSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) { hidePlaceGhost(); return; }
       const tpl = machineSystem.templates.get(wb);
       if (!tpl) { hidePlaceGhost(); return; }
       const { dir, hit } = mineAim();
-      if (!hit) { hidePlaceGhost(); return; }
-      const x = Math.floor(hit.x + dir.x * 1.5) + 0.5, z = Math.floor(hit.z + dir.z * 1.5) + 0.5;
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+      const rayDir = new THREE.Vector3(dir.x, dir.y, dir.z);
+      const bpick = buildingSystem?.pick(origin, rayDir, REACH);
+      let x, z, y;
+      if (bpick && ['floor', 'roof', 'triangle'].includes(bpick.piece.kind) && bpick.normal?.y > 0.4) {
+        if (machineGridSnap) { x = Math.floor(bpick.point.x) + 0.5; z = Math.floor(bpick.point.z) + 0.5; }
+        else { x = bpick.point.x; z = bpick.point.z; }
+        y = buildingSystem.pieceTop(bpick.piece);
+      } else {
+        if (!hit) { hidePlaceGhost(); return; }
+        if (machineGridSnap) { x = Math.floor(hit.x + dir.x * 1.5) + 0.5; z = Math.floor(hit.z + dir.z * 1.5) + 0.5; }
+        else { x = hit.x + dir.x * 1.5; z = hit.z + dir.z * 1.5; }
+        y = world.getSurfaceHeight(x, z, 90);
+      }
       const blocked = Math.hypot(x - player.pos.x, z - player.pos.z) < 1.4 || machineSystem.at(x, z, 1.4);
       if (placeGhostKey !== wb) { hidePlaceGhost(); placeGhost = buildPlaceGhost(tpl.model); placeGhostKey = wb; scene.add(placeGhost.group); }
-      const y = world.getSurfaceHeight(x, z, 90);
       placeGhost.group.position.set(x, y, z);
       placeGhost.group.rotation.y = placeRot;
       const op = 0.22 + 0.3 * (0.5 + 0.5 * Math.sin(now * 0.006));
@@ -8813,31 +11120,36 @@
       for (const m of placeGhost.mats) { m.opacity = op; m.color.setHex(tint); }
     }
 
-    let wallGhost = null, wallGhostKey = '';
+    let wallGhost = null, wallGhostKey = '', wallGhostEdges = null;
     function hideWallGhost() {
       if (wallGhost) { scene.remove(wallGhost); wallGhost = null; }
       wallGhostKey = '';
+      wallGhostEdges = null;
     }
     function updateWallPreview(now, itemId) {
       if (!buildingSystem || !locked || invOpen || cmdOpen || workbenchUI.opened) { hideWallGhost(); return; }
       const b = ITEMS[itemId]?.building;
       const kind = b && buildingSystem.kind(b.kind);
       if (!kind) { hideWallGhost(); return; }
-      const { dir, hit } = mineAim();
-      if (!hit) { hideWallGhost(); return; }
-      const t = buildingTarget(b, { dir, hit });
+      const aim = mineAim();
+      const t = buildingTarget(b, aim);
       if (!t) { hideWallGhost(); return; }
       const { gx, gz, rot, base } = t;
       if (!wallGhost || wallGhostKey !== b.kind) {
         hideWallGhost();
-        // A kind with its own shape (a gable roof, a wedge) previews as that
-        // shape, not as a box.
-        const geo = (kind.geom && kind.geom !== 'box' && kind.geometry)
-          ? kind.geometry(THREE) : new THREE.BoxGeometry(1, 1, 1);
+        // The ghost is the piece's own shape in its tier colour, with its own
+        // outline, so a wedge reads as a wedge and limestone does not look
+        // like a blank white blob.
         wallGhost = new THREE.Mesh(
-          geo,
-          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false })
+          buildingSystem.geometryFor(kind),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
         );
+        wallGhostEdges = new THREE.LineSegments(
+          pieceEdgeGeometry(kind),
+          new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthWrite: false })
+        );
+        wallGhostEdges.scale.setScalar(1.006);
+        wallGhost.add(wallGhostEdges);
         wallGhostKey = b.kind;
         scene.add(wallGhost);
       }
@@ -8846,22 +11158,11 @@
       wallGhost.position.set(c.x, c.y, c.z);
       wallGhost.scale.set(s.x, s.y, s.z);
       wallGhost.rotation.y = kind.rotY ? kind.rotY(rot) : 0;
-      let blocked = !buildingSystem.canPlace(b.kind, gx, base, gz, rot);
-      if (!blocked && kind.support && !kind.support(buildingSystem, gx, base, gz, rot)) blocked = true;
-      const pr = player.radius, ph = player.height;
-      if (!blocked) {
-        for (const [, box] of kind.cells(gx, base, gz, rot)) {
-          if (player.pos.x + pr > box.minX && player.pos.x - pr < box.maxX
-            && player.pos.z + pr > box.minZ && player.pos.z - pr < box.maxZ
-            && player.pos.y + ph > box.minY && player.pos.y < box.maxY) { blocked = true; break; }
-        }
-      }
-      const op = 0.2 + 0.28 * (0.5 + 0.5 * Math.sin(now * 0.006));
-      wallGhost.material.opacity = op;
-      wallGhost.material.color.setHex(blocked ? 0xff5555 : 0xffffff);
+      const blocked = buildingBlocked(b, t);
+      wallGhost.material.opacity = 0.26 + 0.08 * (0.5 + 0.5 * Math.sin(now * 0.006));
+      wallGhost.material.color.setHex(blocked ? 0xff5555 : BUILD_TIERS[b.tier].color);
+      wallGhostEdges.material.color.setHex(blocked ? 0xff7777 : 0xffffff);
     }
-
-    const _tn = new THREE.Vector3(0, 1, 0);
 
 
 
@@ -8879,8 +11180,8 @@
           mats.forEach((mt) => {
             if (mt && 'emissive' in mt) {
               if (mt.map) mt.emissiveMap = mt.map;
-              mt.emissive = new THREE.Color(0xff8c30);
-              mt.emissiveIntensity = 0.55;
+              mt.emissive = new THREE.Color(0xff6a18);
+              mt.emissiveIntensity = 0.4;
             }
           });
         });
@@ -8937,6 +11238,18 @@
         lens.rotation.x = -Math.PI / 2;
         lens.position.y = 0.285;
         g.add(body, lens);
+      } else if (id === 'simple_lamp') {
+        const baseMat = new THREE.MeshLambertMaterial({ color: 0x6b5a3a });
+        const rimMat = new THREE.MeshLambertMaterial({ color: 0x8a7a55 });
+        const glowMat = new THREE.MeshBasicMaterial({ color: 0xfff2cf, side: THREE.DoubleSide });
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.04, 18), baseMat);
+        base.rotation.x = Math.PI / 2;
+        base.position.z = 0.02;
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.018, 8, 20), rimMat);
+        rim.position.z = 0.045;
+        const glow = new THREE.Mesh(new THREE.CircleGeometry(0.13, 24), glowMat);
+        glow.position.z = 0.05;
+        g.add(base, rim, glow);
       } else {
         const stick = new THREE.Mesh(torchStickGeo, torchStickMat);
         stick.position.y = 0.1;
@@ -8948,93 +11261,130 @@
       return g;
     }
 
-    function addTorch(x, y, z, nx, ny, nz, id = 'torch') {
+    function orientTorch(g, n, id) {
+      if (id === 'simple_lamp') g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+      else g.quaternion.setFromUnitVectors(_tn, n);
+    }
+
+    function addTorch(x, y, z, nx, ny, nz, id = 'torch', ax = x - nx * 0.08, ay = y - ny * 0.08, az = z - nz * 0.08) {
       if (torches.length >= TORCH_MAX) return false;
       const type = ITEMS[id]?.light ? id : 'torch';
       const light = ITEMS[type]?.light || DEFAULT_LIGHT;
       const g = torchMesh(type);
       const n = new THREE.Vector3(nx, ny, nz).normalize();
-      g.quaternion.setFromUnitVectors(_tn, n);
+      orientTorch(g, n, type);
       g.position.set(x, y, z);
       scene.add(g);
-      const floor = light.mount === 'floor';
       torches.push({
-        pos: g.position.clone(), grp: g, id: type, light, col: rgbOf(light.color),
-        ax: floor ? x : x - nx * 0.3, ay: floor ? y - 0.3 : y - ny * 0.3, az: floor ? z : z - nz * 0.3,
+        pos: g.position.clone(), grp: g, id: type, light,
+        ax, ay, az,
       });
       return true;
+    }
+
+    function torchPlaceTarget(s, drag = false) {
+      const def = s && ITEMS[s.id];
+      if (!def?.light) return null;
+      const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      const terr = raycastTerrain(origin, dir, REACH);
+      const bpick = buildingSystem?.pick(origin, dir, REACH);
+      let best = null;
+
+      if (def.light.mount === 'floor') {
+        const cand = [];
+        if (terr) {
+          const tn = world.getSurfaceNormal(terr.x, terr.y, terr.z);
+          if (tn.y >= 0.5) cand.push({ d: terr.distanceTo(origin), x: terr.x, y: terr.y + 0.01, z: terr.z, nx: 0, ny: 1, nz: 0, ax: terr.x, ay: terr.y - 0.08, az: terr.z });
+        }
+        if (bpick && bpick.normal?.y > 0.4) {
+          cand.push({ d: bpick.distance, x: bpick.point.x, y: bpick.point.y + 0.01, z: bpick.point.z, nx: 0, ny: 1, nz: 0, ax: bpick.point.x, ay: bpick.point.y - 0.08, az: bpick.point.z });
+        }
+        cand.sort((a, b) => a.d - b.d);
+        if (!cand.length) return null;
+        best = cand[0];
+      } else {
+        const cand = [];
+        if (terr) {
+          const tn = world.getSurfaceNormal(terr.x, terr.y, terr.z);
+          if (tn.y < 0.45) cand.push({ d: terr.distanceTo(origin), x: terr.x + tn.x * 0.3, y: terr.y + tn.y * 0.3, z: terr.z + tn.z * 0.3, nx: tn.x, ny: tn.y, nz: tn.z, ax: terr.x - tn.x * 0.08, ay: terr.y - tn.y * 0.08, az: terr.z - tn.z * 0.08 });
+        }
+        if (bpick && bpick.normal && bpick.normal.y < 0.45) {
+          const bn = bpick.normal;
+          cand.push({ d: bpick.distance, x: bpick.point.x + bn.x * 0.04, y: bpick.point.y + bn.y * 0.04, z: bpick.point.z + bn.z * 0.04, nx: bn.x, ny: bn.y, nz: bn.z, ax: bpick.point.x - bn.x * 0.08, ay: bpick.point.y - bn.y * 0.08, az: bpick.point.z - bn.z * 0.08 });
+        }
+        cand.sort((a, b) => a.d - b.d);
+        if (!cand.length) return null;
+        best = cand[0];
+      }
+
+      let blocked = torches.length >= TORCH_MAX;
+      if (drag && holdPlace.lastPos) {
+        const space = def.light.range * 0.85;
+        if (Math.hypot(best.x - holdPlace.lastPos.x, best.z - holdPlace.lastPos.z) < space) blocked = true;
+      }
+      for (const t of torches) {
+        if (t.pos.distanceToSquared(new THREE.Vector3(best.x, best.y, best.z)) < 0.36) blocked = true;
+      }
+      return { x: best.x, y: best.y, z: best.z, nx: best.nx, ny: best.ny, nz: best.nz, ax: best.ax, ay: best.ay, az: best.az, blocked };
     }
 
     function tryTorchPlace(drag = false) {
       const s = inv.hot[inv.sel];
       const def = s && ITEMS[s.id];
       if (!def?.light) return null;
-      const { hit } = mineAim();
-      if (!hit) return null;
-      const n = world.getSurfaceNormal(hit.x, hit.y, hit.z);
-      let px, py, pz, nx, ny, nz;
-      if (def.light.mount === 'floor') {
-        if (n.y < 0.5) return null;
-        px = hit.x; py = hit.y + 0.01; pz = hit.z;
-        nx = 0; ny = 1; nz = 0;
-      } else {
-        if (Math.abs(n.y) > 0.5) return null;
-        px = hit.x + n.x * 0.3; py = hit.y + n.y * 0.3; pz = hit.z + n.z * 0.3;
-        nx = n.x; ny = n.y; nz = n.z;
-      }
-
-      if (drag && holdPlace.lastPos) {
-        const space = def.light.range * 0.85;
-        if (Math.hypot(px - holdPlace.lastPos.x, pz - holdPlace.lastPos.z) < space) return null;
-      }
-      for (const t of torches) {
-        if (t.pos.distanceToSquared(new THREE.Vector3(px, py, pz)) < 0.36) return null;
-      }
-      if (!addTorch(px, py, pz, nx, ny, nz, s.id)) return null;
-      holdPlace.lastPos = { x: px, z: pz };
+      const t = torchPlaceTarget(s, drag);
+      if (!t || t.blocked) return null;
+      if (!addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz, s.id, t.ax, t.ay, t.az)) return null;
+      holdPlace.lastPos = { x: t.x, z: t.z };
+      refreshTorchLights();
       triggerSwing(0.24);
-      world.markRegionDirty(px - 12, px + 12, py - 12, py + 12, pz - 12, pz + 12);
       if (--s.n <= 0) inv.hot[inv.sel] = null;
       syncBars();
       return { type: 'torch' };
     }
 
 
-    function refreshMachineLights() {
+    function refreshTorchLights() {
       const near = torches
         .map((t) => ({ t, d: t.pos.distanceToSquared(player.pos) }))
         .sort((a, b) => a.d - b.d)
-        .slice(0, MACHINE_LIGHT_SLOTS);
-      for (let i = 0; i < MACHINE_LIGHT_SLOTS; i++) {
+        .slice(0, TORCH_LIGHTS);
+      for (let i = 0; i < TORCH_LIGHTS; i++) {
+        const l = torchLights[i];
         const e = near[i];
-        if (!e) { machineLightPos[i].set(0, -999, 0); machineLightCol[i].set(0, 0, 0); continue; }
-        machineLightPos[i].copy(e.t.pos);
-        machineLightCol[i].set(
-          e.t.col[0] * e.t.light.power,
-          e.t.col[1] * e.t.light.power,
-          e.t.col[2] * e.t.light.power
-        );
+        if (!e) { l.intensity = 0; l.position.set(0, -999, 0); continue; }
+        const L = e.t.light;
+        l.position.set(e.t.pos.x, e.t.pos.y + 0.3, e.t.pos.z); // the emitter, not the mount
+        l.color.setHex(L.color);
+        l.distance = L.range;
+        l.intensity = L.power * TORCH_LIGHT_GAIN;
       }
     }
 
     let torchTimer = 0;
 
     function updateTorches(dt, now) {
-      torchUniforms.torchTime.value = now / 1000;
       torchTimer -= dt;
       if (torchTimer > 0) return;
       torchTimer = 0.25;
 
       for (let i = torches.length - 1; i >= 0; i--) {
         const t = torches[i];
-        if (world.field.sample(t.ax, t.ay, t.az) <= 0) {
+        const dx = t.pos.x - t.ax, dy = t.pos.y - t.ay, dz = t.pos.z - t.az;
+        const len = Math.hypot(dx, dy, dz) || 1;
+        const ix = dx / len, iy = dy / len, iz = dz / len; // inward from pos
+        const sx = t.pos.x - ix * 0.08, sy = t.pos.y - iy * 0.08, sz = t.pos.z - iz * 0.08;
+        const supported = world.field.sample(t.ax, t.ay, t.az) > 0
+          || world.field.sample(sx, sy, sz) > 0
+          || (buildingSystem && (buildingSystem.solidAt(t.ax, t.ay, t.az) || buildingSystem.solidAt(sx, sy, sz)));
+        if (!supported) {
           scene.remove(t.grp);
           torches.splice(i, 1);
-          world.markRegionDirty(t.pos.x - 12, t.pos.x + 12, t.pos.y - 12, t.pos.y + 12, t.pos.z - 12, t.pos.z + 12);
           give(t.id, 1);
         }
       }
-      refreshMachineLights();
+      refreshTorchLights();
     }
 
 
@@ -9152,7 +11502,7 @@
               mined.set(id, (mined.get(id) || 0) + n);
             f.set(x, y, z, -1);
           }
-      world.markRegionDirty(Math.floor(c.x - r), Math.ceil(c.x + r),
+      world.markEdited(Math.floor(c.x - r), Math.ceil(c.x + r),
         Math.floor(c.y - r), Math.ceil(c.y + r), Math.floor(c.z - r), Math.ceil(c.z + r));
       const floorY = world.getSurfaceHeight(c.x, c.z, 90);
       let di = 0;
@@ -9213,6 +11563,19 @@
       return true;
     }
 
+    // The zipline wrench: right-click a workbench to pick an item up, then
+    // right-click another one to send it there.
+    function useSkylineWrench() {
+      const s = inv.hot[inv.sel];
+      if (!s || !ITEMS[s.id]?.tool?.wrench) return false;
+      if (!skylineSystem) return true;
+      const aim = resolveInteractTarget();
+      if (!aim || aim.type !== 'machine') { notice('AIM AT A MACHINE'); return true; }
+      const inst = machineSystem.instances.find((i) => i.machine === aim.target);
+      if (!inst) return true;
+      return skylineSystem.useWrenchOn(inst);
+    }
+
     function useLiquidContainer() {
       const s = inv.hot[inv.sel];
       if (!s) return false;
@@ -9253,26 +11616,42 @@
     }
 
 
-    function useConsumable() {
-      const s = inv.hot[inv.sel];
-      if (!s) return false;
-      const def = ITEMS[s.id];
-      if (!def || !def.consumable) return false;
+    function applyConsumable(s, def) {
       const c = def.consumable;
       inv.dose = Math.max(0, inv.dose + (c.dose || 0));
-      if (c.food) vitals.hunger = Math.min(vitals.maxHunger, vitals.hunger + c.food);
+      if (c.food) {
+        vitals.hunger = Math.min(vitals.maxHunger, vitals.hunger + effectiveFood(s.id, c.food));
+        vitals.foodNumb[s.id] = Math.max(-2, foodNumb(s.id) - 0.1);
+        for (const id of Object.keys(vitals.foodNumb)) {
+          if (id !== s.id) vitals.foodNumb[id] = Math.min(2, foodNumb(id) + 0.1);
+        }
+      }
       if (c.cures) cureWounds(c.cures);
       if (c.heal) vitals.hp = Math.min(vitals.maxHp, vitals.hp + c.heal);
       if (c.immunity) vitals.infectionImmunity = Math.max(vitals.infectionImmunity, c.immunity);
       if (def.consumable.shieldTime) armorShieldTimer = def.consumable.shieldTime;
       if (def.consumable.intake) { radIntakeMult = def.consumable.intake; radIntakeTimer = def.consumable.intakeTime || 1800; }
       if (def.consumable.smoke) {
-        if (!hasLighter()) { notice('NEED A LIGHTER'); return true; }
+        if (!hasLighter()) { notice('NEED A LIGHTER'); return; }
         smokeTime = def.consumable.smoke; smokeSpeed = def.consumable.speed || 1;
       }
       if (s.id === 'cup_noodles' && !drink) startDrink();
       s.n--; if (s.n <= 0) inv.hot[inv.sel] = null;
       syncBars();
+    }
+
+    function useConsumable() {
+      const s = inv.hot[inv.sel];
+      if (!s) return false;
+      const def = ITEMS[s.id];
+      if (!def || !def.consumable) return false;
+      if (eat) return true; // already chewing
+      // A food shown as a flat icon (no 3D model) is eaten over time.
+      if (def.consumable.food && !propModels.has(s.id)) {
+        startEat(s, def);
+        return true;
+      }
+      applyConsumable(s, def);
       return true;
     }
 
@@ -9284,17 +11663,23 @@
         pickUnderCrosshair();
       }
       else if (e.button === 2) {
-        if (useBweController()) return;
-        if (useBuildingUpgrade()) return;
-        if (useConsumable()) return;
-        if (useDoorToggle()) return;
-        if (useInteractable()) return;
-        if (useLiquidContainer()) return;
-        if (useC4()) return;
+        const held = inv.hot[inv.sel];
+        const hd = held && ITEMS[held.id];
+        const holdingPlaceable = !!(hd && (hd.torch || hd.pipeGrid || hd.workbench || hd.building || (hd.block && TERRAIN_BLOCKS.includes(held.id))));
+        if (!holdingPlaceable) {
+          if (useBweController()) return;
+          if (useBuildingUpgrade()) return;
+          if (useSkylineWrench()) return;
+          if (useConsumable()) return;
+          if (useDoorToggle()) return;
+          if (useInteractable()) return;
+          if (useLiquidContainer()) return;
+          if (useC4()) return;
+        }
         resetHoldPlace();
         doPlace();
         const s = inv.hot[inv.sel];
-        if (s && (ITEMS[s.id].torch || ITEMS[s.id].pipeGrid || ITEMS[s.id].workbench || ITEMS[s.id].block || ITEMS[s.id].building)) {
+        if (s && (ITEMS[s.id].torch || ITEMS[s.id].pipeGrid || ITEMS[s.id].workbench || ITEMS[s.id].building || (ITEMS[s.id].block && TERRAIN_BLOCKS.includes(s.id)))) {
           holdPlace.active = true;
           holdPlace.next = performance.now() + 140;
         }
@@ -9352,20 +11737,12 @@
       for (const y of ys) {
         if (world.field.sample(p.x, p.y + y, p.z) > 0) return true;
       }
-      // Walls are their own geometry, not terrain: they block the player too.
-      if (buildingSystem) {
-        for (let a = 0; a < 8; a++) {
-          const ang = (a / 8) * Math.PI * 2;
-          const dx = Math.cos(ang) * r;
-          const dz = Math.sin(ang) * r;
-          for (const y of ys) {
-            if (buildingSystem.solidAt(p.x + dx, p.y + y, p.z + dz)) return true;
-          }
-        }
-        for (const y of ys) {
-          if (buildingSystem.solidAt(p.x, p.y + y, p.z)) return true;
-        }
-      }
+      // Building collision is continuous over the body, not eight horizontal
+      // samples: thin walls and low decks cannot slip between probe points.
+      if (buildingSystem?.collidesBody(p.x, p.y, p.z, r, h)) return true;
+      // Machines and industrial structures are solid on every axis too, so a
+      // body can land on top of one and cannot sink inside it.
+      if (structureCollidesBody(p.x, p.y, p.z, r, h)) return true;
       return false;
     }
 
@@ -9464,17 +11841,26 @@
 
 
 
-    function industrialBlockedAt(x, z) {
-      const r = player.radius;
-      for (const c of industrialColliders) {
-        if (player.pos.y > c.top - 0.2) continue;
-
+    // Machines and industrial parts are solid bodies, not just XZ footprints.
+    // The Y overlap matters: without it you could jump on a workbench and fall
+    // straight through its top into the ground inside it.
+    function structureCollidesBody(x, y, z, r, h,
+      machines = machineSystem?.instances || [], industries = industrialColliders) {
+      const head = y + h;
+      for (const m of machines) {
+        if (head <= m.y + 1e-4 || y >= m.top - 1e-4) continue;
+        const qx = Math.max(m.x - m.hx, Math.min(x, m.x + m.hx));
+        const qz = Math.max(m.z - m.hz, Math.min(z, m.z + m.hz));
+        if ((x - qx) ** 2 + (z - qz) ** 2 < r * r) return true;
+      }
+      for (const c of industries) {
+        if (head <= c.base + 1e-4 || y >= c.top - 1e-4) continue;
         if (c.kind === 'box') {
-          if (Math.abs(x - c.x) < c.hx + r && Math.abs(z - c.z) < c.hz + r) return true;
+          const qx = Math.max(c.x - c.hx, Math.min(x, c.x + c.hx));
+          const qz = Math.max(c.z - c.hz, Math.min(z, c.z + c.hz));
+          if ((x - qx) ** 2 + (z - qz) ** 2 < r * r) return true;
           continue;
         }
-
-
         const m = c.mask, s = c.s;
         const wx = x - c.x, wz = z - c.z;
         const lx = (wx * c.cos - wz * c.sin) / s;
@@ -9499,22 +11885,28 @@
       return false;
     }
 
-    function machineBlockedAt(x, z) {
-      if (!machineSystem) return false;
-      const r = player.radius;
-      for (const m of machineSystem.instances) {
-        if (player.pos.y > m.top - 0.2) continue;
-        if (Math.abs(x - m.x) < m.hx + r && Math.abs(z - m.z) < m.hz + r) return true;
-      }
-      return false;
-    }
-
-    function structureBlockedAt(x, z) {
-      return industrialBlockedAt(x, z) || machineBlockedAt(x, z);
-    }
-
     function movePlayer(dt) {
       if (mapSystem?.isOpen()) return;
+
+      if (flying) {
+        const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+        const s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+        const u = (keys.Space ? 1 : 0) - ((keys.ShiftLeft || keys.ShiftRight) ? 1 : 0);
+        const sinY = Math.sin(player.yaw), cosY = Math.cos(player.yaw);
+        let dx = (-sinY * f) + (cosY * s);
+        let dz = (-cosY * f) - (sinY * s);
+        const len = Math.hypot(dx, dz);
+        if (len > 1e-6) { dx /= len; dz /= len; }
+        const sp = 14;
+        player.pos.x += dx * sp * dt;
+        player.pos.z += dz * sp * dt;
+        player.pos.y += u * sp * dt;
+        player.vel.set(0, 0, 0);
+        player.onGround = false;
+        fallPeak = 0;
+        return;
+      }
+
       landingCooldown = Math.max(0, landingCooldown - dt);
 
       const inWater = world.waterAt(player.pos.x, player.pos.y + 0.4, player.pos.z) > 0;
@@ -9535,7 +11927,9 @@
       const forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
       const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
 
-      const sprint = keys.ShiftLeft || keys.ShiftRight;
+      let sprint = (keys.ShiftLeft || keys.ShiftRight) && !inWater && (forward !== 0 || strafe !== 0);
+      if (sprint && vitals.hunger <= 5) sprint = false;
+      if (sprint) vitals.hunger = Math.max(0, vitals.hunger - 0.04 * dt);
       const speed = (inWater ? 2.8 : (sprint ? 7.2 : 4.2)) * radStage().speed * woundSpeed() * (smokeTime > 0 ? smokeSpeed : 1);
 
       // Strafing and backpedalling are slower than walking forward.
@@ -9558,6 +11952,7 @@
 
 
       if (!inWater && keys.Space && player.onGround) {
+        if (vitals.hunger >= 1) vitals.hunger -= 1;
         player.vel.y = 8.6;
         player.onGround = false;
         sliding = false;
@@ -9615,23 +12010,19 @@
       }
 
 
-      const bx = structureBlockedAt(player.pos.x, player.pos.z);
+      // A body already inside something (an old save, a bad spawn) may move
+      // out: only a move that newly collides is refused.
+      const stuckX = playerCollides();
       player.pos.x += mx;
-      if (!bx && structureBlockedAt(player.pos.x, player.pos.z)) {
-        player.pos.x -= mx;
-        player.vel.x = 0;
-      } else if (playerCollides()) {
+      if (!stuckX && playerCollides()) {
         player.pos.x -= mx;
         if (!(mx !== 0 && player.vel.y <= 0.5 && tryStepUp(mx, 0))) player.vel.x = 0;
       }
 
 
-      const bz = structureBlockedAt(player.pos.x, player.pos.z);
+      const stuckZ = playerCollides();
       player.pos.z += mz;
-      if (!bz && structureBlockedAt(player.pos.x, player.pos.z)) {
-        player.pos.z -= mz;
-        player.vel.z = 0;
-      } else if (playerCollides()) {
+      if (!stuckZ && playerCollides()) {
         player.pos.z -= mz;
         if (!(mz !== 0 && player.vel.y <= 0.5 && tryStepUp(0, mz))) player.vel.z = 0;
       }
@@ -9685,7 +12076,7 @@
             if (dmg > 20) addWound('bleeding');
             notice(`FALL · -${Math.round(dmg)} HP`);
           }
-          if (!inWater) footsteps.land(footstepCategory(), Math.min(0.9, 0.62 + fallPeak * 0.012) * masterVolume);
+          if (!inWater) footsteps.land(footstepCategory(), Math.min(0.9, 0.62 + fallPeak * 0.012) * masterVolume * 0.7);
           landingVelocity -= Math.min(2.8, 0.9 + fallPeak * 0.035);
           landingCooldown = 0.22;
         }
@@ -9713,7 +12104,7 @@
       }
       if (stepAccum > 2.2) {
         stepAccum = 0;
-        footsteps.step(footstepCategory(), (sprint ? 0.6 : 0.42) * masterVolume);
+        footsteps.step(footstepCategory(), (sprint ? 0.6 : 0.42) * masterVolume * 0.7);
       }
 
 
@@ -9754,10 +12145,40 @@
       nightChance: 0.35,
     };
     let wrapperSpawnT = 8;
+    let wrapperLoading = false;
+    let wrapperSummonPending = false;
 
-    new GLTFLoader().load(WRAPPER.url, (gltf) => {
-      wrapperTemplate = { scene: gltf.scene, clips: gltf.animations };
-    }, undefined, (err) => console.warn('wrapper model failed to load', err));
+    function loadWrapperTemplate(onLoad, onError) {
+      if (wrapperTemplate) { onLoad?.(wrapperTemplate); return; }
+      if (wrapperLoading) return;
+      wrapperLoading = true;
+      new GLTFLoader().load(WRAPPER.url, (gltf) => {
+        wrapperTemplate = { scene: gltf.scene, clips: gltf.animations };
+        wrapperLoading = false;
+        if (wrapperSummonPending) {
+          wrapperSummonPending = false;
+          notice(trySummonEntity('wrapper'));
+        }
+        onLoad?.(wrapperTemplate);
+      }, undefined, (err) => {
+        wrapperLoading = false;
+        if (wrapperSummonPending) {
+          wrapperSummonPending = false;
+          notice('WRAPPER NOT READY');
+        }
+        console.warn('wrapper model failed to load', err);
+        onError?.(err);
+      });
+    }
+
+    function loadWrapperForSummon() {
+      if (wrapperTemplate) return trySummonEntity('wrapper');
+      wrapperSummonPending = true;
+      loadWrapperTemplate();
+      return wrapperLoading || wrapperTemplate ? 'LOADING WRAPPER...' : 'WRAPPER NOT READY';
+    }
+
+    loadWrapperTemplate();
 
     function spawnWrapper(x, z) {
       if (!wrapperTemplate) return null;
@@ -9796,6 +12217,64 @@
 
 
 
+    const chickens = [];
+    const CHICKEN_SPAWN = {
+      radius: [30, 55],
+      cap: 8,
+      roll: 25,
+      chance: 0.2,
+      cluster: [3, 4],
+      spread: 3.5,
+    };
+    let chickenSpawnT = 18;
+
+    function spawnChicken(x, z) {
+      if (!chickenTemplate) return null;
+      const y = world.getSurfaceHeight(x, z, 90);
+      if (!Number.isFinite(y)) return null;
+      if (world.waterAt(x, y + 0.3, z) > 0) return null;
+      if (biomeAt(x, z) !== B.PLAINS) return null;
+      const c = new Chicken(world, x, z, chickenTemplate);
+      chickens.push(c);
+      return c;
+    }
+
+    function spawnChickenCluster(cx, cz) {
+      const [n0, n1] = CHICKEN_SPAWN.cluster;
+      const want = n0 + Math.floor(Math.random() * (n1 - n0 + 1));
+      let made = 0;
+      for (let i = 0; i < want; i++) {
+        if (chickens.length >= CHICKEN_SPAWN.cap) break;
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.random() * CHICKEN_SPAWN.spread;
+        if (spawnChicken(cx + Math.cos(a) * d, cz + Math.sin(a) * d)) made++;
+      }
+      return made;
+    }
+
+    function updateChickenSpawns(dt) {
+      if (!chickenTemplate) return;
+      chickenSpawnT -= dt;
+      if (chickenSpawnT > 0) return;
+      chickenSpawnT = CHICKEN_SPAWN.roll;
+      if (chickens.length >= CHICKEN_SPAWN.cap) return;
+      if (Math.random() > CHICKEN_SPAWN.chance) return;
+
+      for (let t = 0; t < 10; t++) {
+        const a = Math.random() * Math.PI * 2;
+        const [r0, r1] = CHICKEN_SPAWN.radius;
+        const d = r0 + Math.random() * (r1 - r0);
+        const x = player.pos.x + Math.cos(a) * d;
+        const z = player.pos.z + Math.sin(a) * d;
+        if (biomeAt(x, z) !== B.PLAINS) continue;
+        if (spawnChickenCluster(x, z) > 0) return;
+      }
+    }
+
+
+
+
+
     const hudEl = document.getElementById('hud');
     const barFill = document.getElementById('barFill');
     const deathBanner = document.getElementById('deathBanner');
@@ -9803,7 +12282,97 @@
     let fpsSmooth = 60;
     let hudTimer = 0;
 
+    let hungerSmile = null;
+    let hungerSmileTex = null;
+    let smileStare = 0;
+    let smileDash = null;
+    let smileDoneNight = false;
+
+    function removeHungerSmile() {
+      if (!hungerSmile) return;
+      scene.remove(hungerSmile);
+      hungerSmile.geometry.dispose();
+      hungerSmile.material.dispose();
+      hungerSmile = null;
+      smileStare = 0;
+      smileDash = null;
+    }
+
+    function spawnHungerSmile() {
+      if (hungerSmile) {
+        hungerSmile.lookAt(camera.position);
+        return hungerSmile;
+      }
+      if (!hungerSmileTex) hungerSmileTex = new THREE.TextureLoader().load('assets/images/smile.webp');
+      const mat = new THREE.MeshBasicMaterial({
+        map: hungerSmileTex, transparent: true, fog: false, toneMapped: false, side: THREE.DoubleSide, depthWrite: false,
+      });
+      hungerSmile = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), mat);
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      hungerSmile.position.copy(camera.position).addScaledVector(dir, 10);
+      const groundY = (typeof world !== 'undefined' && world.getSurfaceHeight)
+        ? world.getSurfaceHeight(hungerSmile.position.x, hungerSmile.position.z, 160)
+        : camera.position.y;
+      hungerSmile.position.y = Math.max(camera.position.y + 6, groundY + 18);
+      hungerSmile.lookAt(camera.position);
+      smileStare = 0;
+      smileDash = null;
+      scene.add(hungerSmile);
+      return hungerSmile;
+    }
+
+    function updateHungerSmile(dt) {
+      const nightHungry = !isDay() && vitals.hunger < 50;
+      if (nightHungry) addWound('paranoia');
+      else if (vitals.wounds.paranoia !== undefined) delete vitals.wounds.paranoia;
+
+      if (isDay()) {
+        removeHungerSmile();
+        smileDoneNight = false;
+        return;
+      }
+
+      if (!hungerSmile) {
+        if (nightHungry && !smileDoneNight) spawnHungerSmile();
+        return;
+      }
+
+      hungerSmile.lookAt(camera.position);
+
+      if (smileDash) {
+        smileDash.t += dt;
+        const p = Math.min(1, smileDash.t / smileDash.dur);
+        hungerSmile.position.lerpVectors(smileDash.from, smileDash.to, p);
+        hungerSmile.lookAt(camera.position);
+        if (p >= 1) {
+          removeHungerSmile();
+          smileDoneNight = true;
+        }
+        return;
+      }
+
+      const to = hungerSmile.position.clone().sub(camera.position);
+      const dist = to.length() || 1;
+      to.divideScalar(dist);
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      const staring = fwd.dot(to) > Math.cos(THREE.MathUtils.degToRad(12));
+      smileStare = staring ? smileStare + dt : 0;
+
+      if (smileStare >= 6) {
+        const dir = camera.position.clone().sub(hungerSmile.position).normalize();
+        smileDash = {
+          from: hungerSmile.position.clone(),
+          to: camera.position.clone().addScaledVector(dir, 6),
+          t: 0,
+          dur: 0.25,
+        };
+      }
+    }
+
     function updateHud(dt) {
+      updateHungerSmile(dt);
       hudTimer += dt;
       if (hudTimer < 0.15) return;
       hudTimer = 0;
@@ -9839,7 +12408,7 @@
 
       hudEl.innerHTML =
         `<b>${fpsSmooth.toFixed(0)} fps</b> &nbsp; chunks: <b>${world.chunks.size}</b> ` +
-        `(${world.dirty.length} queued, ${world.waterDirty.length}w)<br>` +
+        `(${world.dirty.length + world.loading.length} queued, ${world.waterDirty.length}w)<br>` +
         `<span class="k">day</span> <b>${clock.day}</b> ${isDay() ? '(day)' : '(night)'} ` +
         `<span class="k">dose</span> ${formatRad(inv.dose)} <span class="k">rate</span> ${formatRadRate(doseRate())} ` +
         `<span class="k">stage</span> ${radStage().name} ` +
@@ -9865,12 +12434,13 @@
         `<span class="k">veg</span> ${vegCount()} ` +
         `<span class="k">res</span> ${Math.round(100 / PIXEL)}% <span class="k">col</span> ${COLOR_LEVELS} ` +
         `<span class="k">view</span> ${viewRadius} <span class="k">torch</span> ${torches.length}<br>` +
-        `<span class="k">frame</span> <span class="copy" title="press I to copy">${frameMs.toFixed(2)}ms · ${frameBreak} · q ${world.dirty.length} · qw ${world.waterDirty.length} · dc ${renderer.info.render.calls} · tri ${(renderer.info.render.triangles / 1000).toFixed(0)}k</span><br>` +
+        `<span class="k">far</span> <span class="copy" title="press I to copy">${farTerrain.meshes.length} rings · ${(farTerrain.outer / 1000).toFixed(0)}km out · cfar ${(camera.far / 1000).toFixed(0)}km · fog ${(scene.fog.far / 1000).toFixed(0)}km · fogN ${scene.fog.near.toFixed(0)}m</span><br>` +
+        `<span class="k">frame</span> <span class="copy" title="press I to copy">${frameMs.toFixed(2)}ms · ${frameBreak} · q ${world.dirty.length + world.loading.length} · qw ${world.waterDirty.length} · dc ${renderer.info.render.calls} · tri ${(renderer.info.render.triangles / 1000).toFixed(0)}k</span><br>` +
         `<span class="k">veg ms</span> <span class="copy">${vegMs.toFixed(2)} · ${vegBreak} · ${vegCount()} inst · ${trunkColliders.length} hit</span>`;
 
 
       const target = world.chunks.size;
-      const built = target - world.dirty.length;
+      const built = target - world.dirty.length - world.loading.length;
       barFill.style.width = target > 0 ? `${Math.min(100, (built / target) * 100)}%` : '0%';
       paintRad();
       paintVitals();
@@ -9896,7 +12466,11 @@
         { f: [0, 0, 1], u: [0, 1, 0] },
         { f: [0, 0, -1], u: [0, 1, 0] },
       ];
-      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 2000);
+      // The panorama has to show the same horizon the player sees, so it uses
+      // the game's own near and far planes: a fixed 2 km plane made every
+      // panorama look like the world stopped two kilometres out, and a
+      // different near plane gave it a different depth precision.
+      const cam = new THREE.PerspectiveCamera(90, 1, camera.near, Math.max(2000, camera.far));
       const rt = new THREE.WebGLRenderTarget(S, S, { depthBuffer: true });
       rt.texture.colorSpace = THREE.SRGBColorSpace;
       rt.texture.minFilter = rt.texture.magFilter = THREE.LinearFilter;
@@ -9981,6 +12555,7 @@
 
 
     let last = performance.now();
+    let lastFrameAt = performance.now();
     let eyeCur = 1.62;
     let camY = null;
     let slidePitch = 0;
@@ -9995,6 +12570,370 @@
     let deathT = 0;
     let waterSimTimer = 0;
 
+    const lagSheet = { frames: [], events: [], lastRebuildN: 0, lastLoadN: 0, lastPerf: null };
+    window.__lagSheet = lagSheet;
+
+
+    /* ---------------- replay ----------------
+     * A replay is the player's camera path plus the density edits it made.
+     * Recording is opt in (settings); the pause menu opens the fullscreen
+     * replay panel, which records, lists, plays back and exports.
+     */
+
+    const REPLAY_KEY = 'idte.replay.v1.';
+    const REPLAY_SPEEDS = [0.25, 0.5, 1, 2, 4];
+    const replayEnabled = () => !!getSetting('replay');
+
+    let replayRec = null;        // the replay being recorded
+    let replayRecT0 = 0;
+    let replayRecT = 0;          // recorded seconds (game time, not wall clock)
+    let replayPlay = null;       // { replay, t, speed, playing, editIdx, saved }
+    let replayExport = null;     // { rec, track, c2d, canvas, w, h, chunks, done, mime, fps, step, needsSim }
+    let replayHeld = null;       // { id } - the item the playback holds
+
+    // Every density edit is a replay event: mined and placed voxels replay in
+    // the same order they happened.
+    world.field.onEdit = (x, y, z, v) => {
+      if (replayRec) pushEdit(replayRec, replayRecT, x, y, z, v);
+    };
+
+    function replayNow() { return replayRecT; }
+
+    function startReplayRecording() {
+      if (replayRec) return;
+      replayRec = createReplay({
+        name: `REPLAY ${new Date().toLocaleString()}`,
+        world: MENU_WORLD?.id || '',
+        seed: WORLD_SEED,
+        day: clock.day,
+      });
+      replayRecT0 = performance.now();
+      replayRecT = 0;
+      notice('RECORDING STARTED');
+    }
+
+    async function stopReplayRecording() {
+      if (!replayRec) return;
+      const r = replayRec;
+      replayRec = null;
+      if (frameCount(r) < 2) { notice('RECORDING TOO SHORT'); return; }
+      const packed = packReplay(r);
+      const id = `${r.created}-${Math.floor(Math.random() * 1e6)}`;
+      await idbSet(REPLAY_KEY + id, packed);
+      notice('RECORDING SAVED');
+      replayUI?.refresh();
+    }
+
+    async function listReplays() {
+      const entries = await idbEntries(REPLAY_KEY);
+      const out = [];
+      for (const [key, val] of entries) {
+        if (!val) continue;
+        out.push({
+          id: key.slice(REPLAY_KEY.length),
+          name: val.name || 'REPLAY',
+          created: val.created || 0,
+          dur: val.dur || 0,
+          size: replayBytes(val),
+        });
+      }
+      out.sort((a, b) => b.created - a.created);
+      return out;
+    }
+
+    // --- playback ---
+
+    function beginPlayback(r, opts = {}) {
+      stopReplayRecording();
+      const saved = new Map();
+      for (let i = 0; i < editCount(r); i++) {
+        const e = editAt(r, i);
+        const k = DensityField.key(e.x, e.y, e.z);
+        if (!saved.has(k)) saved.set(k, { v: world.field.edits.get(k), x: e.x, y: e.y, z: e.z });
+      }
+      replayPlay = {
+        replay: r, t: 0, speed: 1, playing: true, editIdx: 0, saved,
+        exporting: !!opts.exporting,
+      };
+      unlockPointer();
+      setOverlay(false);
+    }
+
+    async function startReplayPlayback(id) {
+      const packed = await idbGet(REPLAY_KEY + id);
+      const r = packed && unpackReplay(packed);
+      if (!r) { notice('REPLAY NOT FOUND'); return; }
+      beginPlayback(r);
+      notice('REPLAY PLAYBACK');
+    }
+
+    function applyReplayEdits(upto) {
+      const p = replayPlay;
+      if (!p) return;
+      const idx = editIndexAt(p.replay, upto);
+      while (p.editIdx < idx) {
+        const e = editAt(p.replay, p.editIdx++);
+        world.field.set(e.x, e.y, e.z, e.v);
+        world.markEdited(e.x, e.x, e.y, e.y, e.z, e.z);
+      }
+    }
+
+    // Put every voxel the replay touched back the way it was, so a playback
+    // never leaves a hole in the saved world.
+    function restoreReplayWorld() {
+      const p = replayPlay;
+      if (!p) return;
+      let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+      for (const [, s] of p.saved) {
+        if (s.v === undefined) world.field.edits.delete(DensityField.key(s.x, s.y, s.z));
+        else world.field.edits.set(DensityField.key(s.x, s.y, s.z), s.v);
+        if (s.x < x0) x0 = s.x; if (s.x > x1) x1 = s.x;
+        if (s.y < y0) y0 = s.y; if (s.y > y1) y1 = s.y;
+        if (s.z < z0) z0 = s.z; if (s.z > z1) z1 = s.z;
+      }
+      if (x0 <= x1) world.markEdited(x0, x1, y0, y1, z0, z1);
+    }
+
+    function seekReplay(t) {
+      const p = replayPlay;
+      if (!p) return;
+      restoreReplayWorld();
+      p.t = Math.max(0, Math.min(p.replay.dur, t));
+      p.editIdx = 0;
+      applyReplayEdits(p.t);
+    }
+
+    function updateReplayPlayback(dt) {
+      const p = replayPlay;
+      if (!p) return;
+      // Export steps the replay by a fixed frame time after each captured
+      // frame; interactive playback follows wall-clock time.
+      if (!p.exporting && p.playing) {
+        p.t += dt * p.speed;
+        if (p.t >= p.replay.dur) {
+          p.t = p.replay.dur;
+          endPlayback();
+          notice('REPLAY ENDED');
+          return;
+        }
+      }
+      const s = sampleAt(p.replay, p.t);
+      if (s) {
+        player.pos.set(s.x, s.y, s.z);
+        player.vel.set(0, 0, 0);
+        player.yaw = s.yaw;
+        player.pitch = s.pitch;
+        // Snap the smoothed camera state so the recorded view (including
+        // slide/crouch height and tilt) is shown without a settling lag.
+        eyeCur = s.eye ?? player.eye;
+        slidePitch = s.slideP ?? 0;
+        camY = s.y + eyeCur;
+        cameraBob = 0;
+        cameraRoll = 0;
+        landingOffset = 0;
+        landingVelocity = 0;
+        const ct = s.clockT;
+        if (Number.isFinite(ct) && ct >= 0) clock.t = ct % TUNING.DAY_SECONDS;
+        const hid = heldId(p.replay, s.heldIdx);
+        replayHeld = hid ? { id: hid } : null;
+      }
+      applyReplayEdits(p.t);
+    }
+
+    function endPlayback() {
+      const p = replayPlay;
+      if (!p) return;
+      restoreReplayWorld();
+      replayPlay = null;
+      replayHeld = null;
+      if (!replayExport) setOverlay(true);
+    }
+
+    function exitReplay() {
+      if (!replayPlay) return;
+      if (replayExport) { cancelReplayExport(); }
+      endPlayback();
+      notice('REPLAY ENDED');
+    }
+
+    // --- export ---
+
+    function containRect(winW, winH, w, h) {
+      const k = Math.min(winW / w, winH / h);
+      const cw = Math.floor(w * k), ch = Math.floor(h * k);
+      return { x: Math.floor((winW - cw) / 2), y: Math.floor((winH - ch) / 2), w: cw, h: ch };
+    }
+
+    function applyExportCanvasStyle(w, h) {
+      const r = containRect(innerWidth, innerHeight, w, h);
+      const el = renderer.domElement;
+      el.style.position = 'absolute';
+      el.style.left = `${r.x}px`;
+      el.style.top = `${r.y}px`;
+      el.style.width = `${r.w}px`;
+      el.style.height = `${r.h}px`;
+    }
+
+    function clearExportCanvasStyle() {
+      const el = renderer.domElement;
+      el.style.position = '';
+      el.style.left = '';
+      el.style.top = '';
+      el.style.width = '100vw';
+      el.style.height = '100vh';
+    }
+
+    async function exportReplayVideo(id, opts) {
+      if (replayExport) return;
+      const packed = await idbGet(REPLAY_KEY + id);
+      const r = packed && unpackReplay(packed);
+      if (!r) { notice('REPLAY NOT FOUND'); return; }
+      if (typeof MediaRecorder === 'undefined') { notice('VIDEO EXPORT NOT SUPPORTED HERE'); return; }
+
+      const w = opts.w || 1920, h = opts.h || 1080, fps = opts.fps || 30;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const c2d = canvas.getContext('2d');
+      c2d.imageSmoothingEnabled = false;
+      // Frames are pushed explicitly with requestFrame (when available) so the
+      // video gets one captured frame per replay step, not whatever the PC
+      // happened to render in real time.
+      const stream = canvas.captureStream(fps);
+      const track = stream.getVideoTracks()[0] || null;
+      const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+        .find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.min(80e6, Math.round(w * h * fps * 0.15)) });
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const done = new Promise((res) => { rec.onstop = res; });
+      rec.start(250);
+
+      replayExport = { rec, track, canvas, c2d, w, h, chunks, done, mime, fps, step: 1 / fps, needsSim: true };
+      exportRes = { w, h, pixels: opts.pixels !== false };
+      applyPixelSize();
+      applyExportCanvasStyle(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      viewCam.aspect = camera.aspect;
+      viewCam.updateProjectionMatrix();
+      beginPlayback(r, { exporting: true });
+      notice(`EXPORTING ${w}x${h} @ ${fps}`);
+    }
+
+    function finishReplayExport() {
+      const ex = replayExport;
+      if (!ex) return;
+      try { ex.rec.stop(); } catch { }
+      ex.done.then(() => {
+        const blob = new Blob(ex.chunks, { type: ex.mime });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `nuclearism-replay-${Date.now()}.webm`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      });
+      replayExport = null;
+      exportRes = null;
+      applyPixelSize();
+      clearExportCanvasStyle();
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      viewCam.aspect = camera.aspect;
+      viewCam.updateProjectionMatrix();
+      endPlayback();
+      notice('EXPORT SAVED');
+    }
+
+    function cancelReplayExport() {
+      const ex = replayExport;
+      if (!ex) return;
+      try { ex.rec.stop(); } catch { }
+      replayExport = null;
+      exportRes = null;
+      applyPixelSize();
+      clearExportCanvasStyle();
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      viewCam.aspect = camera.aspect;
+      viewCam.updateProjectionMatrix();
+    }
+
+    function replayExportProgress() {
+      if (!replayExport || !replayPlay) return 0;
+      const dur = replayPlay.replay.dur || 1;
+      return Math.max(0, Math.min(1, replayPlay.t / dur));
+    }
+
+    // Pump streaming/rebuild work until the world for the current replay time
+    // is ready, so an exported frame is fully made instead of a mid-build
+    // snapshot. Returns true when nothing is left to build.
+    function settleWorldForExport(limitMs = 80) {
+      const until = performance.now() + limitMs;
+      while (performance.now() < until) {
+        world.update(player.pos.x, player.pos.y, player.pos.z);
+        farTerrain.update(player.pos.x, player.pos.z);
+        if (world.dirty.length) world.processDirty(30);
+        if (world.waterDirty.length) world.processWaterDirty(4);
+        if (!world.dirty.length && !world.loading.length && !world.waterDirty.length) return true;
+      }
+      return !world.dirty.length && !world.loading.length && !world.waterDirty.length;
+    }
+
+    function replayViewInfo() {
+      const p = replayPlay;
+      if (p) {
+        return `PLAYBACK ${p.t.toFixed(1)}s / ${p.replay.dur.toFixed(1)}s · ${p.speed}×`;
+      }
+      const x = player.pos.x, y = player.pos.y, z = player.pos.z;
+      const dir = ((player.yaw * 180 / Math.PI) % 360 + 360) % 360;
+      return `X ${x.toFixed(1)}  Y ${y.toFixed(1)}  Z ${z.toFixed(1)} · ${dir.toFixed(0)}° · DAY ${clock.day}`;
+    }
+
+    const replayUI = createReplayUI({
+      state: () => ({
+        recording: !!replayRec,
+        recT: replayRec ? replayNow() : 0,
+        playing: !!replayPlay,
+        t: replayPlay ? replayPlay.t : 0,
+        dur: replayPlay ? replayPlay.replay.dur : 0,
+        speed: replayPlay ? replayPlay.speed : 1,
+        exporting: !!replayExport,
+        exportPct: replayExportProgress(),
+      }),
+      list: listReplays,
+      startRecording: startReplayRecording,
+      stopRecording: () => { void stopReplayRecording(); },
+      play: (id) => { replayUI.hide(); void startReplayPlayback(id); },
+      remove: async (id) => { await idbRemove(REPLAY_KEY + id); replayUI.refresh(); },
+      exportVideo: (id, opts) => { replayUI.hide(); void exportReplayVideo(id, opts); },
+      close: () => { replayUI.hide(); setOverlay(true); },
+      togglePlay: () => { if (replayPlay) replayPlay.playing = !replayPlay.playing; },
+      cycleSpeed: () => {
+        if (!replayPlay) return;
+        const i = REPLAY_SPEEDS.indexOf(replayPlay.speed);
+        replayPlay.speed = REPLAY_SPEEDS[(i + 1) % REPLAY_SPEEDS.length];
+      },
+      seek: (frac) => { if (replayPlay) seekReplay(frac * replayPlay.replay.dur); },
+      exit: () => exitReplay(),
+      viewInfo: replayViewInfo,
+    });
+
+    const replayBtn = document.getElementById('replayBtn');
+    const replayRecEl = document.getElementById('replayRec');
+    const replayRecTimeEl = document.getElementById('replayRecTime');
+    function syncReplayButton() {
+      if (!replayBtn) return;
+      replayBtn.classList.toggle('hidden', !replayEnabled());
+    }
+    syncReplayButton();
+    onSettingsChange((id) => { if (id === 'replay') syncReplayButton(); });
+    replayBtn?.addEventListener('click', () => {
+      if (!replayEnabled()) return;
+      unlockPointer();
+      setOverlay(false);
+      replayUI.show();
+    });
+
 
 
     const _loopChan = new MessageChannel();
@@ -10006,16 +12945,18 @@
 
     function frame(now) {
       scheduleNextFrame();
+      const _fStart = performance.now();
 
       renderer.info.autoReset = false;
       renderer.info.reset();
+      if (prayOpen) paintPray();
 
 
       if (location.search.includes('debug')) {
         window.__game = {
           inv, ITEMS, give, torches, addTorch, tryTorchPlace, doPlace, world, player,
           waterAt: (x, y, z) => world.waterAt(x, y, z), useWater: (x, y, z, a) => world.useWater(x, y, z, a),
-          save: () => world.save(player),
+          save: () => { void world.save(player); },
           biomeAt, B,
           teleport(x, z) {
             const y = world.surfaceY(x, z, Math.ceil(terrainTrend(x + WORLD_SEED, z + WORLD_SEED)) + 12);
@@ -10097,14 +13038,25 @@
         }
       }
 
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const exporting = !!replayExport;
+      const exportSim = exporting && replayExport.needsSim;
+      const dt = exporting
+        ? (exportSim ? replayExport.step : 0)
+        : Math.min(0.05, (now - last) / 1000);
+      if (exporting && exportSim) replayExport.needsSim = false;
       last = now;
-      playTime += dt;
+      tickTreeShake(dt);
+      const paused = !locked && !replayPlay && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
+      if (!paused) playTime += dt;
       fpsSmooth += ((1 / Math.max(dt, 1e-4)) - fpsSmooth) * 0.08;
 
-
+      if (!paused) {
       const _pMove = performance.now();
-      if (!invOpen && !cmdOpen && !workbenchUI.opened && !mapSystem?.isOpen()) { movePlayer(dt); updateBreath(dt); }
+      if (!invOpen && !cmdOpen && !workbenchUI.opened && !skylineSystem?.isOpen() && !mapSystem?.isOpen() && !replayPlay) {
+        movePlayer(dt); updateBreath(dt);
+      } else {
+        player.vel.x = 0; player.vel.z = 0;
+      }
       perf.move += performance.now() - _pMove;
 
 
@@ -10126,6 +13078,7 @@
       if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
       if (cigModel) cigModel.visible = smokeTime > 0;
       machineSystem?.update(dt);
+      skylineSystem?.update(dt);
       if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
       updateVitals(dt);
       updateGuide(dt);
@@ -10139,14 +13092,28 @@
       if (radRate <= 0.01) radFreeT += dt; else radFreeT = 0;
       if (radFreeT >= TUNING.RAD_CALM_DELAY) inv.dose = Math.max(0, inv.dose - TUNING.RAD_DECAY * dt);
       inv.dose += radRate * dt;
-      if (inv.dose >= TUNING.RAD_LETHAL_DOSE) die();
+      if (inv.dose >= TUNING.RAD_LETHAL_DOSE && !replayPlay) die();
       if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
       if (deathT > 0) deathT = Math.max(0, deathT - dt);
       if (noticeT > 0) noticeT = Math.max(0, noticeT - dt);
 
 
-      eyeCur += ((sliding ? 1.02 : player.eye) - eyeCur) * Math.min(1, dt * 10);
-      slidePitch += ((sliding ? 0.14 : 0) - slidePitch) * Math.min(1, dt * 8);
+      // A replay drives the camera: the recorded path replaces the player's
+      // own movement, and the recorded clock replaces the running one.
+      if (replayPlay) updateReplayPlayback(dt);
+      else if (replayRec) {
+        replayRecT += dt;
+        const held = inv.hot[inv.sel];
+        pushFrame(replayRec, replayRecT, player.pos.x, player.pos.y, player.pos.z,
+          player.yaw, player.pitch, clock.t, held ? held.id : null, eyeCur, slidePitch);
+      }
+
+      if (replayPlay) {
+        // eyeCur/slidePitch come from the replay sample
+      } else {
+        eyeCur += ((sliding ? 1.02 : player.eye) - eyeCur) * Math.min(1, dt * 10);
+        slidePitch += ((sliding ? 0.14 : 0) - slidePitch) * Math.min(1, dt * 8);
+      }
       const speed = Math.hypot(player.vel.x, player.vel.z);
       const localRight = player.vel.x * Math.cos(player.yaw) - player.vel.z * Math.sin(player.yaw);
       const moveLean = Math.max(-1, Math.min(1, localRight / 5.5));
@@ -10165,6 +13132,9 @@
         player.pos.x + (Math.random() - 0.5) * shake,
         camY + (movingGrounded ? Math.abs(Math.sin(cameraBob)) * 0.035 : 0) + landingOffset + (Math.random() - 0.5) * shake,
         player.pos.z + (Math.random() - 0.5) * shake);
+      // Slide/crouch isn't in the replay; keep the view from dipping into
+      // the ground when a slide was recorded.
+      if (replayPlay) camera.position.y = Math.max(camera.position.y, player.pos.y + 0.25);
       camera.rotation.y = player.yaw + (Math.random() - 0.5) * shake * 0.5;
       camera.rotation.x = player.pitch + slidePitch - landingOffset * 0.24 + (Math.random() - 0.5) * shake * 0.5;
 
@@ -10187,15 +13157,20 @@
 
 
       const _pWorld = performance.now();
+      if (WORLD_TERRAIN === 'realistic') realisticTerrain().recenter(player.pos.x + WORLD_SEED, player.pos.z + WORLD_SEED);
       world.update(player.pos.x, player.pos.y, player.pos.z);
       farTerrain.update(player.pos.x, player.pos.z);
-      perf.world += performance.now() - _pWorld;
+      const _worldMs = performance.now() - _pWorld;
+      perf.world += _worldMs;
       vegPerf.frames++;
       const _pVeg = performance.now();
       vegFalling(dt);
       vegPerf.anim += performance.now() - _pVeg;
       updateChop(dt);
       industrialUpdate(player.pos.x, player.pos.z);
+      } else {
+        world.updateJobs(0);
+      }
 
       const submerged = world.isUnderwater(camera.position.x, camera.position.y, camera.position.z);
       waterSimTimer += dt;
@@ -10211,8 +13186,9 @@
 
 
       const _pDirty = performance.now();
-      world.processDirty(3);
-      perf.dirty += performance.now() - _pDirty;
+      world.processDirty(5);
+      const _dirtyFrameMs = performance.now() - _pDirty;
+      perf.dirty += _dirtyFrameMs;
       const _pW = performance.now();
       world.processWaterDirty(1);
       perf.wdirty += performance.now() - _pW;
@@ -10255,6 +13231,16 @@
           wrappers.splice(i, 1);
         }
       }
+
+      updateChickenSpawns(dt);
+      for (let i = chickens.length - 1; i >= 0; i--) {
+        const c = chickens[i];
+        c.update(dt, player.pos);
+        if (c.dead || c.pos.distanceTo(player.pos) > CHICKEN.despawn) {
+          c.dispose();
+          chickens.splice(i, 1);
+        }
+      }
       perf.entities += performance.now() - _pEnt;
 
 
@@ -10266,7 +13252,15 @@
       const nominalFar = viewRadius * CHUNK_SIZE;
       const horizon = farTerrain.outer;
       const visFar = horizon > 0 ? Math.min(horizon, nominalFar * 1.1) : nominalFar;
-      camera.far = Math.max(400, horizon > 0 ? Math.min(horizon * 1.02, nominalFar * 1.1) : nominalFar * 1.1);
+      // The far plane has to be pushed into the projection matrix, or the
+      // camera keeps the plane it was built with (400 m) and the world is
+      // clipped a few hundred metres out — which is why changing the FOV
+      // "fixed" the horizon: that path rebuilds the projection.
+      const far = Math.max(400, horizon > 0 ? Math.min(horizon * 1.02, nominalFar * 1.1) : nominalFar * 1.1);
+      if (far !== camera.far) {
+        camera.far = far;
+        camera.updateProjectionMatrix();
+      }
       const baseFar = visFar;
       const baseNear = horizon > 0 ? DETAIL_CHUNK_RADIUS * CHUNK_SIZE : nominalFar * 0.6;
 
@@ -10281,6 +13275,9 @@
       clouds.visible = uwT < 0.85;
       sunDisc.material.opacity = 0.95 * (1 - uwT) * sunVis;
       sunGlow.material.opacity = 0.25 * (1 - uwT) * sunVis;
+      sunHalo.material.opacity = 0.25 * (1 - uwT) * sunVis;
+      moonDisc.material.opacity = 0.95 * (1 - uwT) * moonVis;
+      moonGlow.material.opacity = 0.7 * (1 - uwT) * moonVis;
 
 
       waterUniforms.uTime.value = now / 1000;
@@ -10316,11 +13313,25 @@
       sun.position.copy(camera.position).addScaledVector(SUN_DIR, 80);
       sun.target.position.copy(camera.position);
       sun.target.updateMatrixWorld();
-      const sunAt = new THREE.Vector3().copy(camera.position).addScaledVector(SUN_DIR, 280);
+      // The sky bodies sit at a fixed distance from the camera, like the old
+      // sun disc: near enough to be inside the far plane, far enough that a
+      // mountain in front of them hides them.
+      const skyDist = 280;
+      const sunAt = new THREE.Vector3().copy(camera.position).addScaledVector(SUN_DIR, skyDist);
       sunDisc.position.copy(sunAt);
       sunGlow.position.copy(sunAt);
+      sunHalo.position.copy(sunAt);
       sunDisc.lookAt(camera.position);
       sunGlow.lookAt(camera.position);
+      sunHalo.lookAt(camera.position);
+      const moonAt = new THREE.Vector3().copy(camera.position).addScaledVector(MOON_DIR, skyDist);
+      moonDisc.position.copy(moonAt);
+      moonGlow.position.copy(moonAt);
+      moonDisc.lookAt(camera.position);
+      moonGlow.lookAt(camera.position);
+      moonLight.position.copy(camera.position).addScaledVector(MOON_DIR, 80);
+      moonLight.target.position.copy(camera.position);
+      moonLight.target.updateMatrixWorld();
       clouds.position.set(player.pos.x, 88, player.pos.z);
       cloudUniforms.uTime.value = now / 1000;
 
@@ -10360,29 +13371,154 @@
         panoRequested = false;
         capturePanorama();
       }
-      perf.render += performance.now() - _pRender;
+      // Video export: wait for the world to finish building this replay
+      // time, then capture exactly one frame per export step at the chosen
+      // framerate instead of sampling the PC's realtime rate.
+      if (exporting) {
+        const ready = !world.dirty.length && !world.loading.length && !world.waterDirty.length
+          ? true : settleWorldForExport(80);
+        if (ready && replayExport && replayPlay) {
+          const ex = replayExport;
+          ex.c2d.drawImage(renderer.domElement, 0, 0, ex.w, ex.h);
+          // the DOM crosshair is not part of the canvas capture
+          const cx = ex.w / 2, cy = ex.h / 2, g = ex.c2d;
+          g.strokeStyle = 'rgba(255,255,255,0.9)';
+          g.lineWidth = Math.max(1, Math.round(ex.h / 720));
+          const cs = Math.max(6, Math.round(ex.h / 90));
+          const gap = Math.max(3, Math.round(cs / 3));
+          g.beginPath();
+          g.moveTo(cx - cs, cy); g.lineTo(cx - gap, cy);
+          g.moveTo(cx + gap, cy); g.lineTo(cx + cs, cy);
+          g.moveTo(cx, cy - cs); g.lineTo(cx, cy - gap);
+          g.moveTo(cx, cy + gap); g.lineTo(cx, cy + cs);
+          g.stroke();
+          ex.track?.requestFrame?.();
+          if (replayPlay.t >= replayPlay.replay.dur - 1e-6) {
+            finishReplayExport();
+          } else {
+            replayPlay.t = Math.min(replayPlay.replay.dur, replayPlay.t + ex.step);
+            ex.needsSim = true;
+          }
+        }
+      }
+      const _renderMs = performance.now() - _pRender;
+      perf.render += _renderMs;
       mapSystem?.setMinimapVisible(locked && !mapSystem.isOpen());
       mapSystem?.update(dt);
+      paintGainCard(now);
       updateHud(dt);
+      replayUI?.paint();
+      if (replayRecEl) {
+        const on = !!replayRec && !replayPlay;
+        replayRecEl.classList.toggle('hidden', !on);
+        if (on && replayRecTimeEl) replayRecTimeEl.textContent = formatTime(replayNow());
+      }
+
+      const _frameMs = now - lastFrameAt;
+      lastFrameAt = now;
+      const cp = window.__chunkPerf || {};
+      const dr = (cp.rebuildN || 0) - lagSheet.lastRebuildN;
+      const dlN = (cp.loadN || 0) - lagSheet.lastLoadN;
+      lagSheet.lastRebuildN = cp.rebuildN || 0;
+      lagSheet.lastLoadN = cp.loadN || 0;
+      const wMs = +((typeof _worldMs === 'number' ? _worldMs : 0)).toFixed(1);
+      const rMs = +((typeof _renderMs === 'number' ? _renderMs : 0)).toFixed(1);
+      const dMs = +((typeof _dirtyFrameMs === 'number' ? _dirtyFrameMs : 0)).toFixed(1);
+      const workMs = +(performance.now() - _fStart).toFixed(1);
+      const sample = {
+        t: +now.toFixed(0),
+        ms: +_frameMs.toFixed(1),
+        workMs,
+        idleMs: +(Math.max(0, _frameMs - workMs)).toFixed(1),
+        dirty: world.dirty.length,
+        loading: world.loading.length,
+        rebuild: dr,
+        load: dlN,
+        worldMs: wMs,
+        renderMs: rMs,
+        dirtyMs: dMs,
+        otherMs: +(Math.max(0, workMs - wMs - rMs - dMs)).toFixed(1),
+      };
+      lagSheet.frames.push(sample);
+      if (lagSheet.frames.length > 600) lagSheet.frames.splice(0, lagSheet.frames.length - 600);
+      if (_frameMs > 34 || dr > 0 || dlN > 5) {
+        lagSheet.events.push(sample);
+        if (lagSheet.events.length > 400) lagSheet.events.splice(0, lagSheet.events.length - 400);
+      }
+    }
+
+    async function vegPrewarm(px, pz, onProgress = () => {}) {
+      const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      vegUpdate(px, pz);
+      for (let i = 0; i < 4000; i++) {
+        if (_vegStreamTask) vegStreamStep(8);
+        else { vegUpdate(px, pz); if (!_vegStreamTask) break; }
+        // Flush dirty instance updates
+        for (const sp of VEG_SPECIES) {
+          if (!sp.dirty) continue;
+          vegUpdateInstances(sp);
+          sp.dirty = false;
+        }
+        if ((i & 3) === 0) {
+          onProgress(_vegStreamTask ? 0.5 : 1);
+          await nextFrame();
+        }
+      }
+      for (const sp of VEG_SPECIES) {
+        if (sp.dirty) { vegUpdateInstances(sp); sp.dirty = false; }
+      }
+      onProgress(1);
     }
 
     maybeShowIntro();
     window.__NUCLEARISM_PREGEN_PROGRESS__ = 0;
     window.__NUCLEARISM_READY_COMPLETE__ = false;
     window.__NUCLEARISM_HAS_FAR_TERRAIN__ = viewRadius > DETAIL_CHUNK_RADIUS;
+    window.__NUCLEARISM_LOAD_STATUS__ = 'Generating spawn terrain...';
     const hasFarTerrain = window.__NUCLEARISM_HAS_FAR_TERRAIN__;
+    // The first-run intro sits over the loading screen, so its own button
+    // carries the progress the loading screen behind it shows.
+    const setIntroProgress = (p) => {
+      if (!introBtn || !introBtn.disabled) return;
+      const pct = Math.max(0, Math.min(99, Math.floor(p * 100)));
+      introBtn.textContent = `LOADING ${pct}%`;
+    };
     window.__NUCLEARISM_READY__ = world.prewarm(
       player.pos.x,
       player.pos.y,
       player.pos.z,
-      (progress) => { window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? progress * 0.2 : progress; },
-    ).then(() => farTerrain.prewarm(
-      player.pos.x,
-      player.pos.z,
-      (progress) => { window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? 0.2 + progress * 0.8 : progress; },
-    )).then(() => {
+      (progress) => {
+        window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? progress * 0.15 : progress * 0.7;
+        window.__NUCLEARISM_LOAD_STATUS__ = 'Generating spawn terrain...';
+        setIntroProgress(window.__NUCLEARISM_PREGEN_PROGRESS__);
+      },
+    ).then(() => {
+      window.__NUCLEARISM_LOAD_STATUS__ = 'Growing vegetation...';
+      return vegPrewarm(
+        player.pos.x,
+        player.pos.z,
+        (progress) => {
+          window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? 0.15 + progress * 0.1 : 0.7 + progress * 0.3;
+          window.__NUCLEARISM_LOAD_STATUS__ = 'Growing vegetation...';
+          setIntroProgress(window.__NUCLEARISM_PREGEN_PROGRESS__);
+        },
+      );
+    }).then(() => {
+      window.__NUCLEARISM_LOAD_STATUS__ = hasFarTerrain ? 'Generating distant terrain...' : 'Finalizing world...';
+      return farTerrain.prewarm(
+        player.pos.x,
+        player.pos.z,
+        (progress) => {
+          window.__NUCLEARISM_PREGEN_PROGRESS__ = hasFarTerrain ? 0.25 + progress * 0.75 : 1;
+          window.__NUCLEARISM_LOAD_STATUS__ = hasFarTerrain ? 'Generating distant terrain...' : 'Finalizing world...';
+          setIntroProgress(window.__NUCLEARISM_PREGEN_PROGRESS__);
+        },
+      );
+    }).then(() => {
+      window.__NUCLEARISM_LOAD_STATUS__ = 'Finalizing world...';
       scheduleNextFrame();
       window.__NUCLEARISM_READY_COMPLETE__ = true;
+      if (introBtn && introBtn.disabled) { introBtn.textContent = 'ENTER THE ZONE'; introBtn.disabled = false; }
     });
 
 
@@ -10401,12 +13537,19 @@
     });
 
 
-    setInterval(() => {
-      if (!wipeSave && (world.field.edits.size > 0 || (mapSystem && mapSystem.seen.size > 0))) world.save(player);
-    }, 12000);
+    const saveNow = async (reason) => {
+      if (wipeSave || replayPlay) return false;
+      const ok = await world.save(player);
+      if (reason) console.info(`[save] trigger=${reason} ok=${ok}`);
+      return ok;
+    };
 
-    addEventListener('beforeunload', () => {
-      if (!wipeSave) world.save(player);
+    setInterval(() => { void saveNow('interval'); }, 12000);
+
+    addEventListener('beforeunload', () => { void saveNow('beforeunload'); });
+    addEventListener('pagehide', () => { void saveNow('pagehide'); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void saveNow('hidden');
     });
 
 

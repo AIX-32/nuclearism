@@ -8,9 +8,8 @@ import { KIND as ROOF, ITEMS as ROOF_ITEMS, RECIPES as ROOF_RECIPES } from './ro
 const ok = [];
 function check(cond, msg) { ok.push([!!cond, msg]); }
 
-// The thickness of a roof, in metres: it is the roof's own half metre of
-// material that stops the fallout coming down from above.
-const TH = ROOF.cells(0, 0, 0)[0][1].maxY;
+// The full mesh height, from the soffit to the ridge.
+const TH = ROOF.scale().y;
 const W = 3, D = 3;
 
 // --- the roof cells ---------------------------------------------------------
@@ -24,7 +23,17 @@ check(cells.every(([k, b]) => {
   return b.minX >= cx && b.maxX <= cx + 1 && b.minY >= cy && b.maxY <= cy + 1
     && b.minZ >= cz && b.maxZ <= cz + 1;
 }), 'every roof cell box stays inside its cell');
-check(cells.every(([, b]) => Math.abs((b.maxY - b.minY) - TH) < 1e-9), `every roof cell slice is ${TH} m thick`);
+check(cells.every(([, b]) => b.minY === Y && b.maxY > Y && b.maxY <= Y + TH),
+  'every roof box follows the soffit and stays below the ridge');
+check(cells.some(([, b]) => b.maxY < Y + TH), 'sloped eave cells do not claim full-height invisible air');
+check(cells.some(([, b]) => b.maxY === Y + TH), 'ridge cells reach the top of the roof');
+for (const rot of [0, 1]) {
+  const rc = ROOF.cells(X, Y, Z, rot);
+  const high = rc.filter(([, b]) => b.maxY === Y + TH).map(([k]) => k.split(',').map(Number));
+  check(high.length === W, `rot ${rot} has one full-height ridge row`);
+  check(high.every(([cx, , cz]) => (rot ? cx === X + 1 : cz === Z + 1)),
+    `rot ${rot} puts the collision ridge under the mesh ridge`);
+}
 check(new Set(cells.map(([k]) => k.split(',')[0])).size === W, 'the roof spans three x cells');
 check(new Set(cells.map(([k]) => k.split(',')[2])).size === D, 'the roof spans three z cells');
 check(cells.every(([k]) => k.split(',')[1] === String(Y)), 'the roof sits in a single level');
@@ -45,6 +54,7 @@ check(1 - Math.pow(BUILD_TIERS.wood.transmission, TH) < 0.5, 'a wood roof only h
 function makeSys(pieces = [], ground = new Set(), height = -100) {
   const map = new Map();
   const sys = {
+    cells: map,
     occupied: (x, y, z) => map.has(`${x},${y},${z}`),
     groundAt: (x, y, z) => ground.has(`${x},${y},${z}`),
     surfaceHeight: () => height,
@@ -65,7 +75,7 @@ function makeSys(pieces = [], ground = new Set(), height = -100) {
       return top;
     },
   };
-  for (const p of pieces) for (const [k, b] of p) map.set(k, b);
+  for (const p of pieces) for (const [k, b] of p) map.set(k, { box: b });
   return sys;
 }
 
@@ -115,6 +125,8 @@ check(ROOF.support(row, X, Y + 5, Z), 'a roof on a single row of ground is suppo
 // Nothing under the panel at all.
 const bare = makeSys([], new Set(), -100);
 check(!ROOF.support(bare, X, Y + 5, Z), 'a floating roof is refused');
+const terrainGap = makeSys([], new Set(), Y + 4);
+check(!ROOF.support(terrainGap, X, Y + 5, Z), 'terrain one metre below the soffit is not support');
 
 // --- the mesh ---------------------------------------------------------------
 const FAKE_THREE = {
@@ -136,24 +148,45 @@ for (let i = 0; i < pos.length; i += 3) {
   minY = Math.min(minY, pos[i + 1]); maxY = Math.max(maxY, pos[i + 1]);
   minZ = Math.min(minZ, pos[i + 2]); maxZ = Math.max(maxZ, pos[i + 2]);
 }
-check(Math.abs(minY) < 1e-9 && Math.abs(maxY - 1) < 1e-9, 'the roof mesh runs from its soffit to its ridge');
-check(Math.abs(minX) < 1e-9 && Math.abs(maxX - 1) < 1e-9, 'the roof mesh spans its unit box in x');
-check(Math.abs(minZ) < 1e-9 && Math.abs(maxZ - 1) < 1e-9, 'the roof mesh spans its unit box in z');
+check(Math.abs(minY + 0.5) < 1e-9 && Math.abs(maxY - 0.5) < 1e-9,
+  'the roof mesh is centred from its soffit to its ridge');
+check(Math.abs(minX + 0.5) < 1e-9 && Math.abs(maxX - 0.5) < 1e-9, 'the roof mesh spans its centred unit box in x');
+check(Math.abs(minZ + 0.5) < 1e-9 && Math.abs(maxZ - 0.5) < 1e-9, 'the roof mesh spans its centred unit box in z');
 check(pos.length % 9 === 0, 'the roof mesh is made of whole triangles');
 check(pos.length / 9 >= 8, 'the roof mesh has a body, not just a slab');
 // The ridge is a flat strip, so there is something to stand on.
 const ridgeZ = new Set();
-for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] - 1) < 1e-9) ridgeZ.add(pos[i + 2].toFixed(3));
+for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] - 0.5) < 1e-9) ridgeZ.add(pos[i + 2].toFixed(3));
 check(ridgeZ.size === 2, 'the roof has a flat ridge along the middle');
 check((Math.max(...[...ridgeZ].map(Number)) - Math.min(...[...ridgeZ].map(Number))) * 3 >= 0.9,
   'the ridge strip is wide enough for the player to stand on');
 const eaveZ = new Set();
-for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] - 0) < 1e-9) eaveZ.add(pos[i + 2].toFixed(3));
+for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] + 0.5) < 1e-9) eaveZ.add(pos[i + 2].toFixed(3));
 check(eaveZ.size === 2, 'the roof has a flat soffit to sit on');
 const scale = ROOF.scale(X, Y, Z);
 check(Math.abs(scale.y - TH) < 1e-9, 'the mesh is scaled to the thickness of the roof');
 const center = ROOF.center(X, Y, Z);
 check(Math.abs(center.y - (Y + TH / 2)) < 1e-9, 'the mesh sits on the cell it belongs to');
+
+// Compose the local geometry exactly as BuildingSystem.rebuild() does. The
+// rendered shape and its collision cells must occupy the same world box.
+for (const rot of [0, 1]) {
+  const rc = ROOF.cells(X, Y, Z, rot);
+  const angle = ROOF.rotY(rot), co = Math.cos(angle), si = Math.sin(angle);
+  const world = [];
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i] * scale.x, y = pos[i + 1] * scale.y, z = pos[i + 2] * scale.z;
+    world.push({ x: center.x + x * co + z * si, y: center.y + y, z: center.z - x * si + z * co });
+  }
+  check(world.every((p) => p.x >= X - 1e-9 && p.x <= X + W + 1e-9
+    && p.y >= Y - 1e-9 && p.y <= Y + TH + 1e-9
+    && p.z >= Z - 1e-9 && p.z <= Z + D + 1e-9),
+  `rot ${rot} renders inside the declared 3 x 3 footprint`);
+  check(world.every((p) => rc.some(([, b]) => p.x >= b.minX - 1e-9 && p.x <= b.maxX + 1e-9
+    && p.y >= b.minY - 1e-9 && p.y <= b.maxY + 1e-9
+    && p.z >= b.minZ - 1e-9 && p.z <= b.maxZ + 1e-9)),
+  `rot ${rot} collision boxes contain the transformed mesh`);
+}
 
 // --- the items --------------------------------------------------------------
 for (const tier of ['wood', 'brick', 'concrete', 'shielded']) {

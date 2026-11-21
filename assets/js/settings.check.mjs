@@ -4,17 +4,63 @@
 
 import assert from 'node:assert/strict';
 
-const store = { data: {} };
-globalThis.localStorage = {
-  getItem: (k) => (k in store.data ? store.data[k] : null),
-  setItem: (k, v) => { store.data[k] = String(v); },
-  removeItem: (k) => { delete store.data[k]; },
+const mem = { kv: {} };
+
+function makeReq(result) {
+  const req = { result, error: null, onsuccess: null, onerror: null };
+  queueMicrotask(() => req.onsuccess && req.onsuccess({ target: req }));
+  return req;
+}
+
+function makeTx() {
+  const tx = { error: null, oncomplete: null, onerror: null, onabort: null };
+  queueMicrotask(() => tx.oncomplete && tx.oncomplete());
+  return tx;
+}
+
+globalThis.indexedDB = {
+  open() {
+    const req = { result: null, error: null, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
+    queueMicrotask(() => {
+      const db = {
+        objectStoreNames: { contains: (n) => n === 'kv' },
+        createObjectStore() {},
+        onversionchange: null,
+        close() {},
+        transaction() {
+          const tx = makeTx();
+          return {
+            objectStore() {
+              return {
+                get(key) { return makeReq(Object.prototype.hasOwnProperty.call(mem.kv, key) ? mem.kv[key] : undefined); },
+                put(val, key) { mem.kv[key] = val; return makeReq(key); },
+                delete(key) { delete mem.kv[key]; return makeReq(undefined); },
+              };
+            },
+            set oncomplete(fn) { tx.oncomplete = fn; },
+            get oncomplete() { return tx.oncomplete; },
+            set onerror(fn) { tx.onerror = fn; },
+            get onerror() { return tx.onerror; },
+            set onabort(fn) { tx.onabort = fn; },
+            get onabort() { return tx.onabort; },
+          };
+        },
+      };
+      req.result = db;
+      if (req.onupgradeneeded) req.onupgradeneeded({ target: req });
+      req.onsuccess && req.onsuccess({ target: req });
+    });
+    return req;
+  },
 };
+
 globalThis.document = { addEventListener() {} };
+
+const flush = () => new Promise((r) => setTimeout(r, 10));
 
 let n = 0;
 async function load(seed) {
-  store.data = seed ? { 'idte.settings.v1': JSON.stringify(seed) } : {};
+  mem.kv = seed ? { 'idte.settings.v1': seed } : {};
   return import(`./settings.js?case=${n++}`);
 }
 
@@ -63,7 +109,8 @@ async function load(seed) {
   S.onSettingsChange((id, v) => seen.push([id, v]));
   S.setSetting('invertY', true);
   assert.deepEqual(seen, [['invertY', true]]);
-  assert.equal(JSON.parse(store.data['idte.settings.v1']).invertY, true);
+  await flush();
+  assert.equal(mem.kv['idte.settings.v1'].invertY, true);
 }
 
 // a slider drag applies without writing, and persists when asked
@@ -71,9 +118,11 @@ async function load(seed) {
   const S = await load(null);
   S.setSetting('sensitivity', 1.5, false);
   assert.equal(S.getSetting('sensitivity'), 1.5);
-  assert.equal(store.data['idte.settings.v1'], undefined);
+  await flush();
+  assert.equal(mem.kv['idte.settings.v1'], undefined);
   S.setSetting('sensitivity', 1.5, true);
-  assert.equal(JSON.parse(store.data['idte.settings.v1']).sensitivity, 1.5);
+  await flush();
+  assert.equal(mem.kv['idte.settings.v1'].sensitivity, 1.5);
 }
 
 // reset restores the defaults and notifies
@@ -81,10 +130,12 @@ async function load(seed) {
   const S = await load(null);
   S.setSetting('volume', 0.2);
   S.setSetting('renderDistance', 64);
+  await flush();
   S.resetSettings();
   assert.equal(S.getSetting('volume'), 1);
   assert.equal(S.getSetting('renderDistance'), 3);
-  assert.equal(JSON.parse(store.data['idte.settings.v1']).volume, 1);
+  await flush();
+  assert.equal(mem.kv['idte.settings.v1'], undefined);
 }
 
 console.log('settings.check: ok');

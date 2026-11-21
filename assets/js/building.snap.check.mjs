@@ -84,6 +84,22 @@ check([...roofCells].some((k) => {
 }), 'the roof lies over the wall, one level above it');
 check(![...roofCells].some((k) => wallCells.has(k)), 'the roof does not share a cell with the wall');
 
+// Continuous body collision and placement use the same boxes. Contact is not
+// penetration, including where floating point arithmetic lands on an edge.
+const body = { x: 3.5, y: 0.5, z: 3.5, radius: 0.3, height: 1.8 };
+check(B.overlapsBody('floor', 3, 0, 3, 0, body), 'a new deck cannot be placed through a body');
+check(!!B.place('floor', 'wood', 3, 0, 3, 0), 'the collision-test deck is placed');
+check(B.collidesBody(3.5, 0.5, 3.5, 0.3, 1.8), 'body collision does not miss a low deck');
+check(!B.collidesBody(3.5, 1, 3.5, 0.3, 1.8), 'standing on a deck is not penetration');
+check(!B.collidesBody(12.7, 0.5, 30.5, 0.3, 1.8), 'touching a wall end is not penetration');
+check(B.collidesBody(12.7001, 0.5, 30.5, 0.3, 1.8), 'a cylinder edge cannot enter the wall');
+
+// New placement rejection never deletes legacy bases while loading a save.
+const saved = B.serialize();
+const restored = new BuildingSystem({ THREE: stubThree(), scene: { add() { } }, world: flatWorld() });
+restored.restore(saved);
+check(restored.pieces.size === B.pieces.size, 'strict placement does not discard saved pieces');
+
 let failed = 0;
 for (const [cond, msg] of ok) {
   if (!cond) { failed++; console.error('FAIL:', msg); }

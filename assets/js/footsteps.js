@@ -126,6 +126,23 @@ export function createFootsteps(base = 'assets/audio/footsteps') {
       g.connect(c.destination);
       src.start();
     },
+    mine(category, volume = 0.55) {
+      const c = audio();
+      if (!c) return;
+      const pool = (pools[category] && pools[category].length ? pools[category] : pools.dirt) || [];
+      if (!pool.length) return;
+      let buf = pool[(Math.random() * pool.length) | 0];
+      if (pool.length > 1 && buf === last) buf = pool[(pool.indexOf(buf) + 1) % pool.length];
+      last = buf;
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = 0.52 + Math.random() * 0.12;
+      const g = c.createGain();
+      g.gain.value = volume * (0.9 + Math.random() * 0.15);
+      src.connect(g);
+      g.connect(c.destination);
+      src.start();
+    },
   };
 }
 

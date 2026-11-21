@@ -22,6 +22,7 @@
   </div>
   <div id="hotbar"></div>
   <section id="vitals" aria-label="Vitals">
+    <div id="gainCard" aria-live="polite"></div>
     <div class="vital">
       <span class="vl">HP</span>
       <div class="vt hpTrack">
@@ -62,6 +63,11 @@
   <div id="tip">
     <div class="t"></div>
     <div class="b"></div>
+  </div>
+
+  <div id="urgentCard" class="urgent-card" hidden>
+    <div class="urgent-title"></div>
+    <div class="urgent-body"></div>
   </div>
 
   <div id="deathBanner"><span>YOU DIED</span><small>you lost everything you carried</small></div>
@@ -105,6 +111,7 @@
       <header class="achieveHead">
         <span class="achieveTitle">ACHIEVEMENTS</span>
         <span id="achieveCount" class="achieveCount"></span>
+        <span id="achieveTime" class="achieveCount"></span>
         <span class="achieveHint">SCROLL HORIZONTALLY FOR MORE TYPES</span>
         <button id="achieveClose">CLOSE</button>
       </header>
@@ -120,6 +127,60 @@
     </div>
     <div id="achieveTip" class="achieveTip hidden"></div>
   </div>
+
+  <div id="replayPanel" class="hidden" role="dialog" aria-label="Replay">
+    <div class="replayBox">
+      <header class="replayHead">
+        <span class="replayTitle">REPLAY</span>
+        <span id="replayStatus" class="replayStatus">READY</span>
+        <button id="replayClose" class="btn">CLOSE</button>
+      </header>
+      <div class="replayBody">
+        <section class="replayCol">
+          <h3>RECORDING</h3>
+          <div class="replayRow">
+            <button id="replayRecBtn" class="btn">START RECORDING</button>
+          </div>
+          <div class="replayRow">
+            <span id="replayRecInfo" class="replayInfo"></span>
+          </div>
+          <h3>PLAYER VIEW</h3>
+          <div class="replayRow">
+            <span id="replayView" class="replayInfo mono"></span>
+          </div>
+        </section>
+        <section class="replayCol">
+          <h3>SAVED REPLAYS</h3>
+          <div id="replayList" class="replayList"></div>
+        </section>
+        <section class="replayCol">
+          <h3>EXPORT</h3>
+          <div class="replayRow"><span class="replayLbl">RESOLUTION</span><span id="replayRes" class="opts"></span></div>
+          <div class="replayRow"><span class="replayLbl">FRAME RATE</span><span id="replayFps" class="opts"></span></div>
+          <div class="replayRow"><span class="replayLbl">PIXELS</span><span id="replayPix" class="opts"></span></div>
+          <div class="replayRow">
+            <button id="replayExportBtn" class="btn">EXPORT VIDEO</button>
+            <span id="replayExportInfo" class="replayInfo"></span>
+          </div>
+          <p class="replayNote">The export re-renders the replay at the chosen size with the game's own colour depth, dither and radiation filters. PS1 pixels keeps the chunky look; full res keeps only the filters. The video is a webm written to your downloads.</p>
+        </section>
+      </div>
+      <footer class="replayFoot">
+        <span class="replayHint">SPACE PLAY/PAUSE · ARROWS STEP 5s · ESC EXIT · PICK A REPLAY TO EXPORT IT</span>
+      </footer>
+    </div>
+  </div>
+
+  <div id="replayBar" class="hidden">
+    <button id="rbToggle" title="Play / pause">❚❚</button>
+    <span id="rbTime" class="rbTime">0:00</span>
+    <input id="rbSeek" type="range" min="0" max="1000" value="0" />
+    <span id="rbDur" class="rbTime">0:00</span>
+    <button id="rbSpeed" title="Playback speed">1×</button>
+    <button id="rbExit" title="Leave the replay">EXIT</button>
+  </div>
+
+  <div id="replayRec" class="hidden"><b>●</b> REC <span id="replayRecTime">0:00</span></div>
 
   <div id="invPanel" class="hidden">
     <div class="box">
@@ -195,16 +256,65 @@
     </div>
   </div>
 
+  <div id="prayModal" class="hidden" role="dialog" aria-modal="true" aria-label="Pray to 27">
+    <div class="introBox">
+      <h2>PRAY TO 27</h2>
+      <p id="prayStatus"></p>
+      <p id="prayOathPrompt">TYPE "i swear that i trust 27" TO CONTINUE</p>
+      <input id="prayOath" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        placeholder="i swear that i trust 27" />
+      <div id="prayOptions" class="hidden">
+        <div class="prayRow">
+          <input id="prayInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+            placeholder="ITEM NAME" />
+          <input id="prayCount" type="number" min="1" value="1" />
+        </div>
+        <div id="praySug" class="hidden"></div>
+        <button id="prayBtn" class="mbtn primary">PRAY</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="saveFail" class="hidden" role="dialog" aria-modal="true" aria-labelledby="saveFailTitle">
+    <div class="saveFailBox">
+      <h2 id="saveFailTitle">SAVE FAILED</h2>
+      <p id="saveFailMsg">The game could not save to browser storage.</p>
+      <p class="saveFailHint">Download the save file to keep your progress, then free space or try again.</p>
+      <div class="saveFailActions">
+        <button id="saveFailDownload" class="mbtn primary">DOWNLOAD SAVE FILE</button>
+        <button id="saveFailRetry" class="mbtn">TRY AGAIN</button>
+        <button id="saveFailQuit" class="mbtn danger">QUIT ANYWAY</button>
+        <button id="saveFailBack" class="mbtn link">BACK</button>
+      </div>
+    </div>
+  </div>
+
   <div id="menu">
     <canvas id="menuBg"></canvas>
-    <div class="menu-pano-nav">
-      <button class="mbtn" id="panoPrev" title="Previous panorama" aria-label="Previous panorama">&lsaquo;</button>
-      <button class="mbtn" id="panoNext" title="Next panorama" aria-label="Next panorama">&rsaquo;</button>
+    <div class="menu-corner">
+      <div class="menu-pano-nav">
+        <button class="mbtn" id="panoPrev" title="Previous panorama" aria-label="Previous panorama">&lsaquo;</button>
+        <button class="mbtn" id="panoNext" title="Next panorama" aria-label="Next panorama">&rsaquo;</button>
+      </div>
+      <div class="menu-promo" id="menuPromo" aria-label="Links">
+        <div class="menu-promo-title">PROMO</div>
+        <div class="menu-promo-track">
+          <a class="menu-promo-item on" href="https://aix-32.github.io/Pazator/" target="_blank" rel="noopener">
+            <b>PAZATOR</b><span>Local-first tools for large-scale data.</span>
+          </a>
+          <a class="menu-promo-item" href="https://aix-32.github.io/Xyper/" target="_blank" rel="noopener">
+            <b>XYPER</b><span>Portfolio.</span>
+          </a>
+          <a class="menu-promo-item" href="https://discord.gg/jX4Nm9Hq8P" target="_blank" rel="noopener">
+            <b>DISCORD</b><span>Projects including this game.</span>
+          </a>
+        </div>
+      </div>
     </div>
     <div class="menu-panel">
       <section class="menu-view" data-view="home">
         <h1><span class="title-text">NUCLEARISM <span id="splash"></span></span></h1>
-        <p style="font-size: 18px;">Preview 0.12</p>
+        <p style="font-size: 18px;">Preview 0.28</p>
         <div class="menu-actions">
           <button class="mbtn primary" data-act="worlds">START</button>
           <button class="mbtn" data-act="settings">SETTINGS</button>
@@ -229,6 +339,10 @@
         <div class="menu-row" id="createMode">
           <button class="mbtn mode on" data-mode="survival">SURVIVAL</button>
           <button class="mbtn mode" data-mode="sandbox">SANDBOX</button>
+        </div>
+        <div class="menu-row" id="createTerrain">
+          <button class="mbtn mode on" data-terrain="legacy">LEGACY</button>
+          <button class="mbtn mode" data-terrain="realistic">REALISTIC</button>
         </div>
         <button class="mbtn primary" data-act="doCreate">CREATE</button>
         <button class="mbtn link" data-act="worlds">BACK</button>
@@ -256,21 +370,27 @@
   <div id="overlay">
     <div class="panel">
       <div class="view view-loading hidden">
-        <div class="loading-shell">
-          <span class="loading-kicker">ZONE</span>
-          <h1>LOADING</h1>
-          <div class="loading-square" aria-label="loading progress">
-            <div class="loading-square-fill"></div>
-          </div>
-          <div class="loading-status">INITIALIZING</div>
-          <div class="loading-hint">CLICK TO LOCK</div>
+        <div class="loading-top-left">
+          <div class="loading-title">Loading...</div>
+          <div class="loading-status">Initializing...</div>
         </div>
+        <div class="loading-bottom-left">
+          <div class="loading-tip-label">TIP</div>
+          <div class="loading-tip"></div>
+        </div>
+        <div class="loading-bottom-right">
+          <div class="loading-spinner" aria-hidden="true">
+            <div class="loading-spinner-hand"></div>
+          </div>
+        </div>
+        <div class="loading-hint">CLICK TO LOCK</div>
       </div>
       <div class="view view-main">
         <h1>NUCLEARISM</h1>
         <button id="playBtn" class="btn">RESUME</button>
         <button id="manualBtn" class="btn">FIELD MANUAL</button>
         <button id="achievementsBtn" class="btn">ACHIEVEMENTS</button>
+        <button id="replayBtn" class="btn hidden">REPLAY</button>
         <button id="settingsBtn" class="btn">SETTINGS</button>
         <button id="menuBtn" class="btn">MAIN MENU</button>
       </div>

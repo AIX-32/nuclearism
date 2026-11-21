@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chicken Angle Tool</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #111;
+      color: #eee;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      height: 100vh;
+    }
+    #ui {
+      padding: 16px;
+      border-right: 1px solid #333;
+      overflow: auto;
+      background: #161616;
+    }
+    h1 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 0 0 12px; color: #bbb; }
+    .row { margin: 12px 0; }
+    label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    input[type="range"] { width: 100%; }
+    input[type="number"], textarea, button {
+      font: inherit;
+      color: #eee;
+      background: #222;
+      border: 1px solid #444;
+      padding: 6px 8px;
+    }
+    input[type="number"] { width: 100%; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { cursor: pointer; width: 100%; margin-top: 8px; }
+    button:hover { background: #2a2a2a; }
+    textarea {
+      width: 100%;
+      min-height: 180px;
+      resize: vertical;
+      margin-top: 8px;
+    }
+    #status { color: #9cf; margin: 8px 0; min-height: 1.4em; }
+    #view { position: relative; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .hint { font-size: 12px; color: #888; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="ui">
+    <h1>Chicken Angle Tool</h1>
+    <p>Rotate the chicken until it faces the direction you want as "forward", then copy the JSON for me.</p>
+    <div id="status">Loading model…</div>
+
+    <div class="row">
+      <label><span>Yaw (Y)</span><span id="yawDeg">0°</span></label>
+      <input id="yaw" type="range" min="-180" max="180" step="1" value="45">
+      <div class="grid2">
+        <input id="yawNum" type="number" min="-180" max="180" step="1" value="45">
+        <button id="yawReset" type="button">Reset Y</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <label><span>Pitch (X)</span><span id="pitchDeg">0°</span></label>
+      <input id="pitch" type="range" min="-180" max="180" step="1" value="0">
+      <div class="grid2">
+        <input id="pitchNum" type="number" min="-180" max="180" step="1" value="0">
+        <button id="pitchReset" type="button">Reset X</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <label><span>Roll (Z)</span><span id="rollDeg">0°</span></label>
+      <input id="roll" type="range" min="-180" max="180" step="1" value="0">
+      <div class="grid2">
+        <input id="rollNum" type="number" min="-180" max="180" step="1" value="0">
+        <button id="rollReset" type="button">Reset Z</button>
+      </div>
+    </div>
+
+    <div class="row grid2">
+      <button id="copyJson" type="button">Copy JSON</button>
+      <button id="resetAll" type="button">Reset All</button>
+    </div>
+
+    <div class="row">
+      <label for="out"><span>JSON for assistant</span></label>
+      <textarea id="out" readonly></textarea>
+    </div>
+
+    <p class="hint">Drag to orbit, scroll to zoom, right-drag to pan. The green arrow shows world +Z / movement-forward reference; set the chicken so its facing matches how it should move.</p>
+  </div>
+  <div id="view"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const view = document.getElementById('view');
+    const status = document.getElementById('status');
+    const out = document.getElementById('out');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    view.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1b1b);
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+    camera.position.set(1.2, 0.9, 1.2);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.2, 0);
+    controls.update();
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.2));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.4);
+    dir.position.set(2, 4, 2);
+    scene.add(dir);
+    scene.add(new THREE.GridHelper(4, 20, 0x444444, 0x2a2a2a));
+    scene.add(new THREE.AxesHelper(0.4));
+
+    // Reference arrow: world forward direction used by movement (yaw 0 faces +Z in atan2(vx,vz) convention here)
+    const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0.01, 0), 0.8, 0x44dd66, 0.12, 0.08);
+    scene.add(arrow);
+
+    const pivot = new THREE.Group();
+    scene.add(pivot);
+
+    const modelUrl = 'assets/models/animals/chicken.gltf';
+    new GLTFLoader().load(modelUrl, (gltf) => {
+      const root = gltf.scene;
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const s = 0.6 / maxDim;
+      root.scale.setScalar(s);
+      box.setFromObject(root);
+      box.getCenter(center);
+      root.position.sub(center);
+      box.setFromObject(root);
+      root.position.y -= box.min.y;
+      pivot.add(root);
+      status.textContent = 'Model loaded: ' + modelUrl;
+      apply();
+    }, undefined, (err) => {
+      console.error(err);
+      status.textContent = 'Failed to load model: ' + modelUrl;
+    });
+
+    const els = {
+      yaw: document.getElementById('yaw'),
+      pitch: document.getElementById('pitch'),
+      roll: document.getElementById('roll'),
+      yawNum: document.getElementById('yawNum'),
+      pitchNum: document.getElementById('pitchNum'),
+      rollNum: document.getElementById('rollNum'),
+      yawDeg: document.getElementById('yawDeg'),
+      pitchDeg: document.getElementById('pitchDeg'),
+      rollDeg: document.getElementById('rollDeg'),
+    };
+
+    function rad(deg) { return deg * Math.PI / 180; }
+    function round(n) { return Math.round(n * 1000000) / 1000000; }
+
+    function getDeg() {
+      return {
+        x: Number(els.pitch.value),
+        y: Number(els.yaw.value),
+        z: Number(els.roll.value),
+      };
+    }
+
+    function apply() {
+      const d = getDeg();
+      pivot.rotation.set(rad(d.x), rad(d.y), rad(d.z), 'YXZ');
+      els.yawDeg.textContent = d.y + '°';
+      els.pitchDeg.textContent = d.x + '°';
+      els.rollDeg.textContent = d.z + '°';
+      els.yawNum.value = d.y;
+      els.pitchNum.value = d.x;
+      els.rollNum.value = d.z;
+      const json = {
+        modelYawOffsetRadians: round(rad(d.y)),
+        modelYawOffsetDegrees: d.y,
+        rotationRadians: { x: round(rad(d.x)), y: round(rad(d.y)), z: round(rad(d.z)) },
+        rotationDegrees: { x: d.x, y: d.y, z: d.z },
+        note: 'Apply modelYawOffsetRadians (Y/yaw) to Chicken.modelYawOffset and initial mesh.rotation.y in assets/js/game.js'
+      };
+      out.value = JSON.stringify(json, null, 2);
+    }
+
+    function bind(axis, resetId) {
+      const range = els[axis];
+      const num = els[axis + 'Num'];
+      const reset = document.getElementById(resetId);
+      range.addEventListener('input', () => { num.value = range.value; apply(); });
+      num.addEventListener('input', () => { range.value = num.value; apply(); });
+      reset.addEventListener('click', () => { range.value = 0; num.value = 0; apply(); });
+    }
+    bind('yaw', 'yawReset');
+    bind('pitch', 'pitchReset');
+    bind('roll', 'rollReset');
+
+    document.getElementById('resetAll').addEventListener('click', () => {
+      for (const a of ['yaw','pitch','roll']) { els[a].value = 0; els[a+'Num'].value = 0; }
+      apply();
+    });
+
+    document.getElementById('copyJson').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(out.value);
+        status.textContent = 'JSON copied to clipboard.';
+      } catch {
+        out.focus(); out.select();
+        status.textContent = 'Clipboard unavailable; JSON selected for manual copy.';
+      }
+    });
+
+    function resize() {
+      const w = view.clientWidth, h = view.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h || 1;
+      camera.updateProjectionMatrix();
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    (function loop() {
+      requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>

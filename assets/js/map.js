@@ -43,6 +43,7 @@ const MACHINE_COLORS = {
   excavator: '#ff9b3d',
   cable: '#7d7d7d',
   storage: '#cfcfcf',
+  pylon: '#d8e4ff',
 };
 
 // Base building pieces, coloured by material tier.

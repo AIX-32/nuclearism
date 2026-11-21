@@ -1,39 +1,87 @@
-// Doors: a 1 m wide, 3 m tall, 0.25 m thick panel that fills a gap in a wall
-// run. It is solid while closed and passable while open, and it shields
-// radiation while closed (the runtime handles both).
+// Door: a 3 m wide wall panel with a doorway cutout in the middle (1 m wide,
+// 2 m tall at the bottom). It places and snaps like a wall segment so runs stay
+// flush, but the opening is always passable.
 //
-// Like the wall panel, `rot` picks the axis the panel is wide along and which
-// side of its cell the panel hugs, so a door sits flush in a wall run:
-//   rot 0: wide along X, hugs the +Z side of its cell
-//   rot 1: wide along X, hugs the -Z side of its cell
-//   rot 2: wide along Z, hugs the +X side of its cell
-//   rot 3: wide along Z, hugs the -X side of its cell
+// `rot` matches the wall: direction the panel runs and which side of its cell
+// it hugs, so a doorway sits flush in a wall line.
 
-const W = 1, H = 3, TH = 0.25;
+import { anySupport, baseAt } from './placement.js';
+
+const W = 3, H = 3, TH = 0.25;
+const OPEN_W = 1; // middle column
+const OPEN_H = 2; // bottom 2 m
+
+function isOpening(i, j) {
+  const mid = Math.floor((W - OPEN_W) / 2);
+  return i >= mid && i < mid + OPEN_W && j < OPEN_H;
+}
 
 function cells(x, y, z, rot) {
   const r = rot % 4;
   const out = [];
-  for (let j = 0; j < H; j++) {
-    if (r < 2) {
-      const minZ = r === 0 ? z + 1 - TH : z;
-      const maxZ = r === 0 ? z + 1 : z + TH;
-      out.push([`${x},${y + j},${z}`, {
-        minX: x, maxX: x + 1,
-        minY: y + j, maxY: y + j + 1,
-        minZ, maxZ,
-      }]);
-    } else {
-      const minX = r === 2 ? x + 1 - TH : x;
-      const maxX = r === 2 ? x + 1 : x + TH;
-      out.push([`${x},${y + j},${z}`, {
-        minX, maxX,
-        minY: y + j, maxY: y + j + 1,
-        minZ: z, maxZ: z + 1,
-      }]);
+  for (let i = 0; i < W; i++) {
+    for (let j = 0; j < H; j++) {
+      if (isOpening(i, j)) continue;
+      if (r < 2) {
+        const minZ = r === 0 ? z + 1 - TH : z;
+        const maxZ = r === 0 ? z + 1 : z + TH;
+        out.push([`${x + i},${y + j},${z}`, {
+          minX: x + i, maxX: x + i + 1,
+          minY: y + j, maxY: y + j + 1,
+          minZ, maxZ,
+        }]);
+      } else {
+        const minX = r === 2 ? x + 1 - TH : x;
+        const maxX = r === 2 ? x + 1 : x + TH;
+        out.push([`${x},${y + j},${z + i}`, {
+          minX, maxX,
+          minY: y + j, maxY: y + j + 1,
+          minZ: z + i, maxZ: z + i + 1,
+        }]);
+      }
     }
   }
   return out;
+}
+
+function frameGeometry(THREE) {
+  const parts = [];
+  const add = (cx, cy, cz, sx, sy, sz) => {
+    const g = new THREE.BoxGeometry(sx, sy, sz);
+    g.translate(cx, cy, cz);
+    parts.push(g);
+  };
+  // Unit-sized frame (scaled by KIND.scale to 3x3x0.25): left post, right post, top lintel.
+  const pw = (W - OPEN_W) / 2 / W; // 1/3
+  const ph = H / H;                // 1
+  const lw = OPEN_W / W;           // 1/3
+  const lh = (H - OPEN_H) / H;     // 1/3
+  add(-0.5 + pw / 2, 0, 0, pw, ph, 1);
+  add(0.5 - pw / 2, 0, 0, pw, ph, 1);
+  add(0, 0.5 - lh / 2, 0, lw, lh, 1);
+  const pos = [], uv = [], norm = [];
+  for (const g of parts) {
+    const idx = g.index ? g.index.array : null;
+    const p = g.getAttribute('position'), n = g.getAttribute('normal'), u = g.getAttribute('uv');
+    const pa = p.array, na = n.array, ua = u.array;
+    if (idx) {
+      for (let i = 0; i < idx.length; i++) {
+        const vi = idx[i];
+        pos.push(pa[vi * 3], pa[vi * 3 + 1], pa[vi * 3 + 2]);
+        norm.push(na[vi * 3], na[vi * 3 + 1], na[vi * 3 + 2]);
+        uv.push(ua[vi * 2] * 3, ua[vi * 2 + 1] * 3);
+      }
+    } else {
+      for (let i = 0; i < pa.length; i++) pos.push(pa[i]);
+      for (let i = 0; i < na.length; i++) norm.push(na[i]);
+      for (let i = 0; i < ua.length; i += 2) uv.push(ua[i] * 3, ua[i + 1] * 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return geo;
 }
 
 export const KIND = {
@@ -41,57 +89,39 @@ export const KIND = {
   rot: 4,
   solid: true,
   attenuate: true,
-  dynamicSolid: true,
-
-  // Its own geometry key, so the doors get their own mesh: game.js animates
-  // the swing by rewriting the instance matrices of that mesh alone.
-  geom: 'door',
-  geometry(THREE) {
-    const g = new THREE.BoxGeometry(1, 1, 1);
-    const uv = g.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i), uv.getY(i) * H);
-    uv.needsUpdate = true;
-    return g;
-  },
+  dynamicSolid: false,
+  geom: 'door_frame',
+  geometry(THREE) { return frameGeometry(THREE); },
 
   cells,
   center(x, y, z, rot) {
     const r = rot % 4;
     if (r < 2) {
       const c = r === 0 ? z + 1 - TH / 2 : z + TH / 2;
-      return { x: x + 0.5, y: y + H / 2, z: c };
+      return { x: x + W / 2, y: y + H / 2, z: c };
     }
     const c = r === 2 ? x + 1 - TH / 2 : x + TH / 2;
-    return { x: c, y: y + H / 2, z: z + 0.5 };
+    return { x: c, y: y + H / 2, z: z + W / 2 };
   },
   scale(x, y, z, rot) {
     return rot % 4 < 2 ? { x: W, y: H, z: TH } : { x: TH, y: H, z: W };
   },
-  base(sys, x, z) {
-    const top = sys.topAt(x, z);
-    return top !== null ? top : sys.surfaceHeight(x, z);
+  base(sys, x, z, rot) {
+    return baseAt(sys, cells(x, 0, z, rot));
   },
-  support(sys, x, y, z) {
-    return sys.groundAt(x, y - 1, z) || sys.occupied(x, y - 1, z);
+  support(sys, x, y, z, rot) {
+    return anySupport(sys, cells(x, y, z, rot), y);
   },
 };
 
-// The swing: the panel turns about one vertical edge. The runtime only draws
-// one axis aligned box per piece, so game.js rotates that box around the
-// hinge itself. `sign` is the rotation direction about Y.
-export function swingFrame(x, y, z, rot) {
-  const c = KIND.center(x, y, z, rot);
-  const hinge = rot % 4 < 2
-    ? { x, y: c.y, z: c.z }        // panel is wide along x, hinge on its low x edge
-    : { x: c.x, y: c.y, z };       // panel is wide along z, hinge on its low z edge
-  return { center: c, hinge, sign: rot % 4 < 2 ? -1 : 1 };
-}
+// No swinging leaf any more; kept as a no-op for callers that still import it.
+export function swingFrame() { return null; }
 
 export const ITEMS = {
-  door_wood: { code: 'DW', name: 'WOOD DOOR', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'wood' }, table: true, desc: 'A timber door. Right click it with an empty hand to swing it open.' },
-  door_brick: { code: 'DB', name: 'BRICK DOOR', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'brick' }, desc: 'A heavy fired clay door. Right click it with an empty hand to swing it open.' },
-  door_concrete: { code: 'DC', name: 'CONCRETE DOOR', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'concrete' }, desc: 'A poured door. Right click it with an empty hand to swing it open.' },
-  door_shielded: { code: 'DS', name: 'SHIELDED DOOR', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'shielded' }, desc: 'A lead lined door. Almost nothing gets through it while it is shut.' },
+  door_wood: { code: 'DW', name: 'WOOD DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'wood' }, table: true, desc: 'A timber wall with a doorway cutout in the middle.' },
+  door_brick: { code: 'DB', name: 'BRICK DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'brick' }, desc: 'A heavy fired clay wall with a doorway cutout in the middle.' },
+  door_concrete: { code: 'DC', name: 'CONCRETE DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'concrete' }, desc: 'A poured wall with a doorway cutout in the middle.' },
+  door_shielded: { code: 'DS', name: 'SHIELDED CONCRETE DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'door', tier: 'shielded' }, desc: 'A lead lined wall with a doorway cutout. Almost nothing gets through the frame.' },
 };
 
 export const RECIPES = [

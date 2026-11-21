@@ -68,9 +68,10 @@ function fakeSys(pieces = [], opts = {}) {
   const ground = opts.ground || new Set();
   const heights = opts.heights || new Map();
   const cellsMap = new Map();
-  for (const p of pieces) for (const [k, box] of p.cells) cellsMap.set(k, box);
+  for (const p of pieces) for (const [k, box] of p.cells) cellsMap.set(k, { piece: p, box });
   const key = (x, y, z) => `${x},${y},${z}`;
   return {
+    cells: cellsMap,
     occupied: (x, y, z) => cellsMap.has(key(x, y, z)),
     groundAt: (x, y, z) => ground.has(key(x, y, z)),
     surfaceHeight: (x, z) => (heights.has(key(x, 0, z)) ? heights.get(key(x, 0, z)) : 0),
@@ -111,6 +112,12 @@ check(FLOOR.support(onGround, X, Y, Z) === true, 'a deck on the ground is suppor
 const floating = fakeSys([]);
 check(FLOOR.base(floating, X, Z) === 0, 'a deck over empty ground lands on the ground level');
 check(FLOOR.support(floating, X, 40, Z) === false, 'a deck with nothing under it is refused');
+const oneBlock = fakeSys([], { ground: new Set([`${X},${Y - 1},${Z}`]) });
+check(FLOOR.support(oneBlock, X, Y, Z) === false, 'one block cannot balance the whole deck');
+const oneRow = fakeSys([], {
+  ground: new Set(Array.from({ length: W }, (_, i) => `${X + i},${Y - 1},${Z}`)),
+});
+check(FLOOR.support(oneRow, X, Y, Z) === true, 'a fully supported edge holds the deck');
 
 // A deck on another deck: it stacks on the deck below.
 const deckPiece = { kind: 'floor', y: Y, cells: FLOOR.cells(X, Y, Z) };

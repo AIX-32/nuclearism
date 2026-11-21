@@ -11,6 +11,8 @@
 // are derived from the same local frame, so the solid cells always line up
 // with the mesh.
 
+import { anySupport, baseAt } from './placement.js';
+
 const W = 3, D = 3, TH = 0.25;
 
 // --- the local frame ------------------------------------------------------
@@ -35,17 +37,15 @@ const CELL_OF = [
   (i, k) => [2 - k, i],
 ];
 
-// The solid part of a local cell, as [x0, x1, z0, z1].
-// A cut cell is approximated by a half cell rectangle: the diagonal runs
-// through the cell from corner to corner, so no axis aligned box can follow
-// it exactly. The rectangle keeps the whole solid half of the cell covered
-// (the player cannot walk into the wedge) at the price of also covering a
-// quarter of the open half of that cell. Three cells of the wedge are cut
-// this way, so the error is a thin staircase along the diagonal.
+// The solid part of a local cell, as [x0, x1, z0, z1]. No axis aligned box
+// can follow a diagonal exactly, so a cut cell keeps a half-cell compromise;
+// the leg-end boxes follow the leg and preserve the prism's full footprint.
 function localBox(i, k) {
-  if (i + k <= 1) return [i, i + 1, k, k + 1];       // fully solid
-  if (i + k === 2) return [i, i + 1, k, k + 0.5];   // half solid
-  return [i, i, k, k];                              // empty: a bare point
+  if (i + k <= 1) return [i, i + 1, k, k + 1];
+  if (i + k === 2) return i === 0
+    ? [i, i + 0.5, k, k + 1]
+    : [i, i + 1, k, k + 0.5];
+  return null;
 }
 
 // Turn a local box into its world box.
@@ -64,11 +64,14 @@ function cells(x, y, z, rot) {
   const out = [];
   for (let i = 0; i < W; i++) {
     for (let k = 0; k < D; k++) {
+      const local = localBox(i, k);
+      if (!local) continue;
       const [wi, wk] = CELL_OF[r](i, k);
-      const [bx0, bx1, bz0, bz1] = turnBox(localBox(i, k), r);
+      const [bx0, bx1, bz0, bz1] = turnBox(local, r);
       out.push([`${x + wi},${y},${z + wk}`, {
         minX: x + bx0, maxX: x + bx1,
-        minY: y, maxY: y + TH,
+        // Sit at the cell top, so the next piece does not float above the slab.
+        minY: y + 1 - TH, maxY: y + 1,
         minZ: z + bz0, maxZ: z + bz1,
       }]);
     }
@@ -133,25 +136,24 @@ export const KIND = {
 
   cells,
   center(x, y, z) {
-    return { x: x + W / 2, y: y + TH / 2, z: z + D / 2 };
+    return { x: x + W / 2, y: y + 1 - TH / 2, z: z + D / 2 };
   },
   scale(x, y, z) {
     return { x: W, y: TH, z: D };
   },
-  base(sys, x, z) {
-    const top = sys.topAt(x, z);
-    return top !== null ? top : sys.surfaceHeight(x, z);
+  base(sys, x, z, rot) {
+    return baseAt(sys, cells(x, 0, z, rot));
   },
-  support(sys, x, y, z) {
-    return sys.groundAt(x, y - 1, z) || sys.occupied(x, y - 1, z);
+  support(sys, x, y, z, rot) {
+    return anySupport(sys, cells(x, y, z, rot), y);
   },
 };
 
 export const ITEMS = {
-  triangle_wood: { code: 'TW', name: 'WOOD WEDGE', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'wood' }, table: true, desc: 'A triangular timber deck. Fills the corners of a base.' },
-  triangle_brick: { code: 'TB', name: 'BRICK WEDGE', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'brick' }, desc: 'A fired clay wedge.' },
-  triangle_concrete: { code: 'TC', name: 'CONCRETE WEDGE', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'concrete' }, desc: 'A poured wedge.' },
-  triangle_shielded: { code: 'TS', name: 'SHIELDED WEDGE', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'shielded' }, desc: 'A lead lined wedge.' },
+  triangle_wood: { code: 'TW', name: 'WOOD WEDGE BB', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'wood' }, table: true, desc: 'A triangular timber deck. Fills the corners of a base.' },
+  triangle_brick: { code: 'TB', name: 'BRICK WEDGE BB', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'brick' }, desc: 'A fired clay wedge.' },
+  triangle_concrete: { code: 'TC', name: 'CONCRETE WEDGE BB', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'concrete' }, desc: 'A poured wedge.' },
+  triangle_shielded: { code: 'TS', name: 'SHIELDED CONCRETE WEDGE BB', stack: 99, rad: 0, block: false, building: { kind: 'triangle', tier: 'shielded' }, desc: 'A lead lined wedge.' },
 };
 
 export const RECIPES = [

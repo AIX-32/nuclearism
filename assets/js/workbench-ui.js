@@ -84,13 +84,24 @@ export class WorkbenchUI {
     this.dragDrop = null;
   }
 
-  findDepositRole(index) {
-    if (!this.layout?.elements || !this.bridge.drop) return null;
+  depositFrom(index) {
+    if (!this.layout?.elements || !this.bridge.drop) return false;
+    const roles = [];
     for (const el of this.layout.elements) {
       if (el.type !== 'slot' || !el.role || el.role.startsWith('output') || el.role === 'craftOutput') continue;
-      if (this.bridge.drop(index, el.role)) return el.role;
+      roles.push(el.role);
     }
-    return null;
+    let moved = false;
+    for (let pass = 0; pass <= roles.length; pass++) {
+      const stack = this.bridge.inventory?.()[index];
+      if (!stack) break;
+      let changed = false;
+      for (const role of roles) {
+        if (this.bridge.drop(index, role)) { moved = true; changed = true; break; }
+      }
+      if (!changed) break;
+    }
+    return moved;
   }
 
   setBridge(bridge) { this.bridge = bridge || {}; }
@@ -157,7 +168,7 @@ export class WorkbenchUI {
     } else {
       const slotSize = 56;
       this.workArea.style.display = 'grid';
-      this.workArea.style.gridTemplateColumns = `repeat(${cols}, ${slotSize}px)`;
+      this.workArea.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${slotSize}px))`;
       this.workArea.style.gridTemplateRows = 'auto';
       this.workArea.style.gridAutoRows = `${slotSize}px`;
       this.workArea.style.alignContent = 'start';
@@ -216,6 +227,17 @@ export class WorkbenchUI {
         this.dragDrop?.bind(node, this.bridge.slotAdapter?.(role));
       } else if (el.type === 'progress') {
         node.innerHTML = `<span>${el.label || 'PROCESS'}</span><div class="workbench-progress-track"><i></i></div>`;
+      } else if (el.type === 'input') {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.value = this.machine?.state?.genRate ?? 0;
+        inp.style.width = '100%';
+        inp.addEventListener('change', () => {
+          const v = parseFloat(inp.value);
+          if (this.machine?.state) this.machine.state.genRate = Number.isFinite(v) ? Math.max(0, v) : 0;
+          this.renderDynamic();
+        });
+        node.appendChild(inp);
       } else if (el.type === 'arrow') node.setAttribute('aria-label', 'Flow direction');
       this.workArea.appendChild(node);
     }
@@ -600,7 +622,7 @@ export class WorkbenchUI {
       if (el.type === 'label' && el.id === 'status') {
         const node = this.workArea.querySelector(`[data-id="${CSS.escape(el.id)}"]`);
         if (!node) continue;
-        if (this.machine?.def?.kind === 'reactor') {
+        if (this.machine?.def?.kind === 'reactor' && !this.machine?.def?.coolingPower) {
           const m = this.machine;
           const heat = Math.max(0, Math.min(1, this.bridge.heatValue?.() ?? 0));
           const match = Math.max(0, Math.min(1, this.bridge.matchValue?.() ?? 0));
@@ -657,29 +679,30 @@ export class WorkbenchUI {
     for (let index = 0; index < 35; index++) {
       const stack = stacks[index], slot = document.createElement('button');
       slot.type = 'button';
-      slot.className = `workbench-inventory-slot${index === selected ? ' selected' : ''}${index === 7 ? ' pack-start' : ''}`;
+      slot.className = `workbench-inventory-slot${index === selected ? ' sel' : ''}${index === 7 ? ' pack-start' : ''}`;
       slot.dataset.index = index;
       if (stack) {
-        const item = this.bridge.item ? this.bridge.item(stack.id) : null;
         const icon = this.bridge.icon ? this.bridge.icon(stack.id) : '';
-        slot.innerHTML = `${icon ? `<img src="${icon}" alt="">` : ''}<span class="item-code">${item?.code || stack.id}</span><b>${stack.n}</b>`;
+        const art = icon ? `<div style="width:100%;height:100%;background:url('${icon}') center/contain no-repeat;border-radius:6px;box-sizing:border-box;"></div>` : '';
+        slot.innerHTML = `${art}<span class="n">${stack.n > 1 ? stack.n : ''}</span>`;
         slot.classList.add('has-item');
         slot.addEventListener('mouseenter', (e) => this.bridge.showTip?.(stack, e.clientX, e.clientY));
         slot.addEventListener('mouseleave', () => this.bridge.hideTip?.());
-      } else slot.innerHTML = '<span class="item-code"></span>';
+      } else slot.innerHTML = '';
       this.dragDrop?.bind(slot, this.bridge.invAdapter?.(index));
-      if (index < 7) slot.addEventListener('click', (e) => {
+      slot.addEventListener('click', (e) => {
         if (e.shiftKey && stack) {
           e.preventDefault();
-          const deposited = this.findDepositRole(index);
-          if (deposited !== null) {
+          if (this.depositFrom(index)) {
             this.renderInventory();
             this.renderDynamic();
           }
           return;
         }
-        this.bridge.selectHotbar?.(index);
-        this.renderInventory();
+        if (index < 7) {
+          this.bridge.selectHotbar?.(index);
+          this.renderInventory();
+        }
       });
       this.inventoryGrid.appendChild(slot);
     }

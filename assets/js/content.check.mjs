@@ -6,8 +6,8 @@ import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe']);
-const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'input']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
 
@@ -15,6 +15,13 @@ for (const [id, def] of Object.entries(ITEM_DEFS)) {
   if (!id.endsWith('_ingot')) continue;
   ok.push([def.icon === 'assets/images/items/ingot.png', `ingot "${id}" uses the shared base texture`]);
   ok.push([typeof def.tint === 'number', `ingot "${id}" has a tint color`]);
+}
+
+// Every sheet is the same texture, told apart by its tint.
+for (const [id, def] of Object.entries(ITEM_DEFS)) {
+  if (!id.endsWith('_plate')) continue;
+  ok.push([def.icon === 'assets/images/items/sheet.png', `plate "${id}" uses the shared sheet texture`]);
+  ok.push([typeof def.tint === 'number', `plate "${id}" has a tint color`]);
 }
 
 for (const r of CRAFT_RECIPES) {
@@ -39,6 +46,7 @@ for (const id of STARTER_GUIDE) {
 }
 ok.push([STARTER_GUIDE.includes('hand_crank'), 'starter guide points at the hand crank']);
 ok.push([MACHINE_BY_ID.hand_crank?.manual === true, 'hand crank is a manual generator']);
+ok.push([!MACHINE_DEFS.some((d) => d.kind === 'generator' && d.capacity), 'generators do not store network energy']);
 ok.push([MACHINE_BY_ID.water_pump?.kind === 'pump', 'water pump exists']);
 ok.push([TABLE_RECIPES.some((r) => r.out.water_pump), 'water pump is craftable at the table']);
 
@@ -69,6 +77,7 @@ for (const r of CRAFT_RECIPES) for (const id of Object.keys(r.out)) gridOut.add(
 const machineOut = new Set();
 for (const m of MACHINE_DEFS) for (const r of (m.recipes || [])) for (const id of Object.keys(r.out || {})) machineOut.add(id);
 for (const m of MACHINE_DEFS) {
+  if (m.id === 'infinite_battery') continue;
   const blockId = Object.keys(ITEM_DEFS).find((k) => ITEM_DEFS[k].workbench === m.id);
   if (blockId) ok.push([gridOut.has(blockId) || machineOut.has(blockId), `machine "${m.id}" is obtainable`]);
 }
@@ -212,18 +221,16 @@ ok.push([!Liquid.accepts(ITEM_DEFS.jerry_can_black, 'nuclear_waste'), 'plain can
 ok.push([Liquid.LIQUIDS.nuclear_waste.rad > 0, 'nuclear waste is radioactive']);
 
 const iv = ITEM_DEFS.radaway_iv;
-ok.push([!!iv?.container, 'radaway_iv is a container']);
-ok.push([Liquid.accepts(iv, 'radaway'), 'radaway_iv holds radaway']);
-ok.push([!Liquid.accepts(iv, 'water'), 'radaway_iv refuses water']);
-ok.push([!!Liquid.LIQUIDS.radaway, 'radaway liquid exists']);
-ok.push([MACHINE_BY_ID.liquid_mixer.recipes.some((r) => r.liquidOut?.id === 'radaway'), 'liquid mixer makes radaway']);
+ok.push([!iv?.container, 'radaway_iv is not a container']);
+ok.push([!!iv, 'radaway_iv exists']);
+ok.push([MACHINE_BY_ID.liquid_mixer.recipes.some((r) => r.out?.radaway_iv), 'liquid mixer makes radaway_iv']);
 ok.push([MACHINE_BY_ID.chemical_reactor.recipes.some((r) => r.out?.chelating_agent), 'chemical reactor makes chelating agent']);
 const unradRec = MACHINE_BY_ID.medicine_workbench.recipes.find((r) => r.out?.unrad_juice);
-ok.push([!!unradRec?.liquidIn?.some((l) => l.id === 'radaway'), 'medicine workbench packages radaway into unrad']);
+ok.push([!!unradRec, 'medicine workbench makes unrad_juice']);
 ok.push([!has('unrad_juice_strong'), 'concentrated unrad was removed']);
 for (const m of MACHINE_DEFS) {
   for (const r of (m.recipes || [])) {
-    ok.push([!r.out?.unrad_juice || !!r.liquidIn?.some((l) => l.id === 'radaway'), `${m.id} unrad recipe needs radaway`]);
+    ok.push([!r.out?.unrad_juice || (r.in?.radaway_iv > 0), `${m.id} unrad recipe needs radaway_iv`]);
   }
 }
 const reac = MACHINE_BY_ID.fission_reactor;
@@ -436,6 +443,16 @@ const sys = new MachineSystem({
   THREE: { Group: class { constructor() { this.children = []; } add(o) { this.children.push(o); } } },
   ITEMS: ITEM_DEFS, inv: { hot: [], main: [], sel: 0 }, scene: { add() {} }, ui: { setBridge() {} },
 });
+ok.push([sys.powerCap({ def: {} }) === 400, 'every machine keeps at least 400 PU internally']);
+ok.push([sys.powerCap({ def: { capacity: 2000 } }) === 2000, 'a storage machine keeps its own capacity']);
+
+// Shift-click deposit must merge or fill an empty slot and never swap a
+// different item out (which bounced the item back and did nothing).
+sys.openInst = { def: { kind: 'storage' }, state: { slots: { slot0: { id: 'stone', n: 5 } } } };
+sys.inv.hot = [{ id: 'stone', n: 10 }, { id: 'wood', n: 3 }];
+ok.push([sys.drop(0, 'slot0') && sys.openInst.state.slots.slot0.n === 15 && !sys.inv.hot[0], 'shift deposit merges into the same item']);
+ok.push([sys.drop(1, 'slot0') === false && sys.inv.hot[1]?.id === 'wood' && sys.openInst.state.slots.slot0.id === 'stone', 'shift deposit never swaps a different item out']);
+sys.openInst = null;
 const spinNode = { turns: 0, rotateY(a) { this.turns += a; } };
 const mkExc = (x, z) => ({
   def: exc, x, z, spinNode,
