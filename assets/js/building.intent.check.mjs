@@ -1,7 +1,7 @@
-// Intent preserving placement checks: node assets/js/building.intent.check.mjs
-// Real BuildingSystem/piece code runs on the normal node THREE stub. The small
-// game.js extracts at the end run its actual target/preview/place/mine bodies
-// without starting the browser game.
+
+
+
+
 
 import { readFileSync } from 'node:fs';
 import { BuildingSystem, snapPlan } from './building.js';
@@ -54,8 +54,8 @@ function exactHit(B, piece, point, normal, distance = 1) {
 }
 const ORIGIN = { x: 1.5, y: 2, z: 5 };
 
-// R is an instruction, including when its footprint is not the planner's
-// automatic best fit. Exercise both the pure plan and the placed-piece path.
+
+
 for (const kindName of ['wall', 'door']) {
   const B = system();
   const anchor = B.place('floor', 'wood', 0, 0, 0, 0);
@@ -68,8 +68,8 @@ for (const kindName of ['wall', 'door']) {
   check(got?.rot === 2, `${kindName}: runtime snap never auto-rotates selected R=2 (got ${showPlace(got)})`);
 }
 
-// The exact struck face beats the dominant ray component. Nearby points on
-// the same +X face also resolve to the one stable socket.
+
+
 {
   const B = system();
   const anchor = B.place('floor', 'wood', 0, 0, 0, 0);
@@ -82,8 +82,8 @@ for (const kindName of ['wall', 'door']) {
   }
 }
 
-// A side face near the top is still a side face. Only the actual top may put a
-// 3x3 slab over the supporting wall and let it cantilever.
+
+
 {
   const B = system();
   const anchor = B.place('wall', 'wood', 0, 0, 0, 0);
@@ -97,8 +97,8 @@ for (const kindName of ['wall', 'door']) {
   }
 }
 
-// The selected socket is blocked on purpose. A different rotation/location is
-// not an alternative: return that rejected socket so the game can show it red.
+
+
 for (const kindName of ['wall', 'door']) {
   const B = system();
   const anchor = B.place('floor', 'wood', 0, 0, 0, 0);
@@ -111,8 +111,8 @@ for (const kindName of ['wall', 'door']) {
   check(!B.canPlace(kindName, 0, 0, -1, 0), `${kindName}: intended socket really is occupied`);
 }
 
-// Each shape has a genuinely solid terrain voxel inside one of its own cell
-// boxes. Ground at y=-1 supports the piece; it must not excuse the intruder.
+
+
 function voxelWorld(solid) {
   return {
     field: { get: (x, y, z) => (solid.has(`${x},${y},${z}`) || y < 0 ? 1 : 0) },
@@ -132,8 +132,8 @@ for (const [kindName, args] of Object.entries(terrainCases)) {
   check(!allowed && !placed, `${kindName}: terrain inside piece refuses canPlace/place (allowed=${allowed}, placed=${!!placed})`);
 }
 
-// Continuous body checks cover a tall panel/door and a low deck, including a
-// body centre outside a thin panel but its radius crossing it.
+
+
 for (const [kindName, body] of Object.entries({
   wall: { x: 1.5, y: 0, z: -0.1, radius: 0.3, height: 1.8 },
   door: { x: 0.5, y: 0, z: -0.1, radius: 0.3, height: 1.8 },
@@ -144,14 +144,14 @@ for (const [kindName, body] of Object.entries({
   check(hit === true, `${kindName}: proposed cells overlap the player cylinder (got ${hit})`);
 }
 
-// Run the real inner game functions, with only their enclosing browser state
-// injected. Optional extracts let this check run against both sides of the fix.
+
+
 const gameSource = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 function gameFunction(name) {
   const at = gameSource.indexOf(`function ${name}(`);
   if (at < 0) return '';
-  // Skip the parameter list: a default like `opts = {}` must not be read as
-  // the start of the body.
+
+
   let params = 0, p = at;
   for (; p < gameSource.length; p++) {
     if (gameSource[p] === '(') params++;
@@ -168,8 +168,8 @@ function gameFunction(name) {
       continue;
     }
     if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-    // A comment can hold an apostrophe or a brace; it must not reach the
-    // quote and depth scan.
+
+
     if (c === '/' && gameSource[i + 1] === '/') {
       const nl = gameSource.indexOf('\n', i);
       i = nl < 0 ? gameSource.length : nl;
@@ -186,8 +186,8 @@ function gameRuntime(names, scope) {
   return new Function(...keys, `${body}\nreturn { ${names.join(',')} };`)(...keys.map((k) => scope[k]));
 }
 
-// An occupied anchor must survive buildingTarget: terrain behind it is not a
-// licence to throw the ghost onto an unrelated world-grid cell.
+
+
 {
   const B = system();
   const anchor = B.place('floor', 'wood', 0, 0, 0, 0);
@@ -204,8 +204,8 @@ function gameRuntime(names, scope) {
     `game buildingTarget keeps blocked anchor instead of terrain fallback (got ${JSON.stringify(t)})`);
 }
 
-// The production ghost and placement path must agree for terrain and player
-// overlap. B.snap is fixed only to isolate validation from planner ordering.
+
+
 function gamePlacementCase(kindName, world, player) {
   const B = system(world);
   B.pick = () => ({ piece: { id: -1 }, point: { x: 0, y: 0, z: 0 }, distance: 1 });
@@ -247,9 +247,9 @@ for (const [kindName, body] of Object.entries({
     `game ${kindName}: player-overlap ghost is red and doPlace refuses (tint=${result.tint?.toString(16)}, placed=${result.placed?.type})`);
 }
 
-// raycastTerrain returns an exact point, not a voxel coordinate. doMine must
-// compare its actual distance with the building hit: adding 0.5 to each axis
-// can promote a wall behind the hill ahead of the terrain.
+
+
+
 function mineCase(buildingDistance) {
   const B = system();
   const wall = B.place('wall', 'wood', 0, 0, 0, 0);
@@ -281,4 +281,4 @@ function mineCase(buildingDistance) {
 let failed = 0;
 for (const [ok, msg] of results) if (!ok) { failed++; console.error('FAIL:', msg); }
 if (failed) { console.error(`building intent check failed: ${failed}/${results.length}`); process.exit(1); }
-console.log(`building intent OK — ${results.length} assertions`);
+console.log(`building intent OK: ${results.length} assertions`);

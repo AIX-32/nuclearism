@@ -1,4 +1,4 @@
-// Roof panels: same thin 3 m x 3 m deck as a floor, used to cap a level.
+
 
 import { baseAt, edgeSupport } from './placement.js';
 

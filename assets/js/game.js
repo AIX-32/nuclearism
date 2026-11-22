@@ -30,32 +30,32 @@
 
 
     const CHUNK_SIZE = 16;
-    // The settings value controls the visible horizon in chunks. Interactive
-    // terrain remains tightly bounded until the far-terrain LOD streamer is
-    // available; never feed the horizon value directly into chunk allocation.
+
+
+
     const MAX_RENDER_DISTANCE = 10000;
     const DETAIL_CHUNK_RADIUS = 6;
-    // Haze strength of the far-terrain rings. The fade is a fourth power over
-    // the visible range, so the middle of the horizon keeps its mountains and
-    // the fade still reaches ~99.8% at the outer edge, where the fake terrain
-    // stops, so its border never shows as a hard line.
+
+
+
+
     const FAR_HAZE_REACH = 6;
-    // Distant-range backdrop. The world's own landforms are ~150 m hills on
-    // 400 m features: a few km out they are sub-pixel, so a 32 km and a 160 km
-    // horizon were the same flat line. The far rings add a long-wavelength
-    // ridge field of their own - the classic distant-range backdrop - which
-    // fades out as the player nears it. Visual only: the world is untouched.
-    const FAR_RANGE_AMP = 900;     // m of ridge at the reference distance
-    const FAR_RANGE_REF = 30000;   // m: the ridge keeps its apparent size
-    const FAR_RANGE_START = 3000;  // m: below this the backdrop is gone
-    const FAR_RANGE_FULL = 8000;   // m: fully faded in
+
+
+
+
+
+    const FAR_RANGE_AMP = 900;
+    const FAR_RANGE_REF = 30000;
+    const FAR_RANGE_START = 3000;
+    const FAR_RANGE_FULL = 8000;
     const SAMPLE_SIZE = CHUNK_SIZE + 2;
     const VERTEX_SIZE = CHUNK_SIZE + 1;
     const S2 = SAMPLE_SIZE * SAMPLE_SIZE;
     const V2 = VERTEX_SIZE * VERTEX_SIZE;
 
-    // How many density samples a chunk loads per slice. Capped by time inside
-    // loadSlice so one slice stays bounded even in expensive terrain.
+
+
     const SAMPLE_SLICE = 600;
 
 
@@ -63,7 +63,7 @@
     const WORLD_MODE = MENU_WORLD?.mode === 'sandbox' ? 'sandbox' : 'survival';
     const WORLD_TERRAIN = MENU_WORLD?.terrain === 'realistic' ? 'realistic' : 'legacy';
     const WORLD_NAME = MENU_WORLD?.name || 'WORLD';
-    document.title = `NUCLEARISM — ${WORLD_NAME}`;
+    document.title = `NUCLEARISM: ${WORLD_NAME}`;
 
     let viewRadius = Math.min(MAX_RENDER_DISTANCE, getSetting('renderDistance'));
     let showInfoHud = getSetting('infoHud');
@@ -72,11 +72,11 @@
     let vsync = getSetting('vsync');
     let mouseSens = getSetting('sensitivity');
     let invertY = getSetting('invertY');
-    const CHUNK_Y_MIN = -1;
+    const CHUNK_Y_MIN = -8;
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
-    const ICON_CACHE_KEY = 'idte.icon.v21.';
+    const ICON_CACHE_KEY = 'idte.icon.v23.';
 
     async function readSaveData(key = SAVE_KEY) {
       try {
@@ -259,10 +259,10 @@
     ];
 
 
-    // Terrain lookups extend far beyond the old signed 16-bit packed-key range.
-    // Pack column coords into a NUMBER, not a string: these caches are hit once
-    // per voxel sample, so building a string key per lookup was pure overhead.
-    // Beyond ±2^20 m (far past any reachable world) fall back to a string key.
+
+
+
+
     const _colKey = (a, b) => (
       a >= -1048576 && a <= 1048575 && b >= -1048576 && b <= 1048575
     ) ? ((a + 1048576) * 2097152 + (b + 1048576)) : `w${a},${b}`;
@@ -271,8 +271,8 @@
 
     function cacheTerrainValue(cache, key, value) {
       cache.set(key, value);
-      // Far-horizon sampling walks through new coordinates over time. Bound the
-      // shared procedural caches so exploring the horizon cannot grow them forever.
+
+
       if (cache.size > 160000) {
         const it = cache.keys();
         for (let i = 0; i < 24000; i++) {
@@ -291,7 +291,7 @@
 
       const { t, h } = climateAt(sx, sz);
 
-      // No oceans or beaches: every column is land, chosen by climate only.
+
       const scored = LAND_ANCHORS.map(([id, at, ah]) => {
         const dt = t - at, dh = h - ah;
         return [id, 1 / (dt * dt + dh * dh + 0.02)];
@@ -346,9 +346,9 @@
         base += d.base * wt; amp += d.amp * wt; rough += d.rough * wt;
         if (id >= B.PLAINS) land = true;
       }
-      // Mountain belts are broad, linked massifs. A warped ridged field gives
-      // them long folded spines; branching drainage incisions cut through those
-      // spines like dry watercourses instead of leaving isolated noise peaks.
+
+
+
       const beltWarpX = fbm3(sx * 0.0017, 31.7, sz * 0.0017, 3) * 2 - 1;
       const beltWarpZ = fbm3(sx * 0.0017, 47.1, sz * 0.0017, 3) * 2 - 1;
       const belt = fbm3((sx + beltWarpX * 180) * 0.0024, 13.9, (sz + beltWarpZ * 180) * 0.0024, 3) * 2 - 1;
@@ -368,25 +368,25 @@
         + rough * 1.8 * detail
         + amp * 1.1 * (0.5 - Math.abs(ridge));
 
-      // Dry world: no ocean plate or shore blend, every column is land.
+
       return SEA_LEVEL + 26 * Math.tanh(raw / 26) + mountainLift;
     }
 
 
 
-    // Surface water is gone: groundwater is only reachable from tanks and pumps.
+
     function pondHere() { return false; }
 
 
 
 
 
-    // The ground level: where the density field crosses zero at this column.
-    // The density surface sits up to ~6 m off the trend (1.8*noise + 4.5*fbm
-    // detail), so a band measured against the trend alone would paint random
-    // dirt/stone patches on the surface. Sample the density at the vertex's
-    // own x,z (not the floored column) and find the crossing, so depth follows
-    // the real slope instead of stepping in column-wide stripes on hills.
+
+
+
+
+
+
     const _groundYCache = new Map();
     function groundYAt(sx, sz) {
       const qx = Math.floor(sx * 2), qz = Math.floor(sz * 2);
@@ -396,7 +396,7 @@
       const info = columnDensity(sx, sz);
       const amp = info.underOcean ? 1.8 : 4.5;
       const dens = (y) => (info.h - y) + amp * (fbm3(sx * 0.035, y * 0.035, sz * 0.035, 2) * 2 - 1) * info.seaFade;
-      // info.h is the trend height; the crossing sits within a few metres.
+
       let y0 = Math.floor(info.h);
       let d0 = dens(y0);
       v = y0 + amp;
@@ -687,9 +687,9 @@
       }
       for (const r of rooms) grow(r.x, r.y, r.z, r.rx + pad, r.ry + pad, r.rz + pad);
 
-      // Per-primitive vertical bounds. A capsule/ellipsoid/cone can only affect
-      // the y range it spans, so a voxel far above or below a tunnel never needs
-      // to test it. Exact bounds (not approximations) — the result is unchanged.
+
+
+
       for (const s of segs) {
         s.y0 = Math.min(s.ay, s.by) - s.r;
         s.y1 = Math.max(s.ay, s.by) + s.r;
@@ -857,11 +857,11 @@
 
 
 
-      // The detail noise can only shift the surface by its own amplitude, so
-      // outside that band the sign of the density is fixed by the trend alone
-      // and the noise does not have to be evaluated. That is the bulk of the
-      // voxels in a chunk (the deep rock and the open air), and evaluating
-      // them was what made a single chunk build cost 12 ms.
+
+
+
+
+
       const amp = info.underOcean ? 1.8 : 4.5;
 
       if (d > 42 || d < -6) return d;
@@ -1056,7 +1056,7 @@
       constructor() {
         this.edits = new Map();
         this.baseCache = new Map();
-        this.onEdit = null;   // replay recorder hook: (x, y, z, density)
+        this.onEdit = null;
       }
 
       static key(x, y, z) {
@@ -1075,9 +1075,9 @@
 
           const pad = industrialPadAt(x, z);
           if (pad) v += (pad.site.y0 - y - v) * pad.w;
-          // Bound the cache: every sampled voxel was kept forever, so a long
-          // session grew an unbounded Map (slower lookups + growing memory).
-          // Evict the oldest entries in smaller batches to avoid long stalls.
+
+
+
           if (this.baseCache.size > 400000) {
             const it = this.baseCache.keys();
             for (let i = 0; i < 40000; i++) {
@@ -1097,16 +1097,16 @@
         return e !== undefined ? e : this.base(x, y, z);
       }
 
-      // The chunk sample grid is its own cache: it keeps every density value
-      // the chunk meshes from. Going through the shared base cache for it only
-      // paid a Map insert (and an eviction) per voxel.
+
+
+
       valueAt(x, y, z) {
         return this.valueAtPadded(x, y, z, industrialPadAt(x, z));
       }
 
 
-      // The industrial pad only depends on x and z, so a caller that walks a
-      // whole column of the grid looks it up once and passes it in.
+
+
       valueAtPadded(x, y, z, pad) {
         const k = DensityField.key(x, y, z);
         const e = this.edits.get(k);
@@ -1243,10 +1243,10 @@
       }
 
 
-      // The sample grid holds the density of every voxel the mesh is built
-      // from. Filling it is the expensive part of a chunk build, so it is
-      // done in slices: a frame loads a slice and the chunk comes back for
-      // the rest, so no single chunk build can eat a whole frame.
+
+
+
+
       loadSlice(count) {
         const s = this.samples;
         const field = this.world.field;
@@ -1284,9 +1284,9 @@
       }
 
 
-      // An edit only changes a few voxels, and the rest of the sample grid is
-      // still valid, so a chunk that is already loaded just re-reads the
-      // edited ones instead of the whole grid.
+
+
+
       refreshPending() {
         if (!this.pending.length) return;
         const s = this.samples;
@@ -1356,6 +1356,7 @@
         const adata = [];
         const surfArr = [];
         const submArr = [];
+        const basaltArr = [];
 
         const vg = new Int32Array(V * V * V).fill(-1);
 
@@ -1433,14 +1434,16 @@
               let nx = sampleAt(rx - 1, ry, rz) - sampleAt(rx + 1, ry, rz);
               let ny = sampleAt(rx, ry - 1, rz) - sampleAt(rx, ry + 1, rz);
               let nz = sampleAt(rx, ry, rz - 1) - sampleAt(rx, ry, rz + 1);
-              const nl = Math.hypot(nx, ny, nz) || 1;
-              normals.push(nx / nl, ny / nl, nz / nl);
+              const nl = Math.hypot(nx, ny, nz);
+              if (nl > 1e-6) normals.push(nx / nl, ny / nl, nz / nl);
+              else normals.push(0, 1, 0);
 
               const col = surfaceColor(wx, wy, wz);
               const occ = occlusionScale(field, wx, wy, wz, sampleAt, solidFn);
               colors.push(col[0], col[1], col[2]);
               adata.push(stoneMask, dirtMask, grassMask, occ);
               surfArr.push(_surf[0], _surf[1], _surf[2], _surf[3]);
+              basaltArr.push(basaltMask);
 
 
 
@@ -1533,6 +1536,7 @@
           data: new Float32Array(adata),
           surf: new Float32Array(surfArr),
           subm: new Float32Array(submArr),
+          basalt: new Float32Array(basaltArr),
         };
       }
 
@@ -1573,6 +1577,7 @@
         geo.setAttribute('aData', new THREE.BufferAttribute(data.data, 4));
         geo.setAttribute('aSurf', new THREE.BufferAttribute(data.surf, 4));
         geo.setAttribute('aSubm', new THREE.BufferAttribute(data.subm, 1));
+        geo.setAttribute('aBasalt', new THREE.BufferAttribute(data.basalt, 1));
         geo.setIndex(new THREE.BufferAttribute(data.indices, 1));
         if (!data.normals) geo.computeVertexNormals();
         geo.computeBoundingSphere();
@@ -1608,8 +1613,8 @@
           }
         };
 
-        // No water anywhere in the simulation means there is nothing to build.
-        // Bail before allocating the overshoot buffers and walking the grid.
+
+
         if (!wsim.depth.size) { dropMesh(); return; }
 
 
@@ -1753,11 +1758,12 @@
     let stoneMask = 0;
     let grassMask = 0;
     let dirtMask = 0;
+    let basaltMask = 0;
     const _surf = [0, 0, 0, 0];
     function mountainRockAt(x, z) {
       if (WORLD_TERRAIN === 'realistic') {
-        // Rock line is slope-driven here, not the legacy height cutoff:
-        // trees climb the massif flanks until the cliff faces take over.
+
+
         return realisticTerrain().slopeDeg(x + WORLD_SEED, z + WORLD_SEED) > 38;
       }
       return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) - SEA_LEVEL > 30;
@@ -1774,8 +1780,13 @@
       const top = def.top;
 
       let r, g, b;
-      if (depth > 6) {
-        r = 0.33; g = 0.32; b = 0.36;
+      if (depth > 28) {
+        r = 0.22; g = 0.22; b = 0.24;
+      } else if (depth > 6) {
+        const u = Math.min(1, (depth - 6) / 22);
+        r = 0.33 + (0.22 - 0.33) * u;
+        g = 0.32 + (0.22 - 0.32) * u;
+        b = 0.36 + (0.24 - 0.36) * u;
       } else if (depth > 2) {
         const u = (6 - depth) / 4;
         r = 0.33 + (0.47 - 0.33) * u;
@@ -1800,9 +1811,10 @@
 
 
       const exposedMountain = mountainRockAt(wx, wz) ? 1 : 0;
+      basaltMask = depth >= 28 ? 1 : 0;
       grassMask = (def.surf !== 'rock' && depth < 1.2) ? 1 - exposedMountain : 0;
       dirtMask = (depth >= 1.2 && depth < 3.0) ? 1 : 0;
-      stoneMask = depth >= 3.0 ? 1 : exposedMountain;
+      stoneMask = depth >= 3.0 && depth < 28 ? 1 : (depth < 3.0 ? exposedMountain : 0);
       _surf[0] = def.surf === 'sand' ? 1 - exposedMountain : 0;
       _surf[1] = def.surf === 'dry' ? 1 - exposedMountain : 0;
       _surf[2] = def.surf === 'snow' ? 1 - exposedMountain : 0;
@@ -1810,11 +1822,11 @@
       return _col;
     }
 
-    // Realistic mode: slope/altitude masks pick exposed rock and snow, but
-    // depth below the real ground level must drive the material — the masks
-    // alone can't tell the surface from a cave wall, which made the whole
-    // underground grass. The base colour also follows depth (brown dirt, grey
-    // stone) so the biome's green never bleeds into the dirt/stone bands.
+
+
+
+
+
     function realisticSurfaceColor(wx, wy, wz, def, n) {
       const sx = wx + WORLD_SEED, sz = wz + WORLD_SEED;
       const s = realisticTerrain().surface(sx, sz, wy, def.surf);
@@ -1822,6 +1834,7 @@
       const snow = s.snow;
       const depth = groundYAt(sx, sz) - wy;
 
+      basaltMask = depth >= 28 ? 1 : 0;
       if (depth < 1.2) {
         grassMask = 1 - rock;
         dirtMask = 0;
@@ -1830,10 +1843,14 @@
         grassMask = 0;
         dirtMask = 1 - rock;
         stoneMask = rock;
-      } else {
+      } else if (depth < 28) {
         grassMask = 0;
         dirtMask = 0;
         stoneMask = 1;
+      } else {
+        grassMask = 0;
+        dirtMask = 0;
+        stoneMask = 0;
       }
       _surf[0] = def.surf === 'sand' ? 1 - rock : 0;
       _surf[1] = def.surf === 'dry' ? 1 - rock : 0;
@@ -1842,8 +1859,13 @@
 
       const top = def.top;
       let r, g, b;
-      if (depth > 6) {
-        r = 0.33; g = 0.32; b = 0.36;
+      if (depth > 28) {
+        r = 0.22; g = 0.22; b = 0.24;
+      } else if (depth > 6) {
+        const u = Math.min(1, (depth - 6) / 22);
+        r = 0.33 + (0.22 - 0.33) * u;
+        g = 0.32 + (0.22 - 0.32) * u;
+        b = 0.36 + (0.24 - 0.36) * u;
       } else if (depth > 2) {
         const u = (6 - depth) / 4;
         r = 0.33 + (0.47 - 0.33) * u;
@@ -1922,23 +1944,23 @@
       const val = (rx, ry, rz) => sampleFn ? sampleFn(rx, ry, rz) : field.get(rx, ry, rz);
 
       let skyVis = 1;
-      for (let i = 1; i <= 4; i++) {
+      for (let i = 1; i <= 6; i++) {
         const d = val(Math.round(x), Math.round(y + i * 1.6), Math.round(z));
-        if (d > 0) { skyVis = i <= 2 ? 0.02 : 0.08; break; }
-        if (d > -0.4) skyVis -= 0.16;
+        if (d > 0) { skyVis = i <= 2 ? 0.12 : 0.2; break; }
+        if (d > -0.4) skyVis -= 0.1;
       }
-      skyVis = Math.max(0.02, Math.min(1, skyVis));
+      skyVis = Math.max(0.12, Math.min(1, skyVis));
 
 
       let sunVis = 1;
       const sx = 0.611, sy = 0.689, sz = 0.389;
-      for (let i = 1; i <= 5; i++) {
-        const t = i * 1.4;
+      for (let i = 1; i <= 8; i++) {
+        const t = i * 1.6;
         if (solidAt(field, x + sx * t, y + sy * t, z + sz * t, solidFn)) { sunVis = 0; break; }
       }
 
 
-      return (0.06 + 0.94 * skyVis) * (sunVis > 0.5 ? 1.0 : 0.38);
+      return (0.06 + 0.94 * skyVis) * (sunVis > 0.5 ? 1.0 : 0.55);
     }
 
 
@@ -2170,6 +2192,11 @@
         dirtTex.colorSpace = THREE.SRGBColorSpace;
         dirtTex.anisotropy = 4;
         this.dirtTexture = dirtTex;
+        const basaltTex = new THREE.TextureLoader().load('assets/images/basalt.jpg');
+        basaltTex.wrapS = basaltTex.wrapT = THREE.RepeatWrapping;
+        basaltTex.colorSpace = THREE.SRGBColorSpace;
+        basaltTex.anisotropy = 4;
+        this.basaltTexture = basaltTex;
 
 
         const sandTex = surfTexture(11, [214, 196, 140], 0.28);
@@ -2187,6 +2214,7 @@
           shader.uniforms.stoneMap = { value: stoneTex };
           shader.uniforms.grassMap = { value: grassTex };
           shader.uniforms.dirtMap = { value: dirtTex };
+          shader.uniforms.basaltMap = { value: basaltTex };
           shader.uniforms.sandMap = { value: sandTex };
           shader.uniforms.dryMap = { value: dryTex };
           shader.uniforms.snowMap = { value: snowTex };
@@ -2198,19 +2226,22 @@
           attribute vec4 aData;
           attribute vec4 aSurf;
           attribute float aSubm;
+          attribute float aBasalt;
           varying vec3 vWPos; varying vec3 vWNorm;
           varying float vStone; varying float vDirt; varying float vTop; varying float vOcc;
           varying vec4 vSurf;
-          varying float vSubm;`)
+          varying float vSubm;
+          varying float vBasalt;`)
             .replace('#include <fog_vertex>', `#include <fog_vertex>
           vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
           vWNorm = normalize(mat3(modelMatrix) * objectNormal);
           vStone = aData.x; vDirt = aData.y; vTop = aData.z; vOcc = aData.w;
           vSurf = aSurf;
-          vSubm = aSubm;`);
+          vSubm = aSubm;
+          vBasalt = aBasalt;`);
           shader.fragmentShader = shader.fragmentShader
             .replace('#include <common>', `#include <common>
-          uniform sampler2D stoneMap; uniform sampler2D grassMap; uniform sampler2D dirtMap;
+          uniform sampler2D stoneMap; uniform sampler2D grassMap; uniform sampler2D dirtMap; uniform sampler2D basaltMap;
           uniform sampler2D sandMap; uniform sampler2D dryMap; uniform sampler2D snowMap; uniform sampler2D ashMap;
           uniform vec3 uUnderwaterCol;
           uniform float uForceStoneY;
@@ -2218,6 +2249,7 @@
           varying float vStone; varying float vDirt; varying float vTop; varying float vOcc;
           varying vec4 vSurf;
           varying float vSubm;
+          varying float vBasalt;
           vec3 triplanar(sampler2D m, vec3 p, vec3 n, float sc) {
             vec3 an = pow(abs(n), vec3(4.0));
             an /= (an.x + an.y + an.z);
@@ -2232,9 +2264,9 @@
             .replace('#include <color_fragment>', `#include <color_fragment>
           vec3 tn = normalize(vWNorm);
           vec3 tBase = mix(diffuseColor.rgb, triplanar(stoneMap, vWPos, tn, 0.08), vStone);
+          tBase = mix(tBase, triplanar(basaltMap, vWPos, tn, 0.08), vBasalt);
           tBase = mix(tBase, triplanar(dirtMap, vWPos, tn, 0.1), vDirt);
-          // surface layer: grass by default, swapped per-biome by vSurf — real
-          // different textures, no tinting. blend lets biome borders soften.
+          // surface layer: grass by default, swapped per-biome by vSurf, using real textures with no tinting. blend lets biome borders soften.
           vec3 topTex = triplanar(grassMap, vWPos, tn, 0.4);
           topTex = mix(topTex, triplanar(sandMap, vWPos, tn, 0.30), vSurf.x);
           topTex = mix(topTex, triplanar(dryMap,  vWPos, tn, 0.40), vSurf.y);
@@ -2344,8 +2376,8 @@
         return this.chunks.get(World.ck(cx, cy, cz));
       }
 
-      // The highest terrain height in a chunk column, sampled every 4 m so
-      // narrow ridges that cross a 16 m chunk are still found.
+
+
       columnMaxHeight(cx, cz) {
         const key = World.wk(cx, cz);
         let v = this.columnHeightCache.get(key);
@@ -2414,8 +2446,8 @@
                 if (!this.chunks.has(key)) {
                   const c = new Chunk(this, cx, cy, cz);
                   this.chunks.set(key, c);
-                  // A chunk that cannot hold a surface produces no mesh at all,
-                  // so its sample grid never has to be loaded.
+
+
                   if (this.canHaveMesh(c)) this.markDirty(c);
                   else c.built = true;
 
@@ -2454,7 +2486,7 @@
         const pcz = Math.floor(pz / CHUNK_SIZE);
         const detailRadius = Math.min(viewRadius, DETAIL_CHUNK_RADIUS);
 
-        // Stream/create every chunk in range, then build them all.
+
         for (let pass = 0; pass < 2000; pass++) {
           this.update(px, py, pz);
           let want = 0, done = 0;
@@ -2476,7 +2508,7 @@
           this.processDirty(12);
           await nextFrame();
         }
-        // Final drain in case anything remains queued.
+
         for (let i = 0; i < 400 && (this.loading.length || this.dirty.length); i++) {
           this.processDirty(12);
           if ((i & 1) === 0) await nextFrame();
@@ -2491,15 +2523,15 @@
       }
 
 
-      // A chunk that sits above the surface of its own column is plain air: it
-      // cannot hold a surface, so it produces no mesh and its sample grid
-      // never has to be loaded. The column next to it draws the face they
-      // share, so nothing is lost by skipping it. The margin covers the
-      // detail noise (which can lift or drop the surface by a few metres) and
-      // the flattened industrial pads.
+
+
+
+
+
+
       canHaveMesh(c) {
         if (c.oy <= this.columnMaxHeight(c.cx, c.cz) + 16) return true;
-        // Only a cave could still put rock in that chunk.
+
         return this.chunkHasCave(c);
       }
 
@@ -2511,11 +2543,11 @@
         return false;
       }
 
-      // A chunk mesh is built from its own voxels plus the 1-voxel frame it
-      // samples around itself, so an edit only dirties the chunks the edited
-      // box overlaps plus the neighbour chunk on each side where the box
-      // reaches a chunk border. The old code padded every axis by a whole
-      // chunk, which queued up to 27 rebuilds for a single mined block.
+
+
+
+
+
       dirtyRange(lo, hi, pad) {
         return [Math.floor((lo - 1) / CHUNK_SIZE) - pad, Math.floor((hi + 1) / CHUNK_SIZE) + pad];
       }
@@ -2535,9 +2567,9 @@
       }
 
 
-      // An edit changes the density of a few voxels. The chunk sample grid
-      // keeps the density of every voxel the chunk meshes from, so the edited
-      // voxels are recorded and only those are re-read on the next rebuild.
+
+
+
       markEdited(x0, x1, y0, y1, z0, z1) {
         const [cx0, cx1] = this.dirtyRange(x0, x1, 0);
         const [cy0, cy1] = this.dirtyRange(y0, y1, 0);
@@ -2555,7 +2587,7 @@
       }
 
 
-      // The same, for a caller that decides itself when the chunk is rebuilt.
+
       noteEdited(x0, x1, y0, y1, z0, z1) {
         const [cx0, cx1] = this.dirtyRange(x0, x1, 0);
         const [cy0, cy1] = this.dirtyRange(y0, y1, 0);
@@ -2625,14 +2657,14 @@
           }
         };
 
-        // Load samples first so nearby chunks become rebuildable sooner.
+
         const loadShare = this.loading.length > 30 ? 0.75 : (this.loading.length > 10 ? 0.6 : 0.5);
         loadSliceSome(t0 + budgetMs * loadShare);
         if (performance.now() >= deadline) return;
 
-        // Sort the queue by distance to the player once, then rebuild in that
-        // order. The old code re-scanned the whole queue for every chunk it
-        // rebuilt (O(n^2)) just to pick the nearest one each time.
+
+
+
         const needSort = this.dirty.length > 1 && (!this._dirtySortedAt || this._dirtySortedAt.x !== Math.floor(px / 16) || this._dirtySortedAt.z !== Math.floor(pz / 16) || (this._dirtySortTick = (this._dirtySortTick || 0) + 1) % 30 === 0);
         if (needSort) {
           const ts = performance.now();
@@ -2641,7 +2673,7 @@
             const dx = c.ox + 8 - px, dy = c.oy + 8 - py, dz = c.oz + 8 - pz;
             c._sortD2 = dx * dx + dy * dy + dz * dz;
           }
-          // Farthest first, so popping off the end yields the nearest next.
+
           this.dirty.sort((a, b) => b._sortD2 - a._sortD2);
           perf.sortMs += performance.now() - ts;
           this._dirtySortedAt = { x: Math.floor(px / 16), z: Math.floor(pz / 16) };
@@ -2652,8 +2684,8 @@
           const elapsed = performance.now() - t0;
           const c = this.dirty[this.dirty.length - 1];
           if (c.dead) { this.dirty.pop(); c.queued = false; continue; }
-          // A chunk that has not loaded its sample grid yet goes to the
-          // loading list and comes back for the rest of its grid.
+
+
           if (!c.samplesLoaded) {
             this.dirty.pop();
             c.queued = true;
@@ -2672,7 +2704,7 @@
           if (++rebuilt >= 3) break;
         }
 
-        // Spend any leftover budget on loading so chunks become ready sooner.
+
         if (performance.now() < deadline) loadSliceSome(deadline);
       }
 
@@ -2827,8 +2859,8 @@
           if (b.x0 < ux0) ux0 = b.x0; if (b.x1 > ux1) ux1 = b.x1;
           if (b.y0 < uy0) uy0 = b.y0; if (b.y1 > uy1) uy1 = b.y1;
           if (b.z0 < uz0) uz0 = b.z0; if (b.z1 > uz1) uz1 = b.z1;
-          // The job wrote the density itself, so the chunks have to know
-          // which voxels to re-read.
+
+
           this.noteEdited(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1);
           if (t >= 1) {
             if (j.yieldFn) j.yieldFn();
@@ -2964,6 +2996,9 @@
             achievements: ach,
             timeLock: timeLock !== null,
             prayReadyAt: +prayReadyAt.toFixed(1),
+            nuclearStrikes: nuclearStrikes.map((s) => ({ x: +s.x.toFixed(2), y: +s.y.toFixed(2), z: +s.z.toFixed(2), day: s.day | 0, r: +s.r.toFixed(2), radMult: +(s.radMult ?? 1).toFixed(4) })),
+            lastNukeCheckDay: lastNukeCheckDay | 0,
+            nukeRadMult: +nukeRadMult.toFixed(4),
             machines: machineSystem ? machineSystem.serialize() : [],
             pipes: pipeSystem ? pipeSystem.serialize() : [],
             skyline: skylineSystem ? skylineSystem.serialize() : [],
@@ -2984,9 +3019,9 @@
       }
 
       async save(player) {
-        // Never persist while a replay is driving the world: the replay
-        // temporarily overwrites terrain edits and must not be written to
-        // the save. Playback restores the edits on exit.
+
+
+
         if (typeof replayPlay !== 'undefined' && replayPlay) return false;
         const payload = this.buildSave(player);
         this.lastSavePayload = payload;
@@ -3073,6 +3108,12 @@
           clock.t = timeLock;
         }
         if (Number.isFinite(data.prayReadyAt)) prayReadyAt = Math.max(0, data.prayReadyAt);
+        if (Array.isArray(data.nuclearStrikes)) {
+          nuclearStrikes = data.nuclearStrikes.filter((s) => s && [s.x, s.y, s.z, s.r].every(Number.isFinite))
+            .map((s) => ({ x: s.x, y: s.y, z: s.z, day: s.day | 0, r: Math.max(8, s.r), radMult: Number.isFinite(s.radMult) ? Math.max(1, s.radMult) : 1 }));
+        }
+        if (Number.isFinite(data.lastNukeCheckDay)) lastNukeCheckDay = Math.max(0, data.lastNukeCheckDay | 0);
+        if (Number.isFinite(data.nukeRadMult)) nukeRadMult = Math.max(1, data.nukeRadMult);
         if (Array.isArray(data.torches)) {
           for (const t of data.torches) {
             if (Array.isArray(t) && t.length >= 6 && t.slice(0, 6).every(Number.isFinite)) {
@@ -3080,8 +3121,8 @@
               const dx = t[3], dy = t[4], dz = t[5];
               const len = Math.hypot(dx, dy, dz) || 1;
               const nx = dx / len, ny = dy / len, nz = dz / len;
-              // Saved delta was pos-anchor; old saves used different anchor depths
-              // (wall at surface, floor 0.29m below), so recompute a solid anchor.
+
+
               const floor = ITEMS[id]?.light?.mount === 'floor';
               const depth = floor ? 0.09 : 0.38;
               addTorch(t[0], t[1], t[2], nx, ny, nz, id, t[0] - nx * depth, t[1] - ny * depth, t[2] - nz * depth);
@@ -3106,19 +3147,19 @@
 
 
 
-    // Long-wavelength ridge field for the distant-range backdrop. It works at
-    // a scale the world's own terrain does not have (10-20 km belts), so the
-    // far rings can carry a horizon that the near terrain cannot.
-    // How far the far ring follows the real ground before it eases into the
-    // smooth terrain trend. The ring used to sit a flat 6 m under the trend,
-    // so where the detailed chunks ended the world visibly dropped off in a
-    // straight line in front of the player.
+
+
+
+
+
+
+
     const FAR_RING_BLEND = 48;
 
-    // The detail square: the chunks the player can walk on span
-    // centre-96 .. centre+112 in both axes (the player's own chunk plus six
-    // in each direction). These two helpers say how far a ring cell is
-    // outside that square, and how much of the real ground it keeps there.
+
+
+
+
     function farRingEdge(coord, centre) {
       return coord >= centre ? (DETAIL_CHUNK_RADIUS + 1) * CHUNK_SIZE : DETAIL_CHUNK_RADIUS * CHUNK_SIZE;
     }
@@ -3158,24 +3199,25 @@
           shader.uniforms.farAshMap = { value: biomeTextures.ash };
           shader.uniforms.farStoneMap = { value: stoneTexture };
           shader.uniforms.farDirtMap = { value: world.dirtTexture };
+          shader.uniforms.farBasaltMap = { value: world.basaltTexture };
           shader.uniforms.uHazeColor = { value: new THREE.Color(0x9ec9e8) };
           shader.uniforms.uHazeStart = { value: DETAIL_CHUNK_RADIUS * CHUNK_SIZE };
           shader.uniforms.uHazeEnd = { value: 1 };
           shader.uniforms.uHazeReach = { value: FAR_HAZE_REACH };
           shader.uniforms.uFarStoneY = { value: WORLD_TERRAIN === 'realistic' ? 1e6 : 50 };
           shader.vertexShader = shader.vertexShader
-            .replace('#include <common>', '#include <common>\nattribute vec4 aFarSurf; attribute vec3 aFarCol; attribute vec3 aFarData; attribute float aFarY; varying vec4 vFarSurf; varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY; varying vec3 vFarPos; varying vec3 vFarNormal; varying float vFarDepth;')
+            .replace('#include <common>', '#include <common>\nattribute vec4 aFarSurf; attribute vec3 aFarCol; attribute vec3 aFarData; attribute float aFarY; attribute float aFarBasalt; varying vec4 vFarSurf; varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY; varying float vFarBasalt; varying vec3 vFarPos; varying vec3 vFarNormal; varying float vFarDepth;')
             .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFarPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFarNormal = normalize(mat3(modelMatrix) * objectNormal);');
-          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarSurf = aFarSurf;\nvFarCol = aFarCol;\nvFarData = aFarData;\nvFarY = aFarY;\nvFarDepth = -mvPosition.z;');
+          shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvFarSurf = aFarSurf;\nvFarCol = aFarCol;\nvFarData = aFarData;\nvFarY = aFarY;\nvFarBasalt = aFarBasalt;\nvFarDepth = -mvPosition.z;');
           shader.fragmentShader = shader.fragmentShader
             .replace('#include <common>', `#include <common>
             uniform sampler2D farGrassMap; uniform sampler2D farSandMap; uniform sampler2D farDryMap;
             uniform sampler2D farSnowMap; uniform sampler2D farAshMap; uniform sampler2D farStoneMap;
-            uniform sampler2D farDirtMap;
+            uniform sampler2D farDirtMap; uniform sampler2D farBasaltMap;
             uniform vec3 uHazeColor; uniform float uHazeStart; uniform float uHazeEnd;
             uniform float uHazeReach;
             uniform float uFarStoneY;
-            varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY;
+            varying vec3 vFarCol; varying vec3 vFarData; varying float vFarY; varying float vFarBasalt;
             varying vec4 vFarSurf; varying vec3 vFarPos; varying vec3 vFarNormal; varying float vFarDepth;
             vec3 farTri(sampler2D m, vec3 p, vec3 n, float s) {
               vec3 w = pow(abs(n), vec3(4.0)); w /= w.x + w.y + w.z;
@@ -3185,14 +3227,15 @@
               float c = cos(a), s = sin(a);
               return vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c);
             }`)
-            // Same surface rules as the near terrain shader (game.js): the same
-            // stone / dirt / grass masks, the same textures and the same scales.
-            // Anything less and the seam where the fake rings meet the real
-            // chunks shows as a colour jump.
+
+
+
+
             .replace('#include <map_fragment>', `#include <map_fragment>
             vec3 farN = normalize(vFarNormal);
             vec3 farStone = farTri(farStoneMap, vFarPos, farN, 0.08);
             vec3 farBase = mix(vFarCol, farStone, vFarData.x);
+            farBase = mix(farBase, farTri(farBasaltMap, vFarPos, farN, 0.08), vFarBasalt);
             farBase = mix(farBase, farTri(farDirtMap, vFarPos, farN, 0.1), vFarData.y);
             vec3 farTop = farTri(farGrassMap, vFarPos, farN, 0.4);
             farTop = mix(farTop, farTri(farSandMap, vFarPos, farN, 0.30), vFarSurf.x);
@@ -3205,8 +3248,8 @@
             farBase = mix(farBase, farTop, vFarData.z);
             farBase = mix(farBase, farStone, step(uFarStoneY, vFarY));
             diffuseColor.rgb = farBase;`)
-            // Own distance haze: the far rings fade into the sky exactly at the
-            // outer edge of the outermost ring, so its border is never visible.
+
+
             .replace('#include <fog_fragment>', `
             float hazeD = vFarDepth;
             float hazeU = clamp((hazeD - uHazeStart) / max(1.0, uHazeEnd - uHazeStart), 0.0, 1.0);
@@ -3246,7 +3289,7 @@
         c.width = 16; c.height = 32;
         const ctx = c.getContext('2d');
         ctx.clearRect(0, 0, 16, 32);
-        // neutral white silhouette; per-instance color comes from actual models
+
         ctx.fillStyle = '#ffffff';
         ctx.beginPath(); ctx.ellipse(8, 11, 7, 10, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#d8d8d8';
@@ -3389,14 +3432,15 @@
 
         for (let level = 0; level < steps.length; level++) {
           const step = steps[level];
-          // Meet the neighbouring ring exactly: level 0 leaves the detailed
-          // area open, outer rings start where the previous ring ends.
+
+
           const innerCells = level === 0 ? Math.ceil(((DETAIL_CHUNK_RADIUS + 1) * CHUNK_SIZE) / step) : side / 8;
           const positions = new Float32Array(vertexCount * 3);
           const uvs = new Float32Array(vertexCount * 2);
           const farSurf = new Float32Array(vertexCount * 4);
           const farCol = new Float32Array(vertexCount * 3);
           const farData = new Float32Array(vertexCount * 3);
+          const farBasalt = new Float32Array(vertexCount);
           const farHeight = new Float32Array(vertexCount);
           const indices = [];
 
@@ -3413,41 +3457,42 @@
               if (Math.abs(x - side / 2) >= innerCells || Math.abs(z - side / 2) >= innerCells) {
                 const wx = centerX + lx, wz = centerZ + lz;
                 const baseY = terrainTrend(wx + WORLD_SEED, wz + WORLD_SEED);
-                // Classify the surface exactly the way the near terrain does:
-                // dominant-biome surf flags and the stone / dirt / grass masks.
-                // The far rings used to blend the biome weights instead, which
-                // tinted the fake terrain a different colour from the real
-                // chunks it butts against.
+
+
+
+
+
                 const colY = columnDensity(wx + WORLD_SEED, wz + WORLD_SEED).h;
-                // Classify at the real ground level, so the far rings see the
-                // same "this is the surface" reading the near mesh does.
+
+
                 const surfY = WORLD_TERRAIN === 'realistic'
                   ? groundYAt(wx + WORLD_SEED, wz + WORLD_SEED)
                   : colY;
                 const col = surfaceColor(wx, surfY, wz);
                 farCol[i * 3] = col[0]; farCol[i * 3 + 1] = col[1]; farCol[i * 3 + 2] = col[2];
                 farData[i * 3] = stoneMask; farData[i * 3 + 1] = dirtMask; farData[i * 3 + 2] = grassMask;
+                farBasalt[i] = basaltMask;
                 farSurf[i * 4] = _surf[0]; farSurf[i * 4 + 1] = _surf[1];
                 farSurf[i * 4 + 2] = _surf[2]; farSurf[i * 4 + 3] = _surf[3];
                 farHeight[i] = colY;
                 const pad = level === 0 ? industrialPadAt(wx, wz) : null;
                 const terrainY = pad ? baseY + (pad.site.y0 - baseY) * pad.w : baseY;
-                // Distant-range backdrop: a ridge line the near terrain cannot
-                // show, scaled so it keeps the same apparent size at any
-                // distance, and faded out as the player gets close to it.
+
+
+
                 const dist = Math.hypot(wx - px, wz - pz);
                 let fade = (dist - FAR_RANGE_START) / (FAR_RANGE_FULL - FAR_RANGE_START);
                 fade = fade < 0 ? 0 : fade > 1 ? 1 : fade;
                 const backdrop = FAR_RANGE_AMP * (dist / FAR_RANGE_REF) * fade * fade * (3 - 2 * fade)
                   * farRidge(wx + WORLD_SEED, wz + WORLD_SEED);
                 const farY = (pad ? terrainY : colY) + backdrop;
-                // The ring has to continue the ground the player is standing on.
-                // Inside the detail square (the chunks the player can walk on)
-                // it follows the real surface, 0.75 m under it: the chunk mesh
-                // hides it there and it must not fight the mesh for depth.
-                // Just outside, it eases into the smooth trend over the next
-                // 48 m, so where the detailed chunks end there is no step in
-                // front of the player and no cliff down to a smoothed world.
+
+
+
+
+
+
+
                 const beyond = farRingBeyond(wx, wz, centerX, centerZ);
                 let y = farY;
                 if (level === 0 && beyond <= FAR_RING_BLEND) {
@@ -3508,6 +3553,8 @@
           meshFarCol.set(farCol);
           const meshFarData = new Float32Array((vertexCount + skirtCount) * 3);
           meshFarData.set(farData);
+          const meshFarBasalt = new Float32Array(vertexCount + skirtCount);
+          meshFarBasalt.set(farBasalt);
           const meshFarHeight = new Float32Array(vertexCount + skirtCount);
           meshFarHeight.set(farHeight);
           let skirtIndex = vertexCount;
@@ -3527,6 +3574,7 @@
                 meshFarCol[bottom * 3 + c] = farCol[top * 3 + c];
                 meshFarData[bottom * 3 + c] = farData[top * 3 + c];
               }
+              meshFarBasalt[bottom] = farBasalt[top];
               meshFarHeight[bottom] = farHeight[top];
               lower.push(bottom);
             }
@@ -3542,6 +3590,7 @@
           geometry.setAttribute('aFarSurf', new THREE.BufferAttribute(meshFarSurf, 4));
           geometry.setAttribute('aFarCol', new THREE.BufferAttribute(meshFarCol, 3));
           geometry.setAttribute('aFarData', new THREE.BufferAttribute(meshFarData, 3));
+          geometry.setAttribute('aFarBasalt', new THREE.BufferAttribute(meshFarBasalt, 1));
           geometry.setAttribute('aFarY', new THREE.BufferAttribute(meshFarHeight, 1));
           geometry.setIndex(indices);
           geometry.computeVertexNormals();
@@ -3569,7 +3618,7 @@
 
       _buildFarTrees(level, step, innerCells, side, centerX, centerZ) {
         if (typeof VEG_LAYERS === 'undefined' || typeof vegCell !== 'function') return null;
-        // Fake billboard trees read poorly up close; keep them for distant rings only.
+
         if (level < 2) return null;
         if (viewRadius * CHUNK_SIZE > 8192 && level > 2) return null;
         const cell = VEG_LAYERS.canopy.cell;
@@ -3627,8 +3676,8 @@
       update(px, pz) {
         const radius = viewRadius * CHUNK_SIZE;
         const steps = radius > DETAIL_CHUNK_RADIUS * CHUNK_SIZE ? this.ringSteps(radius) : [];
-        // Outer edge of the outermost ring: the haze is scaled to it, so the far
-        // terrain dissolves into the sky exactly where it stops.
+
+
         this.outer = steps.length ? steps[steps.length - 1] * 32 : 0;
         const centerX = Math.floor(px / CHUNK_SIZE) * CHUNK_SIZE;
         const centerZ = Math.floor(pz / CHUNK_SIZE) * CHUNK_SIZE;
@@ -3637,9 +3686,9 @@
         this.rebuild(px, pz).catch((e) => console.warn('far terrain build failed', e));
       }
 
-      // Fade the rings into the sky. The haze is complete at `visFar` (the outer
-      // ring edge or the camera's far plane, whichever comes first), so the fake
-      // terrain has no visible border.
+
+
+
       setHaze(visFar) {
         const col = this.scene.fog ? this.scene.fog.color : null;
         if (this.shader) {
@@ -3658,7 +3707,7 @@
     }
 
 
-    // Entity movement and pathfinding (walkers/wrappers).
+
     function entityBlocked(x, y, z, r, h) {
       const f = world.field;
       for (let a = 0; a < 8; a++) {
@@ -3679,7 +3728,7 @@
     function entityGroundY(x, z, hintY) {
       const fromY = hintY + 6;
       const sy = world.surfaceY(x, z, fromY);
-      // surfaceY returns fromY when it finds no crossing.
+
       if (!Number.isFinite(sy) || sy >= fromY - 0.001 || sy < hintY - 40) {
         return world.getSurfaceHeight(x, z, Math.max(fromY, 90));
       }
@@ -3689,12 +3738,12 @@
     function entityStandY(x, z, hintY, r, h) {
       const gy = entityGroundY(x, z, hintY);
       if (!Number.isFinite(gy)) return null;
-      // Try terrain surface, then nudge up to clear small lips/precision.
+
       for (let up = 0; up <= 1.25; up += 0.25) {
         const y = gy + up;
         if (!entityBlocked(x, y, z, r, h)) return y;
       }
-      // If embedded (terrain edited underfoot), scan upward a bit.
+
       for (let up = 1.5; up <= 3.0; up += 0.5) {
         const y = gy + up;
         if (!entityBlocked(x, y, z, r, h)) return y;
@@ -3731,7 +3780,7 @@
       let expanded = 0;
 
       while (open.length && expanded < 500) {
-        // Pick lowest f (small open set, linear scan is fine).
+
         let bi = 0;
         for (let i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
         const cur = open.splice(bi, 1)[0];
@@ -3748,7 +3797,7 @@
           const nx = cur.x + dx, nz = cur.z + dz;
           const nk = key(nx, nz);
           if (closed.has(nk)) continue;
-          // Keep search local.
+
           if (Math.abs(nx - ox) > 28 || Math.abs(nz - oz) > 28) continue;
           if (dx && dz) {
             const ay = getStand(cur.x + dx, cur.z, cur.y);
@@ -3759,7 +3808,7 @@
           const ny = getStand(nx, nz, cur.y);
           if (ny == null) continue;
           if (Math.abs(ny - cur.y) > maxStep) continue;
-          // Clearance along the move (midpoint) to avoid clipping corners.
+
           const mx = (cur.x + nx) * 0.5 + 0.5, mz = (cur.z + nz) * 0.5 + 0.5;
           const my = Math.max(cur.y, ny);
           if (entityBlocked(mx, my, mz, r, h)) continue;
@@ -3772,13 +3821,13 @@
         }
       }
 
-      // Reconstruct path (skip start cell).
+
       const path = [];
       let n = best;
       while (n && n.p) { path.push({ x: n.x + 0.5, z: n.z + 0.5, y: n.y }); n = n.p; }
       path.reverse();
       if (!path.length) return null;
-      // Aim final step at the actual goal point.
+
       const end = path[path.length - 1];
       end.x = tx; end.z = tz;
       if (gy0 != null) end.y = gy0; else end.y = goalY;
@@ -3855,7 +3904,7 @@
           if (sl > 1e-4) { mx = sdx / sl; mz = sdz / sl; }
         }
 
-        // Gravity and ground.
+
         this.vy -= 26 * dtStep;
         if (this.vy < -40) this.vy = -40;
 
@@ -3868,21 +3917,21 @@
         let ny = this.pos.y + this.vy * dtStep;
         if (!tryMoveY(ny)) {
           if (this.vy < 0) {
-            // Land: find contact.
+
             for (let i = 0; i < 8; i++) {
               const mid = (this.pos.y + ny) * 0.5;
               if (entityBlocked(this.pos.x, mid, this.pos.z, this.radius, this.height)) ny = mid; else this.pos.y = mid;
             }
-            if (entityBlocked(this.pos.x, ny, this.pos.z, this.radius, this.height)) { /* keep pos.y */ } else this.pos.y = ny;
+            if (entityBlocked(this.pos.x, ny, this.pos.z, this.radius, this.height)) {                  } else this.pos.y = ny;
             this.vy = 0;
             this.onGround = true;
           } else {
-            this.vy = 0; // head bump
+            this.vy = 0;
           }
         } else {
           this.onGround = false;
         }
-        // Snap to ground if close.
+
         if (this.onGround || (Number.isFinite(ground) && this.pos.y <= ground + 0.05 && this.vy <= 0)) {
           if (Number.isFinite(ground) && !entityBlocked(this.pos.x, ground, this.pos.z, this.radius, this.height)) {
             if (this.pos.y - ground < 1.2 || this.vy <= 0) {
@@ -3892,25 +3941,25 @@
             }
           }
         }
-        // Stay above terrain when sinking/floating badly.
+
         if (Number.isFinite(ground) && this.pos.y < ground - 0.5) {
           if (!entityBlocked(this.pos.x, ground, this.pos.z, this.radius, this.height)) this.pos.y = ground;
         }
 
-        // Horizontal movement with stepping.
+
         const speed = Math.max(0, this.speed);
         if ((mx || mz) && speed > 0) {
           const stepLen = speed * dtStep;
           const tryMoveXZ = (nx, nz) => {
             const gy = entityGroundY(nx, nz, this.pos.y);
-            // Try at current height, and step up onto higher ground if needed.
+
             const tries = [this.pos.y];
             if (Number.isFinite(gy)) {
               const rise = gy - this.pos.y;
               if (rise > 0.05 && rise <= 1.1) tries.unshift(gy);
-              // Small downhill: allow moving at target ground level to avoid hovering.
+
               if (rise < -0.05 && rise >= -1.5 && !entityBlocked(nx, this.pos.y, nz, this.radius, this.height)) {
-                // keep current y, gravity will settle
+
               } else if (rise < -0.05 && rise >= -1.5) {
                 tries.push(gy);
               }
@@ -3927,11 +3976,11 @@
 
           let moved = tryMoveXZ(this.pos.x + mx * stepLen, this.pos.z + mz * stepLen);
           if (!moved) {
-            // Axis slide.
+
             moved = tryMoveXZ(this.pos.x + mx * stepLen, this.pos.z) || tryMoveXZ(this.pos.x, this.pos.z + mz * stepLen);
           }
           if (!moved) {
-            // Steer around obstacle.
+
             const angs = [0.5, -0.5, 1.0, -1.0, 1.5, -1.5];
             for (const a of angs) {
               const ca = Math.cos(a), sa = Math.sin(a);
@@ -3949,8 +3998,8 @@
           this.stuckT = 0;
         }
 
-        // Prevent drifting far below world in degenerate cases.
-        if (this.pos.y < -20) this.pos.y = entityGroundY(this.pos.x, this.pos.z, 60) || 0;
+
+        if (this.pos.y < CHUNK_Y_MIN * CHUNK_SIZE - 20) this.pos.y = entityGroundY(this.pos.x, this.pos.z, 60) || 0;
       }
 
       dispose() {
@@ -3975,6 +4024,30 @@
       hp: 120,
       despawn: 96,
     };
+    const WRAPPER_SOUND_POOLS = {
+      attack: ['attack-1.ogg', 'attack-2.ogg', 'attack-3.ogg'],
+      hurt: ['hurt-1.ogg', 'hurt-2.ogg', 'hurt-3.ogg', 'hurt-4.ogg', 'hurt-5.ogg'],
+      approach: ['approach-1.ogg', 'approach-2.ogg', 'approach-3.ogg', 'approach-4.ogg', 'approach-5.ogg', 'approach-6.ogg'],
+    };
+    const _wrapperSoundLast = {};
+    function playWrapperSound(name, pos) {
+      const pool = WRAPPER_SOUND_POOLS[name];
+      if (!pool || !pool.length) return;
+      const dx = pos.x - player.pos.x, dz = (pos.z ?? 0) - (player.pos.z ?? 0);
+      const dy = (pos.y ?? 0) - (player.pos.y ?? 0);
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > 40) return;
+      const vol = Math.max(0, 1 - dist / 40) * 0.85 * (typeof masterVolume === 'number' ? masterVolume : 1);
+      if (vol <= 0.01) return;
+      let pick = pool[(Math.random() * pool.length) | 0];
+      if (pool.length > 1 && pick === _wrapperSoundLast[name]) pick = pool[(pool.indexOf(pick) + 1) % pool.length];
+      _wrapperSoundLast[name] = pick;
+      try {
+        const a = new Audio(`assets/audio/enemies/wrapper/${pick}`);
+        a.volume = Math.min(1, vol);
+        a.play().catch(() => {});
+      } catch {}
+    }
     let wrapperTemplate = null;
 
     class Wrapper extends Walker {
@@ -3984,7 +4057,7 @@
         this.mesh.geometry.dispose();
         this.mesh.material.dispose();
 
-        // Wrapper is a larger biped; use a taller body for pathing/collision.
+
         this.radius = 0.45;
         this.height = 1.75;
         const sy = entityStandY(x, z, this.pos.y, this.radius, this.height);
@@ -4017,6 +4090,7 @@
         this.dying = 0;
         this.dead = false;
         this.screamCd = 8 + Math.random() * 12;
+        this.approachCd = 4 + Math.random() * 8;
         this.speed = WRAPPER.speedWalk;
         this.mesh = this.root;
         world.scene.add(this.mesh);
@@ -4062,6 +4136,12 @@
           if (d > 12) this.play('scream', 0.2);
         }
 
+        this.approachCd -= dt;
+        if (this.approachCd <= 0 && d < 30 && d >= WRAPPER.attackRange) {
+          this.approachCd = 6 + Math.random() * 12;
+          playWrapperSound('approach', this.pos);
+        }
+
         super.update(dt, playerPos);
 
         const dx = playerPos.x - this.pos.x, dz = playerPos.z - this.pos.z;
@@ -4079,6 +4159,7 @@
       hurtBy(amount) {
         if (this.dying > 0) return;
         this.hp -= amount;
+        playWrapperSound('hurt', this.pos);
         if (this.hp <= 0) {
           this.dying = 0.9;
           this.play('scream', 0.05);
@@ -4152,7 +4233,7 @@
 
         this.root = cloneSkeleton(tpl.scene);
 
-        // Scale to a sensible chicken height regardless of authoring units.
+
         const box = new THREE.Box3().setFromObject(this.root);
         const size = box.getSize(new THREE.Vector3());
         const h = Math.max(0.001, size.y);
@@ -4295,7 +4376,7 @@
         } else if (this.applyLegVerts(phase, amt)) {
           this.bob = Math.abs(Math.sin(phase)) * 0.01 * amt;
         } else {
-          // No leg nodes/verts found: bob and rock the whole body so it still reads as walking.
+
           this.bob = Math.abs(Math.sin(phase)) * 0.02 * amt;
           this.root.rotation.z = Math.sin(phase) * 0.06 * amt;
         }
@@ -4391,9 +4472,9 @@
     let PIXEL = getSetting('resolution');
     renderer.setPixelRatio(1);
     let postTarget = null;
-    // While a replay is exported the renderer draws at the export size
-    // instead of the window size, so the captured frames are the export
-    // resolution and not a screen recording of it.
+
+
+
     let exportRes = null;
     function applyPixelSize() {
       const ex = exportRes;
@@ -4421,6 +4502,7 @@
         uLevels: { value: COLOR_LEVELS },
         uRadBlur: { value: 0 },
         uRadDark: { value: 0 },
+        uDriveRed: { value: 0 },
         uTime: { value: 0 },
       },
       vertexShader: `
@@ -4429,7 +4511,7 @@
       fragmentShader: `
     varying vec2 vUv;
     uniform sampler2D tDiffuse; uniform float uLevels;
-    uniform float uRadBlur; uniform float uRadDark; uniform float uTime;
+    uniform float uRadBlur; uniform float uRadDark; uniform float uDriveRed; uniform float uTime;
     float bayer(vec2 p) {
       int x = int(mod(p.x, 4.0)), y = int(mod(p.y, 4.0));
       int i = y * 4 + x;
@@ -4457,6 +4539,7 @@
         c *= mix(1.0, vig, 0.85) * (1.0 - uRadDark * 0.35);
         c += (bayer(gl_FragCoord.xy) - 0.5) * (1.5 / uLevels);
         c = floor(c * uLevels + 0.5) / uLevels;
+        if (uDriveRed > 0.5) c = vec3(c.r * 1.35, 0.0, 0.0);
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -4465,6 +4548,7 @@
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       c += (bayer(gl_FragCoord.xy) - 0.5) * (1.5 / uLevels); // 1.5 LSB dither kills banding
       c = floor(c * uLevels + 0.5) / uLevels;
+      if (uDriveRed > 0.5) c = vec3(c.r * 1.35, 0.0, 0.0);
       gl_FragColor = vec4(c, 1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -4511,10 +4595,10 @@
     scene.add(fill);
 
 
-    // Radial sprite helper: soft-edged discs/halos built from a gradient, so the
-    // sun and the moon get a real limb instead of a hard vector circle.
-    // The gradient runs 0 (centre) to 1 (the circle inscribed in the square),
-    // so a plane of size 2*R shows a disc of radius R.
+
+
+
+
     function radialSprite(stops, size = 256) {
       const c = document.createElement('canvas');
       c.width = c.height = size;
@@ -4528,8 +4612,8 @@
       return t;
     }
 
-    // Sun: hot core with limb darkening, plus two halo layers (near bloom and
-    // wide corona) so it reads as a light source instead of a pasted circle.
+
+
     const sunDisc = new THREE.Mesh(
       new THREE.PlaneGeometry(28, 28),
       new THREE.MeshBasicMaterial({
@@ -4573,8 +4657,8 @@
     );
     scene.add(sunHalo);
 
-    // Moon: cratered disc with limb shading, plus a cool halo. Placed off the
-    // exact antisolar point so it does not sit at a mirror angle of the sun.
+
+
     function moonTexture(size = 256) {
       const c = document.createElement('canvas');
       c.width = c.height = size;
@@ -4582,7 +4666,7 @@
       const R = size / 2;
       g.fillStyle = '#c9cdd4';
       g.fillRect(0, 0, size, size);
-      // maria: broad dark patches
+
       g.fillStyle = 'rgba(120,128,140,0.55)';
       const patches = [[0.30, 0.34, 0.20], [0.62, 0.28, 0.16], [0.45, 0.66, 0.24], [0.72, 0.58, 0.12]];
       for (const [px, py, pr] of patches) {
@@ -4590,7 +4674,7 @@
         g.arc(R + (px - 0.5) * size, R + (py - 0.5) * size, pr * R, 0, Math.PI * 2);
         g.fill();
       }
-      // craters: rim highlight + dark floor
+
       let seed = 1337;
       const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
       for (let i = 0; i < 42; i++) {
@@ -4602,19 +4686,19 @@
         g.beginPath(); g.arc(cx - cr * 0.18, cy - cr * 0.18, cr * 0.86, 0, Math.PI * 2);
         g.fillStyle = 'rgba(214,218,226,0.45)'; g.fill();
       }
-      // limb shading: darken the rim so the disc reads spherical
+
       const shade = g.createRadialGradient(R, R, R * 0.45, R, R, R);
       shade.addColorStop(0, 'rgba(0,0,0,0)');
       shade.addColorStop(1, 'rgba(0,0,0,0.55)');
       g.fillStyle = shade;
       g.fillRect(0, 0, size, size);
-      // clip to a circle: the plane is square, the moon is not
+
       g.globalCompositeOperation = 'destination-in';
       g.beginPath();
       g.arc(R, R, R, 0, Math.PI * 2);
       g.fillStyle = '#fff';
       g.fill();
-      // feather the rim so the edge does not cut hard against the sky
+
       g.globalCompositeOperation = 'destination-out';
       const feather = g.createRadialGradient(R, R, R * 0.88, R, R, R);
       feather.addColorStop(0, 'rgba(0,0,0,0)');
@@ -4644,12 +4728,12 @@
       })
     );
     scene.add(moonGlow);
-    // A cold key light so the night is lit by the moon, not just by ambient.
+
     const moonLight = new THREE.DirectionalLight(0xaec4ff, 0);
     scene.add(moonLight);
     scene.add(moonLight.target);
 
-    // The sky bodies draw before the cloud layer, so clouds pass in front of them.
+
     for (const m of [sunDisc, sunGlow, sunHalo, moonDisc, moonGlow]) m.renderOrder = -1;
 
 
@@ -4728,7 +4812,7 @@
     const ITEMS = { ...ITEM_DEFS };
 
 
-    const BARE_HANDS = { radius: 1.1, rate: 0.6, yield: 1, good: ['dirt', 'grass', 'stone'] };
+    const BARE_HANDS = { radius: 1.1, rate: 0.6, yield: 1, damage: 15, good: ['dirt', 'grass', 'stone', 'basalt'] };
 
     const itemIconCache = new Map();
     const itemSpriteCache = new Map();
@@ -5130,6 +5214,10 @@
 
 
     const clock = { day: 1, t: 0 };
+    let nuclearStrikes = [];
+    let lastNukeCheckDay = 0;
+    let nukeRadMult = 1;
+    const nukeFx = [];
     let playTime = 0;
     function formatPlayTime(sec) {
       const s = Math.max(0, Math.floor(Number(sec) || 0));
@@ -5172,24 +5260,24 @@
     let machineSystem = null;
     let mapSystem = null;
 
-    // Ambient pressure starts gently on RAD_START_DAY and scales continuously,
-    // so the meter moves from the first day instead of waiting for a tier jump.
+
+
     function ambientRad() {
       const tiers = Math.max(0, clock.day - TUNING.RAD_START_DAY + 1) / TUNING.RAD_RAMP_DAY;
       return tiers <= 0 ? 0 : TUNING.AMBIENT_BASE * Math.pow(tiers, TUNING.AMBIENT_EXP);
     }
-    // Radiation has a direction. The ambient field comes from the world's
-    // fallout spot and machines radiate from their own block, so solid ground
-    // between the player and that direction absorbs part of the dose.
+
+
+
     function radSource() {
       return sourcePoint(WORLD_SEED, TUNING.RAD_SOURCE_DIST);
     }
     function radFactor(x, y, z) {
       return solidAt(world.field, x, y, z) ? RAD_OCCL.solid : 1;
     }
-    // Near-field shadow march toward a source: 1 = clear line, ~0.2 = buried.
-    // Walls are shadowed separately: the point march would step straight over a
-    // 25 cm panel, so the building system attenuates by material thickness.
+
+
+
     function radTransmission(dx, dy, dz) {
       if (!world) return 1;
       const t = transmission(radFactor, player.pos.x, player.pos.y + 1, player.pos.z, dx, dy, dz);
@@ -5197,8 +5285,186 @@
       return Math.max(TUNING.RAD_OCCL_FLOOR, t * w);
     }
 
-    // Ambient and machine radiation, split so the scrubber only cuts ambient.
-    // Cached briefly: the field only has to keep up with the HUD.
+    function nukeStrikeActive() { return nuclearStrikes.length > 0; }
+    function nukeStrikeExclusion(r) { return r + (TUNING.NUKE_GAP || 180); }
+    function nukeSiteClear(x, z, r) {
+      const ex = nukeStrikeExclusion(r);
+      if (machineSystem) for (const m of machineSystem.instances) if (Math.hypot(m.x - x, m.z - z) < ex) return false;
+      if (buildingSystem) for (const p of buildingSystem.pieces.values()) if (Math.hypot(p.x - x, p.z - z) < ex) return false;
+      for (const s of nuclearStrikes) if (Math.hypot(s.x - x, s.z - z) < s.r + r + 40) return false;
+      return true;
+    }
+    function findNukeSite() {
+      const r = TUNING.NUKE_RADIUS || 28;
+      const px = player.pos.x, pz = player.pos.z;
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const dist = 320 + attempt * 18 + Math.random() * 420;
+        const a = Math.random() * Math.PI * 2;
+        const x = px + Math.cos(a) * dist;
+        const z = pz + Math.sin(a) * dist;
+        if (Math.hypot(x - px, z - pz) < 220) continue;
+        if (nukeSiteClear(x, z, r)) return { x, z, r };
+      }
+      return null;
+    }
+    function carveNukeCrater(x, y, z, r) {
+      const f = world.field;
+      const minY = CHUNK_Y_MIN * CHUNK_SIZE + 2;
+      const x0 = Math.floor(x - r), x1 = Math.ceil(x + r);
+      const y0 = Math.max(minY, Math.floor(y - r)), y1 = Math.ceil(y + r * 0.45);
+      const z0 = Math.floor(z - r), z1 = Math.ceil(z + r);
+      for (let ix = x0; ix <= x1; ix++) {
+        for (let iy = y0; iy <= y1; iy++) {
+          for (let iz = z0; iz <= z1; iz++) {
+            const dx = ix - x, dy = (iy - y) * 1.15, dz = iz - z;
+            if (dx * dx + dy * dy + dz * dz <= r * r) f.set(ix, iy, iz, -1);
+          }
+        }
+      }
+      world.markEdited(x0, x1, y0, y1, z0, z1);
+    }
+    function spawnNukeFx(x, y, z, r) {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      group.frustumCulled = false;
+      const mat = (color, opts = {}) => {
+        const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, fog: false, depthWrite: false, ...opts });
+        return m;
+      };
+      const lambert = (color, opts = {}) => {
+        const m = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 1, fog: false, flatShading: true, ...opts });
+        return m;
+      };
+
+      const flash = new THREE.Mesh(new THREE.SphereGeometry(1, 7, 5), mat(0xfff6c8, { blending: THREE.AdditiveBlending }));
+      flash.scale.setScalar(r * 0.7);
+      flash.position.y = r * 0.2;
+      group.add(flash);
+
+      const fire = new THREE.Mesh(new THREE.SphereGeometry(1, 7, 5), mat(0xff5a00, { blending: THREE.AdditiveBlending }));
+      fire.scale.set(r * 0.55, r * 0.45, r * 0.55);
+      fire.position.y = r * 0.15;
+      group.add(fire);
+
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.22, r * 0.45, 1, 6, 1, true), lambert(0x5a5248));
+      stem.position.y = r * 0.5;
+      stem.scale.y = r * 0.8;
+      group.add(stem);
+
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), lambert(0x7a7268));
+      cap.scale.set(r * 1.1, r * 0.55, r * 1.1);
+      cap.position.y = r * 1.6;
+      group.add(cap);
+
+      const capTop = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 5), lambert(0x9a9288));
+      capTop.scale.set(r * 0.75, r * 0.35, r * 0.75);
+      capTop.position.y = r * 1.95;
+      group.add(capTop);
+
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 0.9, r * 0.12, 5, 10), lambert(0x8a8072));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = r * 0.25;
+      group.add(ring);
+
+      const dust = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.8, r * 1.4, r * 0.35, 8, 1, true), lambert(0xb8aa90));
+      dust.position.y = r * 0.18;
+      group.add(dust);
+
+      group.traverse((o) => { o.frustumCulled = false; });
+      scene.add(group);
+      nukeFx.push({ group, x, y, z, r, age: 0, life: 90, parts: { flash, fire, stem, cap, capTop, ring, dust } });
+    }
+
+    function updateNukeFx(dt) {
+      for (let i = nukeFx.length - 1; i >= 0; i--) {
+        const fx = nukeFx[i];
+        fx.age += dt;
+        const t = fx.age;
+        const r = fx.r;
+        const p = fx.parts;
+        const blast = Math.max(0, 1 - t / 2.8);
+        const rise = Math.min(1, t / 6);
+        const settle = Math.min(1, Math.max(0, (t - 8) / 25));
+        const fade = t > fx.life - 12 ? Math.max(0, (fx.life - t) / 12) : 1;
+
+        p.flash.scale.setScalar(r * (0.7 + (1 - blast) * 2.4));
+        p.flash.material.opacity = blast * 0.95 * fade;
+        p.flash.position.y = r * (0.2 + (1 - blast) * 0.4);
+
+        p.fire.scale.set(r * (0.55 + (1 - blast) * 1.5), r * (0.45 + (1 - blast) * 1.2), r * (0.55 + (1 - blast) * 1.5));
+        p.fire.material.opacity = blast * 0.85 * fade;
+        p.fire.material.color.setHex(t < 0.8 ? 0xfff0a0 : t < 2 ? 0xff6a00 : 0xff3a00);
+        p.fire.position.y = r * (0.15 + rise * 0.8);
+
+        const stemH = r * (0.8 + rise * 5.5);
+        p.stem.scale.set(1, stemH, 1);
+        p.stem.position.y = stemH * 0.5;
+        p.stem.material.opacity = (0.85 - settle * 0.35) * fade;
+        p.stem.material.color.setHex(t < 3 ? 0x7a5a3a : 0x5a5248);
+
+        const capY = r * (1.6 + rise * 5.2);
+        const capS = 1 + rise * 1.8 + settle * 0.8;
+        p.cap.position.y = capY;
+        p.cap.scale.set(r * 1.1 * capS, r * 0.55 * capS, r * 1.1 * capS);
+        p.cap.material.opacity = (0.88 - settle * 0.25) * fade;
+        p.capTop.position.y = capY + r * 0.35 * capS;
+        p.capTop.scale.set(r * 0.75 * capS, r * 0.35 * capS, r * 0.75 * capS);
+        p.capTop.material.opacity = (0.82 - settle * 0.3) * fade;
+
+        p.ring.scale.setScalar(1 + (1 - blast) * 3.5);
+        p.ring.material.opacity = blast * 0.55 * fade;
+        p.ring.position.y = r * (0.25 + (1 - blast) * 0.1);
+
+        p.dust.scale.set(1 + (1 - blast) * 2.2, 1 + (1 - blast) * 0.8, 1 + (1 - blast) * 2.2);
+        p.dust.material.opacity = blast * 0.45 * fade;
+
+        if (t >= fx.life) {
+          scene.remove(fx.group);
+          fx.group.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+          nukeFx.splice(i, 1);
+        }
+      }
+    }
+
+    let nukeBoomAudio = null;
+    function playNukeBoom() {
+      try {
+        if (!nukeBoomAudio) {
+          nukeBoomAudio = new Audio('assets/audio/nuke-explosion.mp3');
+          nukeBoomAudio.preload = 'auto';
+        }
+        nukeBoomAudio.pause();
+        nukeBoomAudio.currentTime = 0;
+        nukeBoomAudio.volume = Math.max(0, Math.min(1, typeof masterVolume === 'number' ? masterVolume : 1));
+        void nukeBoomAudio.play();
+      } catch { }
+    }
+
+    function spawnNuclearStrike() {
+      const site = findNukeSite();
+      if (!site) return false;
+      const ground = Math.ceil(terrainTrend(site.x + WORLD_SEED, site.z + WORLD_SEED));
+      const y = world.surfaceY(site.x, site.z, ground + 30);
+      carveNukeCrater(site.x, y, site.z, site.r);
+      nuclearStrikes.push({ x: site.x, y, z: site.z, day: clock.day, r: site.r, radMult: nukeRadMult });
+      nukeRadMult *= 1.5;
+      shakeT = Math.max(shakeT, 2.5);
+      playNukeBoom();
+      spawnNukeFx(site.x, y, site.z, site.r);
+      mapSystem?.noteStrike(site.x, site.z, clock.day, site.r);
+      notice(`NUCLEAR STRIKE · ${Math.round(site.x)}, ${Math.round(site.z)} · SEEK COVER`);
+      return true;
+    }
+    function maybeNuclearStrike() {
+      if (clock.day <= 0) return;
+      if (clock.day === lastNukeCheckDay) return;
+      if (clock.day % (TUNING.NUKE_DAY_INTERVAL || 10) !== 0) return;
+      lastNukeCheckDay = clock.day;
+      if (Math.random() < (TUNING.NUKE_CHANCE ?? 0.5)) spawnNuclearStrike();
+    }
+
+
+
     let _radField = null, _radFieldAt = -1e9;
     function radField() {
       const now = performance.now();
@@ -5210,8 +5476,8 @@
       let dx = src.x - px, dz = src.z - pz;
       const d = Math.hypot(dx, dz) || 1;
       dx /= d; dz /= d;
-      // Overhead cover: rock above the player shields the ambient fallout field
-      // strongly, so being underground cuts dose by a lot.
+
+
       const surfY = world.surfaceY(px, pz, Math.ceil(terrainTrend(px + WORLD_SEED, pz + WORLD_SEED)) + 30);
       const depth = Math.max(0, surfY - py);
       const burial = depth <= 0.5 ? 1 : Math.pow(0.45, Math.min(depth, 40));
@@ -5230,6 +5496,17 @@
           machine += contrib;
           if (contrib > best) { best = contrib; bx = ux; bz = uz; bdist = ed; }
         }
+      }
+      for (const s of nuclearStrikes) {
+        const ex = s.x - px, ey = (s.y + 1) - py, ez = s.z - pz;
+        const ed = Math.hypot(ex, ey, ez);
+        const r = (TUNING.NUKE_RAD || 500) * (s.radMult ?? 1) / (1 + ed * ed * 0.004);
+        if (r < 1e-4) continue;
+        const k = 1 / (ed || 1);
+        const ux = ex * k, uy = ey * k, uz = ez * k;
+        const contrib = r * radTransmission(ux, uy, uz);
+        machine += contrib;
+        if (contrib > best) { best = contrib; bx = ux; bz = uz; bdist = ed; }
       }
       _radField = { ambient, machine, dx: bx, dz: bz, dist: bdist };
       return _radField;
@@ -5260,8 +5537,8 @@
       const a = sunCycleT() * Math.PI * 2;
       const elev = Math.sin(a);
       SUN_DIR.set(Math.cos(a) * 0.82, elev, 0.38 + Math.cos(a) * 0.22).normalize();
-      // The moon rides just over half a cycle out of phase with the sun: it
-      // rises before dusk, crosses at midnight and sets after dawn.
+
+
       const ma = (sunCycleT() + 0.44) * Math.PI * 2;
       MOON_DIR.set(Math.cos(ma) * 0.82, Math.sin(ma), 0.38 + Math.cos(ma) * 0.22).normalize();
 
@@ -5280,8 +5557,8 @@
       cloudUniforms.uDay.value = day;
       sunVis = Math.max(0, Math.min(1, elev * 8 + 0.15));
 
-      // The moon is out when it is above the horizon: full at night, a pale
-      // daytime disc in the day.
+
+
       const moonUp = Math.max(0, Math.min(1, (MOON_DIR.y - 0.02) * 6 + 0.15));
       moonVis = moonUp * (0.30 + 0.70 * (1 - day));
       moonLight.intensity = 0.16 * (1 - day) * moonUp;
@@ -5477,14 +5754,14 @@
     let propAngle = 0;
     let propItem = null;
 
-    // Items without a 3D model are still held: a flat icon shown low and centre,
-    // as if carried in both hands. It bobs with movement but never spins.
+
+
     const vmHeld = new THREE.Group();
     vmHeld.visible = false;
     vmRig.add(vmHeld);
     const heldIconGeo = new THREE.PlaneGeometry(1, 1);
     const heldIconTex = new Map();
-    // uCut is the messy bite line: 1.2 = whole icon, below 0 = fully eaten.
+
     const heldIconU = {
       uMap: { value: null },
       uCut: { value: 1.2 },
@@ -5546,8 +5823,8 @@
     function propModelUrl(id) {
       if (id === 'flashlight') return null;
       if (TOOL_MODELS[id]) return null;
-      // The icon renderer already probes the model file; if it cached a miss,
-      // skip another failed GLB request and go straight to the hand icon.
+
+
       if (modelIconTried(id) && !cachedModelIcon(id)) return null;
       return itemModelIcon(id);
     }
@@ -5614,9 +5891,9 @@
     }
 
 
-    // Eating a food that has no 3D model: the flat held icon is chewed down from
-    // the top (jagged bites, not a straight slice) and the effects only land when
-    // the last bite is gone. The animation *is* the eating time.
+
+
+
     const EAT_TIME = 1.4;
     const EAT_REST = { x: 0.02, y: -0.15, z: -0.50 };
     let eat = null;
@@ -5745,7 +6022,7 @@
         treeChopSound.currentTime = 0;
         treeChopSound.play().catch(() => {});
       } catch (e) {
-        // Audio can fail on some browsers before user interaction; ignore quietly.
+
       }
     }
 
@@ -5767,7 +6044,7 @@
       if (drink) { updateDrink(dt); return; }
 
       const s = inv.hot[inv.sel];
-      // A replay holds the item it recorded, even though the bag does not.
+
       const held = replayHeld ? replayHeld.id : (s ? s.id : null);
       const showingHeld = !!(held && !invOpen && !workbenchUI.opened && (locked || !!replayHeld));
       if (showingHeld !== !!vm._showingHeld || held !== vm._lastHeld) {
@@ -5790,7 +6067,7 @@
         vm.equipT += dt / 0.35;
         const e = Math.min(1, vm.equipT);
         const ease = 1 - Math.pow(1 - e, 3);
-        equipDrop = -(1 - ease) * 1.15; // rise up from below the viewport
+        equipDrop = -(1 - ease) * 1.15;
         equipRot = -(1 - ease) * 0.18;
         if (e >= 1) vm.equipT = 1e9;
       }
@@ -5798,7 +6075,7 @@
       if (held && propModelUrl(held)) {
         if (propItem !== held) { propItem = held; loadPropModel(held); }
         if (vm.model) { vm.model.visible = false; vm.model = null; vm.item = null; }
-        const show = !invOpen && !workbenchUI.opened && (locked || !!replayHeld);
+        const show = !invOpen && !workbenchUI.opened && (locked || !!replayHeld) && !drive;
         vmRig.visible = show;
         if (!show) return;
         for (const m of propModels.values()) m.visible = false;
@@ -5838,9 +6115,9 @@
         }
       }
 
-      vmRig.visible = !!vm.model && !invOpen && !workbenchUI.opened && locked;
+      vmRig.visible = !!vm.model && !invOpen && !workbenchUI.opened && locked && !drive;
       if (!vm.model) {
-        if (s && ITEMS[s.id] && !TOOL_MODELS[s.id] && !invOpen && !workbenchUI.opened && locked) {
+        if (s && ITEMS[s.id] && !TOOL_MODELS[s.id] && !invOpen && !workbenchUI.opened && locked && !drive) {
           vmRig.visible = true;
           vmRig.position.set(0, equipDrop, 0);
           vmRig.rotation.set(equipRot * 0.4, 0, 0);
@@ -5935,11 +6212,11 @@
     let torchTemplate = null;
 
 
-    // Torches are plain point lights: one fixed pool, assigned to the nearest
-    // torches. Terrain, machines, building pieces and every model light the
-    // same way, with no per-material shader patching.
+
+
+
     const TORCH_LIGHTS = 8;
-    const TORCH_LIGHT_GAIN = 16; // intensity per light.power, tuned against the night ambient
+    const TORCH_LIGHT_GAIN = 16;
     const torchLights = Array.from({ length: TORCH_LIGHTS }, () => {
       const l = new THREE.PointLight(0xffffff, 0, 9, 2);
       l.position.set(0, -999, 0);
@@ -5974,8 +6251,8 @@
 
 
 
-    // Textured plants wear the colour of the ground they grow on: the savanna's
-    // take the tint of its dry grass texture.
+
+
     const _vegWhite = new THREE.Color(1, 1, 1);
     const VEG_BIOME_TINT = new Map([[B.SAVANNA, new THREE.Color(...vegTint('savanna'))]]);
 
@@ -6028,8 +6305,8 @@
     ];
 
 
-    // Trees stay visible across almost the full 6-chunk detailed terrain radius.
-    // Low vegetation keeps its shorter range so it does not add distant clutter.
+
+
     for (const sp of VEG_SPECIES) {
       sp.dist = sp.layer === 'canopy' ? 100 : Math.min(sp.dist, 52);
     }
@@ -6046,8 +6323,8 @@
     }
 
 
-    // Tree density is not uniform: broad groves and copses with scattered
-    // singles between them. Forests keep their cover but thin out in clearings.
+
+
     function canopyFill(x, z, b, base) {
       if (b === B.FOREST || b === B.JUNGLE) return base;
       const sx = x + WORLD_SEED, sz = z + WORLD_SEED;
@@ -6132,7 +6409,7 @@
         if (y <= -8) return null;
 
         if (mountainRockAt(pl.x, pl.z)) return null;
-        if (WORLD_TERRAIN === 'realistic' && y > 112) return null; // treeline
+        if (WORLD_TERRAIN === 'realistic' && y > 112) return null;
 
         if (caveCarveAt(pl.x + WORLD_SEED, y + 0.4, pl.z + WORLD_SEED) > 0.02) return null;
         if ((sp.layer === 'canopy' || sp.layer === 'ground' || sp.layer === 'cover' || sp.layer === 'floor') && groundDepth(pl.x, y, pl.z) >= 1.2) return null;
@@ -6188,8 +6465,8 @@
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      // vertexColors carries the per-instance biome tint (instanceColor) into
-      // the fragment shader; the card itself stays untinted white.
+
+
       geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3));
       geo.setIndex(idx);
       const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, vertexColors: true });
@@ -6664,8 +6941,8 @@
       });
       await industrialPreload;
       if (playBtnEl) { playBtnEl.textContent = 'RESUME'; playBtnEl.disabled = false; }
-      // The intro's button only opens once the world is really loaded; the
-      // loading screen above it is what shows the progress.
+
+
       if (introBtnEl && window.__NUCLEARISM_READY_COMPLETE__) { introBtnEl.textContent = 'ENTER THE ZONE'; introBtnEl.disabled = false; }
     })();
     {
@@ -6756,7 +7033,7 @@
         _m.compose(_v, pl.q, _sc);
         for (const part of sp.parts) {
           part.mesh.setMatrixAt(i, _m);
-          // Textured plants take the colour of the biome they stand in.
+
           if (sp.tex) part.mesh.setColorAt(i, VEG_BIOME_TINT.get(pl.b) || _vegWhite);
         }
         i++;
@@ -7237,8 +7514,8 @@
     const TREE_FRUITS = ['apple', 'orange', 'pear'];
     const TREE_FRUIT_CHANCE = 0.10;
     const TREE_SHAKE_SOUND = 'assets/audio/tree-shake.flac';
-    const TREE_SHAKE_HOLD = 0.35; // keep rustling this long after the last punch
-    const TREE_SHAKE_FADE = 0.1;  // then fade out instead of cutting dead or running to the end
+    const TREE_SHAKE_HOLD = 0.35;
+    const TREE_SHAKE_FADE = 0.1;
     let treeShakeAudio = null;
     let treeShakeIdle = 0;
 
@@ -7366,15 +7643,15 @@
       oxygen: 1,
     };
 
-    // Sandbox flight: double-tap Space toggles it. Space = up, Shift = down,
-    // WASD is yaw-only (never relative to the camera pitch) and you noclip.
+
+
     let flying = false;
     let lastSpaceTap = 0;
 
     const footsteps = createFootsteps();
     let stepAccum = 0;
 
-    // Ambient day music: handpicked Abstraction CC0 tracks, day only.
+
     const AMBIENT_TRACKS = [
       'Sketchbook 2025-11-23.ogg',
       'Sketchbook 2025-11-26.ogg',
@@ -7384,6 +7661,7 @@
     ].map((file) => ({
       src: `assets/audio/music/${encodeURIComponent(file)}`,
       name: file.replace(/\.ogg$/i, '').replace(/_/g, ' '),
+      loops: /^Sketchbook 2025-12-17_(CHILL|SOFT)\.ogg$/i.test(file) ? 3 : 1,
     }));
     const AMBIENT_FADE = 12;
     const AMBIENT_LEVEL = 0.28;
@@ -7399,6 +7677,7 @@
     let ambientCardTimer = 0;
     let ambientRetry = 0;
     let ambientCooldown = 0;
+    let ambientLoopsLeft = 0;
     const nowPlayingEl = document.getElementById('nowPlaying');
     const nowPlayingNameEl = document.getElementById('nowPlayingName');
 
@@ -7420,6 +7699,7 @@
       ambientTrack = pickAmbientTrack();
       const track = AMBIENT_TRACKS[ambientTrack];
       if (!track) return;
+      ambientLoopsLeft = Math.max(0, (track.loops || 1) - 1);
       ambientAudio.src = track.src;
       ambientAudio.currentTime = 0;
       ambientAudio.volume = Math.max(0, Math.min(1, ambientVol * masterVolume));
@@ -7429,6 +7709,13 @@
     }
     ambientAudio.addEventListener('ended', () => {
       if (!isDay()) return;
+      if (ambientLoopsLeft > 0) {
+        ambientLoopsLeft -= 1;
+        ambientAudio.currentTime = 0;
+        const p = ambientAudio.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+        return;
+      }
       ambientCooldown = AMBIENT_GAP + (Math.random() < AMBIENT_SILENCE_CHANCE ? AMBIENT_SILENCE : 0);
     });
     function updateAmbientMusic(dt) {
@@ -7458,6 +7745,57 @@
       }
     }
 
+    const MACHINE_LOCKERS = new Set(['armor_workbench', 'gun_workbench', 'medicine_workbench']);
+    const MACHINE_AMBIENT_VOL = 0.12;
+    const MACHINE_REACTOR_VOL = 0.14;
+    const MACHINE_SOUND_RANGE = 35;
+    const machineAmbientAudio = new Audio('assets/audio/machines/industrial-ambience.mp3');
+    machineAmbientAudio.loop = true;
+    machineAmbientAudio.preload = 'auto';
+    machineAmbientAudio.volume = 0;
+    const machineReactorAudio = new Audio('assets/audio/machines/reactor-cycle.mp3');
+    machineReactorAudio.loop = true;
+    machineReactorAudio.preload = 'auto';
+    machineReactorAudio.volume = 0;
+    let machineAmbientVol = 0;
+    let machineReactorVol = 0;
+
+    function machineWorkKind(m) {
+      if (!m?.def || MACHINE_LOCKERS.has(m.def.id)) return null;
+      const st = m.state?.status || '';
+      const busy = /^(GENERATING|RUNNING|CRAFTING|DRILLING|MINING|ABSORBING|SCRUBBING|CRANKING|PUMPING|STARTED|BATTERY\b|OPTIMAL|OVERCOOLED|UNDERCOOLED|OVERHEATING|NO COOLANT|COOLING)/.test(st);
+      if (!busy) return null;
+      return m.def.kind === 'reactor' ? 'reactor' : 'industrial';
+    }
+
+    function updateMachineSounds(dt) {
+      let wantIndustrial = 0;
+      let wantReactor = 0;
+      if (machineSystem && player?.pos) {
+        const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+        for (const m of machineSystem.instances) {
+          const k = machineWorkKind(m);
+          if (!k) continue;
+          const dx = m.x - px, dy = (m.y || 0) - py, dz = m.z - pz;
+          const gain = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy + dz * dz) / MACHINE_SOUND_RANGE);
+          if (gain <= 0) continue;
+          if (k === 'reactor') wantReactor = Math.max(wantReactor, MACHINE_REACTOR_VOL * gain);
+          else wantIndustrial = Math.max(wantIndustrial, MACHINE_AMBIENT_VOL * gain);
+        }
+      }
+      const step = dt / 0.8;
+      if (machineAmbientVol < wantIndustrial) machineAmbientVol = Math.min(wantIndustrial, machineAmbientVol + step);
+      else if (machineAmbientVol > wantIndustrial) machineAmbientVol = Math.max(wantIndustrial, machineAmbientVol - step);
+      if (machineReactorVol < wantReactor) machineReactorVol = Math.min(wantReactor, machineReactorVol + step);
+      else if (machineReactorVol > wantReactor) machineReactorVol = Math.max(wantReactor, machineReactorVol - step);
+      machineAmbientAudio.volume = Math.max(0, Math.min(1, machineAmbientVol * masterVolume));
+      machineReactorAudio.volume = Math.max(0, Math.min(1, machineReactorVol * masterVolume));
+      for (const [a, vol, want] of [[machineAmbientAudio, machineAmbientVol, wantIndustrial], [machineReactorAudio, machineReactorVol, wantReactor]]) {
+        if (want > 0 && a.paused) { const p = a.play(); if (p?.catch) p.catch(() => {}); }
+        else if (want <= 0 && vol <= 0.001 && !a.paused) { a.pause(); a.currentTime = 0; }
+      }
+    }
+
     const stepPrev = new THREE.Vector3().copy(player.pos);
 
     function validSpawnPos(x, y, z) {
@@ -7478,15 +7816,15 @@
     const INTERACT_PROMPT_DELAY_MS = 220;
     const REACH = 7;
 
-    // Precise "straight beam from the middle of the camera" interaction: raycast
-    // actual meshes instead of fuzzy center/radius spheres so a right-click only
-    // hits what the crosshair is really on.
+
+
+
     const interactRay = new THREE.Raycaster();
     const _interactNdc = new THREE.Vector2(0, 0);
 
     function bindInteractEntry(mesh, entry) {
       if (!mesh || !entry) return mesh;
-      // Tag the root; hits land on child meshes, so lookups walk up to this.
+
       mesh.userData.interactEntry = entry;
       return mesh;
     }
@@ -7521,8 +7859,8 @@
           outline.center.copy(source.center);
           outline.scale.copy(source.scale).multiplyScalar(scale);
           outline.renderOrder = 100;
-          // shortcut: outline-only visuals, never an interaction target, so the
-          // crosshair beam always resolves to the real model beneath.
+
+
           outline.raycast = () => {};
           root.add(outline);
           return;
@@ -7544,8 +7882,8 @@
         outline.quaternion.copy(source.quaternion);
         outline.scale.copy(source.scale).multiplyScalar(scale);
         outline.renderOrder = 100;
-        // shortcut: outline-only visuals, never an interaction target, so the
-        // crosshair beam always resolves to the real model beneath.
+
+
         outline.raycast = () => {};
         root.add(outline);
       };
@@ -7570,11 +7908,11 @@
 
     function makePickupMesh(itemId) {
       const mesh = new THREE.Mesh(
-        // Small, real hit volume: the crosshair beam must pass through it.
+
         new THREE.SphereGeometry(0.28, 10, 10),
         new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })
       );
-      // Visible to the raycaster but fully transparent to the eye.
+
       mesh.visible = true;
       mesh.userData.itemId = itemId;
       addOutlineToMesh(mesh, 1.5, 0xffffff);
@@ -7592,7 +7930,7 @@
         activate() {
 
           if (pickup.__vegLayer && !hasGardeningGloves()) { notice('NEED GARDENING GLOVES'); return; }
-          // Keep the plant in the world when the bag cannot hold the drop.
+
           if (!bagRoomFor(itemId, count)) { notice('INVENTORY FULL'); return; }
           give(itemId, count);
 
@@ -7651,8 +7989,8 @@
 
     function resolveInteractTarget() {
       if (!camera) return null;
-      // Straight beam out of the middle of the camera; the first real model hit
-      // along it is the thing you meant.
+
+
       interactRay.setFromCamera(_interactNdc, camera);
       interactRay.far = REACH;
 
@@ -7684,7 +8022,7 @@
     }
 
     function refreshInteractPrompt() {
-      if (sleep) { hideAllOutlines(); activeInteractTarget = null; pendingInteractTarget = null; pendingInteractSince = 0; hideTip(); return; }
+      if (sleep || drive) { hideAllOutlines(); activeInteractTarget = null; pendingInteractTarget = null; pendingInteractSince = 0; hideTip(); return; }
       if (mineConfirm && (performance.now() - mineConfirm.t) > MINE_CONFIRM_MS) clearMineConfirm();
       if (player.vel.lengthSq() > 0.1) {
         if (activeInteractTarget || pendingInteractTarget) {
@@ -7754,8 +8092,8 @@
       const target = resolveInteractTarget();
       if (!target) return false;
       const done = target.activate();
-      // A door that could not be swung (the hand was not empty) must not
-      // swallow the click.
+
+
       if (target.type === 'door' && done === false) return false;
       activeInteractTarget = null;
       hideTip();
@@ -7817,6 +8155,11 @@
 
     const saved = savedData;
     if (saved) world.applySave(saved);
+    if (mapSystem && nuclearStrikes.length) {
+      for (const s of nuclearStrikes) {
+        if (!mapSystem.strikes.some((ms) => Math.hypot(ms.x - s.x, ms.z - s.z) < 12)) mapSystem.noteStrike(s.x, s.z, s.day, s.r);
+      }
+    }
     if (saved && Number.isFinite(saved.playTime)) playTime = Math.max(0, saved.playTime);
     else if (saved) {
       const d = Number.isInteger(saved.day) && saved.day > 0 ? saved.day : 1;
@@ -7833,8 +8176,8 @@
     if (saved && saved.achievements) loadAchievements(saved.achievements);
     if (saved && saved.seed !== undefined) WORLD_SEED = saved.seed;
     if (WORLD_TERRAIN === 'realistic') {
-      // Bake erosion around the spawn point before anything samples heights,
-      // so prewarm does not mesh terrain that is about to change.
+
+
       realisticTerrain().recenter(
         (saved?.player?.[0] ?? 0.5) + WORLD_SEED,
         (saved?.player?.[2] ?? 0.5) + WORLD_SEED,
@@ -7867,7 +8210,7 @@
         h: terrainTrend(x + WORLD_SEED, z + WORLD_SEED),
         biome: biomeAt(x, z),
       }),
-      // Flat map colour: exposed mountain rock overrides the biome top colour.
+
       surfaceColor: (x, z, h) => (
         WORLD_TERRAIN === 'realistic'
           ? realisticTerrain().mapColor(x + WORLD_SEED, z + WORLD_SEED, h, BIOME_DEFS[biomeAt(x, z)])
@@ -7910,6 +8253,7 @@
       ui: workbenchUI,
       isDay,
       startSleep: (inst) => startSleep(inst),
+      startDrive: (inst) => startDrive(inst),
       onOpen: () => { unlockPointer(); setOverlay(false); },
       onClosed: () => { lockPointer(); },
       explode: (x, y, z, r) => {
@@ -7926,7 +8270,7 @@
       if (saved && saved.skyline && saved.skyline.length) skylineSystem.restore(saved.skyline);
     }).catch((e) => console.warn('machine load failed', e));
 
-    // Skyline logistics: pylons, wires and the cargo pods that ride them.
+
     const skylineSystem = new SkylineSystem({
       THREE, scene, items: ITEMS, machines: machineSystem, craftRecipes: CRAFT_RECIPES,
       GLTFLoader,
@@ -7944,10 +8288,11 @@
     }).catch((e) => console.warn('pipe load failed', e));
 
     const buildingSystem = new BuildingSystem({ THREE, scene, give, world });
+    machineSystem.ctx.buildingSystem = buildingSystem;
     buildingSystem.load();
     if (saved && saved.buildings) buildingSystem.restore(saved.buildings);
 
-    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, get buildingSystem() { return buildingSystem; }, get player() { return player; }, get camera() { return camera; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED) };
+    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get nuclearStrikes() { return nuclearStrikes; }, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, get buildingSystem() { return buildingSystem; }, get player() { return player; }, get camera() { return camera; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED), spawnNuclearStrike };
 
 
 
@@ -7955,9 +8300,9 @@
 
     const keys = Object.create(null);
     let locked = false;
-    // Browsers emit a synthetic mousemove with a huge movement delta when
-    // pointer lock is entered or exited. Swallow look input briefly around
-    // every transition so the camera never snaps to a random angle.
+
+
+
     let lookBlockedUntil = 0;
     let lookSkipEvents = 0;
     function blockLook(ms = 150, events = 1) {
@@ -7970,8 +8315,8 @@
     const overlay = document.getElementById('overlay');
     let overlayTimer = 0;
 
-    // The pause overlay fades instead of popping; hiding it is delayed by the
-    // fade length so it is still visible while it dissolves.
+
+
     function setOverlay(show) {
       clearTimeout(overlayTimer);
       if (show) {
@@ -8014,8 +8359,8 @@
       introOpen = true;
       introFirstRun = !!firstRun;
       introEl.classList.remove('hidden');
-      // While the world is still loading, the loading screen belongs on top:
-      // the intro is only the modal that sits over it.
+
+
       if (!overlay.classList.contains('loading-mode')) setOverlay(false);
       unlockPointer();
       if (introBtn) introBtn.textContent = introBtn.disabled ? 'LOADING' : 'ENTER THE ZONE';
@@ -8029,8 +8374,8 @@
       const first = introFirstRun;
       introFirstRun = false;
       if (first) flashGuideCard();
-      // The first-run intro is the way out of the loading screen: dismissing it
-      // takes the loading overlay and the menu with it.
+
+
       if (overlay.classList.contains('loading-mode') && window.__NUCLEARISM_FINISH_LOADING__) {
         window.__NUCLEARISM_FINISH_LOADING__();
         return;
@@ -8358,8 +8703,8 @@
     document.addEventListener('pointerlockchange', () => {
       locked = document.pointerLockElement === renderer.domElement;
       blockLook();
-      // While the world is loading, the loading screen owns the overlay: the
-      // pause menu must not pop over it.
+
+
       if (overlay.classList.contains('loading-mode')) return;
       setOverlay(!locked && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen);
       if (!locked) {
@@ -8386,8 +8731,8 @@
       } catch (e) {                                    }
     }
 
-    // Every pointer-lock release goes through here: block look input before
-    // the unlock mousemove can arrive, then actually release the cursor.
+
+
     function unlockPointer() {
       blockLook();
       try {
@@ -8404,7 +8749,7 @@
     const tipTitle = tipEl.querySelector('.t');
     const tipBody = tipEl.querySelector('.b');
 
-    // "Urgent card": reusable, clean notice centered over the crosshair.
+
     const urgentCard = document.getElementById('urgentCard');
     const urgentCardTitle = urgentCard ? urgentCard.querySelector('.urgent-title') : null;
     const urgentCardBody = urgentCard ? urgentCard.querySelector('.urgent-body') : null;
@@ -8636,7 +8981,7 @@
         }
         const dx = d.mesh.position.x - pp.x, dy = d.mesh.position.y - pp.y, dz = d.mesh.position.z - pp.z;
         if (now - d.born > 800 && dx * dx + dy * dy + dz * dz < 4) {
-          // Leftovers stay on the ground: a full bag must not eat the drop.
+
           const left = (d.liquid || d.plates)
             ? (giveStack({ id: d.id, n: d.n, ...(d.liquid ? { liquid: d.liquid } : {}), ...(d.plates ? { plates: d.plates } : {}) }) ? 0 : d.n)
             : give(d.id, d.n);
@@ -8661,6 +9006,46 @@
       syncBars();
     }
 
+    const SORT_CAT = ['tools', 'armor', 'consumables', 'containers', 'blocks', 'ores', 'materials', 'components', 'machines', 'fuel'];
+    function sortCategory(id) {
+      const d = ITEMS[id];
+      if (!d) return 'components';
+      if (d.workbench) return 'machines';
+      if (d.tool || d.torch || d.geiger) return 'tools';
+      if (d.armor || d.plate) return 'armor';
+      if (d.consumable) return 'consumables';
+      if (d.container) return 'containers';
+      if (d.fuel) return 'fuel';
+      if (/ ORE$/.test(d.name)) return 'ores';
+      if (/ (INGOT|DUST|PLATE|SOLENOID)$/.test(d.name)) return 'materials';
+      if (d.block) return 'blocks';
+      return 'components';
+    }
+    function sortGrid(grid) {
+      const stacks = [];
+      for (const s of grid) {
+        if (!s) continue;
+        const prev = stacks.find((x) => x.id === s.id && !x.liquid && !s.liquid && !x.plates?.length && !s.plates?.length && x.n < (ITEMS[s.id]?.stack || 64));
+        if (prev) {
+          const cap = ITEMS[s.id]?.stack || 64;
+          const mv = Math.min(cap - prev.n, s.n);
+          prev.n += mv;
+          const left = s.n - mv;
+          if (left > 0) stacks.push({ ...s, n: left });
+        } else stacks.push({ ...s, plates: s.plates ? [...s.plates] : undefined, liquid: s.liquid ? { ...s.liquid } : undefined });
+      }
+      stacks.sort((a, b) => {
+        const ca = SORT_CAT.indexOf(sortCategory(a.id));
+        const cb = SORT_CAT.indexOf(sortCategory(b.id));
+        if (ca !== cb) return ca - cb;
+        const na = (ITEMS[a.id]?.name || a.id).toLowerCase();
+        const nb = (ITEMS[b.id]?.name || b.id).toLowerCase();
+        if (na !== nb) return na < nb ? -1 : 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      for (let i = 0; i < grid.length; i++) grid[i] = stacks[i] || null;
+    }
+
     function buildSlots(el, grid, base) {
       el.innerHTML = '';
       for (let i = 0; i < grid.length; i++) {
@@ -8669,6 +9054,13 @@
         d.dataset.idx = base + i;
         if (el === hotbarEl) d.dataset.key = String(i + 1);
         dragDrop.bind(d, inventoryAdapter(grid, i, ITEMS));
+        d.addEventListener('mousedown', (event) => {
+          if (event.button !== 1) return;
+          event.preventDefault();
+          if (grid === inv.hot) return;
+          sortGrid(grid);
+          syncBars();
+        });
         d.addEventListener('click', (event) => {
           if (invOpen && event.shiftKey) { quickMove(base + i); return; }
           if (el === hotbarEl || el === invHotEl) { inv.sel = i; syncBars(); }
@@ -9608,10 +10000,10 @@
       let r = carried - (machineSystem ? machineSystem.totalArmorRadShield() : 0);
       if (armorShieldTimer > 0) r -= 3;
 
-      // Ambient, wasteland ground and machine fields all pass through worn
-      // armor, then absorbers. Both are fractions, so neither zeroes the field.
-      // The field arrives from a direction, so walls between the player and the
-      // source already took a bite out of it.
+
+
+
+
       const rf = radField();
       let field = rf.ambient;
       if (machineSystem?.ambientCut) field *= 1 - machineSystem.ambientCut();
@@ -9642,8 +10034,8 @@
         radMeterEl.title = `Dose ${formatRad(inv.dose)} · ARS ${formatRad(TUNING.RAD_ARS_DOSE)} · LD50 ${formatRad(TUNING.RAD_LD50)} · fatal ${formatRad(lethal)}`;
         radMeterEl.setAttribute('aria-valuenow', Math.round(pct));
       }
-      // Arrow points at the source of the radiation, so walls can be built
-      // between the player and it.
+
+
       if (radDirEl) {
         const rf = radField();
         const on = rf.ambient + rf.machine > 1e-6;
@@ -9736,6 +10128,10 @@
       if (!locked) return;
       if (lookSkipEvents > 0) { lookSkipEvents--; return; }
       if (performance.now() < lookBlockedUntil) return;
+      if (drive) {
+        drive.turnAcc -= e.movementX * 0.0022 * mouseSens;
+        return;
+      }
       player.yaw -= e.movementX * 0.0022 * mouseSens;
       player.pitch -= e.movementY * 0.0022 * mouseSens * (invertY ? -1 : 1);
       const lim = Math.PI / 2 - 0.02;
@@ -9747,6 +10143,22 @@
     document.addEventListener('keydown', (e) => {
       const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
       if (sleep) return;
+      if (drive) {
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          if (workbenchUI.opened && machineSystem?.openInst === drive.inst) workbenchUI.close();
+          else machineSystem?.open(drive.inst);
+          return;
+        }
+        if (e.code === 'Escape' || e.code === 'KeyE') {
+          e.preventDefault();
+          if (workbenchUI.opened && machineSystem?.openInst === drive.inst) workbenchUI.close();
+          else stopDrive();
+          return;
+        }
+        keys[e.code] = true;
+        return;
+      }
 
       if (introOpen || prayOpen) {
         if (prayOpen && e.code === 'Escape') { e.preventDefault(); closePray(); }
@@ -10334,7 +10746,7 @@
       if (cmdHistory.length > 60) cmdHistory.shift();
       cmdHistIdx = cmdHistory.length;
       const m = line.match(/^\/(\w+)\s*(.*)$/);
-      if (!m) { notice('COMMANDS: /give, /time, /tp, /summon, /sm'); return; }
+      if (!m) { notice('COMMANDS: /give, /time, /tp, /summon, /sm, /nuke'); return; }
       const cmd = m[1].toLowerCase(), rest = m[2].trim();
 
       if (cmd === 'tp' || cmd === 'goto') {
@@ -10401,6 +10813,12 @@
         if (isDay()) { notice('SMILE · ONLY AT NIGHT'); return; }
         spawnHungerSmile();
         notice('SMILE');
+        return;
+      }
+
+      if (cmd === 'nuke' || cmd === 'strike') {
+        if (!spawnNuclearStrike()) notice('NO SAFE STRIKE SITE');
+        closeCmd();
         return;
       }
 
@@ -10522,7 +10940,7 @@
         if (best) {
           clearMineConfirm();
           triggerSwing(Math.min(0.5, Math.max(0.2, tool.rate * 0.9)));
-          best.hurtBy(22 + (tool.chop ? 18 : 0));
+          best.hurtBy(tool.damage ?? 15);
           if (bestKind === 'wrapper' && best.dying > 0 && !best._lootDropped) {
             best._lootDropped = true;
             achBump('kills', 1);
@@ -10543,8 +10961,8 @@
           const eye = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
           const terrT = hit ? new THREE.Vector3(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5).distanceTo(eye) : Infinity;
           if (inst && aim.t < terrT) {
-            // Workbenches/machines are easy to misclick: arm on first hit, remove
-            // only on a second confirmed hit while aimed at the same machine.
+
+
             const now = performance.now();
             if (mineConfirm && mineConfirm.kind === 'machine' && mineConfirm.uid === inst.uid && (now - mineConfirm.t) <= MINE_CONFIRM_MS) {
               clearMineConfirm();
@@ -10556,7 +10974,7 @@
             return;
           }
         }
-        // Aimed away from any mineable machine: drop a stale machine warning.
+
         if (mineConfirm && mineConfirm.kind === 'machine') clearMineConfirm();
       }
 
@@ -10601,16 +11019,18 @@
       const band = groundBand(hit.x, hit.y, hit.z);
       footsteps.mine(band === 'grass' ? 'grass' : band === 'dirt' ? 'dirt' : 'stone', 0.55 * masterVolume * 0.7);
       const match = tool.good.includes(band);
+      let rateFactor = match ? 1 : (tool.weak || 0.3);
+      if (band === 'basalt') rateFactor *= 0.35;
       const hy = hit.y, yy = tool.yield;
       const stoneMult = tool.stone || 1;
-      world.mineAnimated(hit.x, hit.y, hit.z, tool.radius, match ? 1 : (tool.weak || 0.3), () => {
+      world.mineAnimated(hit.x, hit.y, hit.z, tool.radius, rateFactor, () => {
         achBump('mined', 1);
         if (match && yy > 0) {
           const bonus = yy - 1;
           for (const [id, n] of mineDrops(band, hy, hit.x, hit.z)) {
             const dup = bonus > 0 && Math.random() < bonus ? n : 0;
-            let amt = (n + dup) * (id === 'stone' ? stoneMult : 1);
-            if (id === 'stone' && Math.random() < 0.5) amt = 0;
+            let amt = (n + dup) * ((id === 'stone' || id === 'basalt') ? stoneMult : 1);
+            if ((id === 'stone' || id === 'basalt') && Math.random() < 0.5) amt = 0;
             if (amt <= 0) continue;
             const left = give(id, amt);
             showGain(id, amt - left, 'MINED');
@@ -10641,21 +11061,22 @@
     function mineDrops(band, y, x, z) {
       if (band === 'grass') return [Math.random() < 0.5 ? ['carbon', 1] : ['dirt', 1]];
       if (band === 'dirt') return [['dirt', 1]];
+      const base = band === 'basalt' ? 'basalt' : 'stone';
       const savanna = biomeAt(x, z) === B.SAVANNA;
       const seam = regionOre(x, z, savanna);
       if (seam !== 'stone') {
         const chance = MINE_ORE_CHANCE * (savanna && seam === 'iron' ? 1.5 : 1);
-        if (Math.random() >= chance) return [['stone', 1]];
+        if (Math.random() >= chance) return [[base, 1]];
         const n = savanna && seam === 'iron' ? 2 : 1;
-        return [['stone', 1], [seam, n]];
+        return [[base, 1], [seam, n]];
       }
 
       const table = y < 12 ? MINE_TABLE_DEEP : MINE_TABLE_SHALLOW;
-      if (Math.random() >= MINE_ORE_CHANCE * 0.5) return [['stone', 1]];
+      if (Math.random() >= MINE_ORE_CHANCE * 0.5) return [[base, 1]];
       let total = 0; for (const [, w] of table) total += w;
       let r = Math.random() * total;
-      for (const [id, w] of table) { r -= w; if (r <= 0) return [['stone', 1], [id, savanna && id === 'iron' ? 2 : 1]]; }
-      return [['stone', 1]];
+      for (const [id, w] of table) { r -= w; if (r <= 0) return [[base, 1], [id, savanna && id === 'iron' ? 2 : 1]]; }
+      return [[base, 1]];
     }
 
 
@@ -10678,6 +11099,7 @@
 
     function groundBand(x, y, z) {
       const d = groundDepth(x, y, z);
+      if (d >= 28) return 'basalt';
       if (d >= 3.0) return 'stone';
       if (d < 3.0 && mountainRockAt(x, z)) return 'stone';
       if (d >= 1.2) return 'dirt';
@@ -10736,7 +11158,7 @@
       return out;
     }
 
-    // Right-click a wall with the hammer: upgrade it to the next tier in place.
+
     function useBuildingUpgrade() {
       const s = inv.hot[inv.sel];
       if (!s || !ITEMS[s.id]?.tool?.build) return false;
@@ -10762,11 +11184,11 @@
       return true;
     }
 
-    // --- doors ---------------------------------------------------------------
-    // Right-click a door with an empty hand and it swings. The hammer never
-    // opens a door: it upgrades and demolishes, so it goes first.
 
-    // Distance along the ray to an axis aligned box, or null when it misses.
+
+
+
+
     function rayBoxT(origin, dir, b) {
       const o = [origin.x, origin.y, origin.z], d = [dir.x, dir.y, dir.z];
       const mn = [b.minX, b.minY, b.minZ], mx = [b.maxX, b.maxY, b.maxZ];
@@ -10782,8 +11204,8 @@
       return t0;
     }
 
-    // The nearest door the ray runs into. A shut door is hit by its panel, an
-    // open one by the whole doorway, so it can always be shut again.
+
+
     function doorHit(origin, dir) {
       if (!buildingSystem) return null;
       let best = null, bestT = REACH;
@@ -10808,7 +11230,7 @@
       const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
       const hit = doorHit(origin, dir);
       if (!hit) return null;
-      // anything solid in front of the door wins
+
       const pick = buildingSystem.pick(origin, dir, REACH);
       if (pick && pick.piece.kind !== 'door' && pick.distance < hit.t - 0.02) return null;
       const { hit: terr } = mineAim();
@@ -10816,8 +11238,8 @@
       return hit.piece;
     }
 
-    // An empty hand: nothing consumable and no tool. The hammer is a tool, so
-    // it never opens a door.
+
+
     function handFreeForDoor() {
       const s = inv.hot[inv.sel];
       if (!s) return true;
@@ -10844,7 +11266,7 @@
       return toggleDoor(piece);
     }
 
-    // Doors are now static wall frames with a cutout; no swing animation.
+
     function updateDoorSwings() {}
 
     function pickItemToHand(id) {
@@ -10883,14 +11305,17 @@
       }
       if (!id) {
         const { hit } = mineAim();
-        if (hit) id = groundBand(hit.x, hit.y, hit.z) === 'stone' ? 'stone' : 'dirt';
+        if (hit) {
+          const band = groundBand(hit.x, hit.y, hit.z);
+          id = (band === 'stone' || band === 'basalt') ? band : 'dirt';
+        }
       }
       if (!pickItemToHand(id)) notice('NOT IN INVENTORY');
     }
 
-    // The ghost and placement both consume this exact target. A piece masks
-    // the ground behind it; an invalid socket stays red instead of falling
-    // through to a seemingly unrelated position on the terrain.
+
+
+
     function buildingTarget(b, aim) {
       const kind = buildingSystem?.kind(b.kind);
       if (!kind) return null;
@@ -10899,7 +11324,7 @@
       const origin = new THREE.Vector3(player.pos.x, player.pos.y + player.eye, player.pos.z);
       const groundDistance = hit ? origin.distanceTo(hit) : Infinity;
 
-      // Standing on a floor/roof and looking up: place a floor/roof above, aligned to the grid and wall tops.
+
       if ((b.kind === 'floor' || b.kind === 'roof') && dir.y > 0.35) {
         const px = player.pos.x, pz = player.pos.z, feet = player.pos.y;
         let standingOn = null;
@@ -10915,7 +11340,7 @@
         if (standingOn) {
           const lx = standingOn.p.x + Math.floor((Math.floor(px) - standingOn.p.x) / 3) * 3;
           const lz = standingOn.p.z + Math.floor((Math.floor(pz) - standingOn.p.z) / 3) * 3;
-          // Prefer the top of nearby walls on this platform so the ceiling sits flush with wall height.
+
           let wallTop = null;
           for (const p of buildingSystem.pieces.values()) {
             if (!['wall', 'door'].includes(p.kind)) continue;
@@ -10926,7 +11351,7 @@
             if (wt <= feet + 0.5) continue;
             if (wallTop === null || wt > wallTop) wallTop = wt;
           }
-          // Floor slab sits at the top of its cell; subtract 1 so it rests flush on the wall top.
+
           const base = wallTop !== null ? wallTop - 1 : standingOn.top + 1;
           return { gx: lx, gz: lz, rot, base, anchored: true };
         }
@@ -10937,7 +11362,7 @@
         const snap = buildingSystem.snap(b.kind, origin, dir, rot, REACH);
         if (snap) return { gx: snap.x, gz: snap.z, rot: snap.rot, base: snap.y, anchored: true };
 
-        // Fallback: always show a BB-on-BB preview target when snap can't resolve.
+
         const af = buildingSystem.pieceFootprint(pick.piece);
         if (af) {
           const fps = [];
@@ -10955,15 +11380,15 @@
         return null;
       }
       if (!hit) return null;
-      // Raycast points are just inside the terrain. Step back to the visible
-      // side, then use a full-piece lattice instead of adding 1.5 m of drift.
+
+
       const p = hit.clone().addScaledVector(dir, -0.08);
       const fp = buildingSystem.kindFootprint(b.kind, rot);
       const sx = fp.cx1 - fp.cx0 + 1, sz = fp.cz1 - fp.cz0 + 1;
       const gx = Math.floor(p.x / sx) * sx - fp.cx0;
       const gz = Math.floor(p.z / sz) * sz - fp.cz0;
-      // Floors/foundations sit at the looked-at ground level; other pieces
-      // follow the local terrain base so underground placement stays local.
+
+
       const base = ['floor', 'roof', 'triangle'].includes(b.kind)
         ? Math.floor(hit.y + 0.01)
         : buildingSystem.groundBase(b.kind, gx, gz, rot, Math.ceil(hit.y + 3));
@@ -10971,7 +11396,7 @@
     }
 
     function groundSweep(b, t) {
-      // Uneven ground can poke into the underside of a foundation placed on it.
+
       return !t.anchored && ['floor', 'roof', 'triangle'].includes(b.kind) ? 0.45 : 0;
     }
 
@@ -11104,7 +11529,7 @@
     let bbEdgeKind = '';
     let _bbEdgePickAt = 0;
     let _bbEdgeLast = null;
-    // The piece's own outline, so a wedge or a doorway traces its real shape.
+
     const pieceEdgeGeoms = new Map();
     function pieceEdgeGeometry(kind) {
       if (!pieceEdgeGeoms.has(kind.name)) {
@@ -11146,8 +11571,8 @@
       const c = kind.center(p.x, p.y, p.z, p.rot);
       const sc = kind.scale(p.x, p.y, p.z, p.rot);
       bbEdgeHelper.position.set(c.x, c.y, c.z);
-      // A few millimetres of margin keeps the lines on the near side of the
-      // faces instead of sinking into them.
+
+
       bbEdgeHelper.scale.set(sc.x + 0.006, sc.y + 0.006, sc.z + 0.006);
       bbEdgeHelper.rotation.y = kind.rotY ? kind.rotY(p.rot) : 0;
       bbEdgeHelper.visible = true;
@@ -11233,9 +11658,9 @@
       const { gx, gz, rot, base } = t;
       if (!wallGhost || wallGhostKey !== b.kind) {
         hideWallGhost();
-        // The ghost is the piece's own shape in its tier colour, with its own
-        // outline, so a wedge reads as a wedge and limestone does not look
-        // like a blank white blob.
+
+
+
         wallGhost = new THREE.Mesh(
           buildingSystem.geometryFor(kind),
           new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
@@ -11451,7 +11876,7 @@
         const e = near[i];
         if (!e) { l.intensity = 0; l.position.set(0, -999, 0); continue; }
         const L = e.t.light;
-        l.position.set(e.t.pos.x, e.t.pos.y + 0.3, e.t.pos.z); // the emitter, not the mount
+        l.position.set(e.t.pos.x, e.t.pos.y + 0.3, e.t.pos.z);
         l.color.setHex(L.color);
         l.distance = L.range;
         l.intensity = L.power * TORCH_LIGHT_GAIN;
@@ -11469,7 +11894,7 @@
         const t = torches[i];
         const dx = t.pos.x - t.ax, dy = t.pos.y - t.ay, dz = t.pos.z - t.az;
         const len = Math.hypot(dx, dy, dz) || 1;
-        const ix = dx / len, iy = dy / len, iz = dz / len; // inward from pos
+        const ix = dx / len, iy = dy / len, iz = dz / len;
         const sx = t.pos.x - ix * 0.08, sy = t.pos.y - iy * 0.08, sz = t.pos.z - iz * 0.08;
         const supported = world.field.sample(t.ax, t.ay, t.az) > 0
           || world.field.sample(sx, sy, sz) > 0
@@ -11519,21 +11944,6 @@
     }
 
     let beepCtx = null;
-    function beep(vol = 0.15, freq = 880) {
-      if (vol <= 0.001) return;
-      const C = window.AudioContext || window.webkitAudioContext;
-      if (!C) return;
-      beepCtx = beepCtx || new C();
-      if (beepCtx.state === 'suspended') beepCtx.resume().catch(() => {});
-      const t = beepCtx.currentTime;
-      const o = beepCtx.createOscillator(), g = beepCtx.createGain();
-      o.type = 'square'; o.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-      o.connect(g).connect(beepCtx.destination);
-      o.start(t); o.stop(t + 0.1);
-    }
     function boom(vol = 0.5) {
       if (vol <= 0.001) return;
       const C = window.AudioContext || window.webkitAudioContext;
@@ -11630,13 +12040,7 @@
     function updateC4(dt) {
       for (const c of c4Charges.slice()) {
         c.t += dt;
-        if (c.t >= C4_FUSE) { detonateC4(c); continue; }
-        c.next -= dt;
-        if (c.next <= 0) {
-          const rem = C4_FUSE - c.t;
-          beep(c4Audible(c.x, c.z, 0.20), rem > 2 ? 880 : 1180);
-          c.next = rem > 3 ? 0.7 : rem > 1.2 ? 0.32 : 0.14;
-        }
+        if (c.t >= C4_FUSE) detonateC4(c);
       }
     }
 
@@ -11659,8 +12063,8 @@
       return true;
     }
 
-    // The zipline wrench: right-click a workbench to pick an item up, then
-    // right-click another one to send it there.
+
+
     function useSkylineWrench() {
       const s = inv.hot[inv.sel];
       if (!s || !ITEMS[s.id]?.tool?.wrench) return false;
@@ -11743,8 +12147,8 @@
       if (!s) return false;
       const def = ITEMS[s.id];
       if (!def || !def.consumable) return false;
-      if (eat) return true; // already chewing
-      // A food shown as a flat icon (no 3D model) is eaten over time.
+      if (eat) return true;
+
       if (def.consumable.food && !propModels.has(s.id)) {
         startEat(s, def);
         return true;
@@ -11754,7 +12158,7 @@
     }
 
     renderer.domElement.addEventListener('mousedown', (e) => {
-      if (!locked || invOpen || sleep) return;
+      if (!locked || invOpen || sleep || drive) return;
       if (e.button === 0) { mining = true; mineTimer = 0; }
       else if (e.button === 1) {
         e.preventDefault();
@@ -11817,9 +12221,9 @@
       const p = player.pos;
       const r = player.radius;
       const h = player.height;
-      // Sample the full body, including eye level and the very top of the head.
-      // The old 0.55 m spacing stopped at 1.35 m, so a cave ceiling could sit
-      // inside the head while the camera (at 1.62 m) poked through the world.
+
+
+
       const ys = [0.25, 0.6, 0.95, 1.3, Math.min(player.eye, h - 0.02), h - 0.02];
 
 
@@ -11835,11 +12239,11 @@
       for (const y of ys) {
         if (world.field.sample(p.x, p.y + y, p.z) > 0) return true;
       }
-      // Building collision is continuous over the body, not eight horizontal
-      // samples: thin walls and low decks cannot slip between probe points.
+
+
       if (buildingSystem?.collidesBody(p.x, p.y, p.z, r, h)) return true;
-      // Machines and industrial structures are solid on every axis too, so a
-      // body can land on top of one and cannot sink inside it.
+
+
       if (structureCollidesBody(p.x, p.y, p.z, r, h)) return true;
       return false;
     }
@@ -11875,9 +12279,9 @@
       return !b;
     }
 
-    // Steep ground is not walkable on foot: the ground may not rise faster than
-    // this over a 1 m look-ahead, and a walk can only step over a small lip.
-    // Jump to get up anything steeper.
+
+
+
     const MAX_WALK_SLOPE = Math.tan(50 * Math.PI / 180);
     const SLOPE_PROBE = 1.0;
     const STEP_UP_MAX = 0.6;
@@ -11939,9 +12343,9 @@
 
 
 
-    // Machines and industrial parts are solid bodies, not just XZ footprints.
-    // The Y overlap matters: without it you could jump on a workbench and fall
-    // straight through its top into the ground inside it.
+
+
+
     function structureCollidesBody(x, y, z, r, h,
       machines = machineSystem?.instances || [], industries = industrialColliders) {
       const head = y + h;
@@ -12030,7 +12434,7 @@
       if (sprint) vitals.hunger = Math.max(0, vitals.hunger - 0.04 * dt);
       const speed = (inWater ? 2.8 : (sprint ? 7.2 : 4.2)) * radStage().speed * woundSpeed() * (smokeTime > 0 ? smokeSpeed : 1);
 
-      // Strafing and backpedalling are slower than walking forward.
+
       const FWD_MULT = 1, BACK_MULT = 0.45, STRAFE_MULT = 0.65;
       const fW = forward > 0 ? FWD_MULT : BACK_MULT;
       const sW = STRAFE_MULT;
@@ -12099,8 +12503,8 @@
 
       player.onGround = false;
 
-      // Refuse horizontal movement into ground steeper than a walkable slope
-      // (checked per axis, so you still slide along the contour of a hill).
+
+
       let mx = dx, mz = dz;
       if (wasGrounded) {
         if (dx !== 0 && slopeBlocked(dx, 0)) { mx = 0; player.vel.x = 0; }
@@ -12108,8 +12512,8 @@
       }
 
 
-      // A body already inside something (an old save, a bad spawn) may move
-      // out: only a move that newly collides is refused.
+
+
       const stuckX = playerCollides();
       player.pos.x += mx;
       if (!stuckX && playerCollides()) {
@@ -12206,7 +12610,7 @@
       }
 
 
-      if (player.pos.y < -30) {
+      if (player.pos.y < CHUNK_Y_MIN * CHUNK_SIZE - 20) {
         spawnOnGround(player.pos.x, player.pos.z);
       }
     }
@@ -12378,13 +12782,322 @@
     const deathBanner = document.getElementById('deathBanner');
     const sleepOverlay = document.getElementById('sleepOverlay');
     let sleep = null;
+    let drive = null;
+
+    function startDrive(inst) {
+      if (drive || sleep || !inst || !locked || replayPlay || deathT > 0) return;
+      if (invOpen || cmdOpen || mapSystem?.isOpen() || recipeOpen || visibleTree() || workbenchUI.opened || skylineSystem?.isOpen() || achieveOpen) return;
+      drive = {
+        inst,
+        speed: 0,
+        straightT: 0,
+        turnAcc: 0,
+        turnSnap: 0,
+        heading: inst.rot || 0,
+        walk: 0,
+        bob: 0,
+        bobVel: 0,
+        stepKick: 0,
+        camRoll: 0,
+        camPitch: 0,
+        camYaw: 0,
+        fuelBuf: 0,
+        noFuelT: 0,
+        stepWalk: 0,
+      };
+      inst._drive = drive;
+      if (inst._baseYOff == null) inst._baseYOff = inst.mesh.position.y - inst.y;
+      inst.mesh.visible = false;
+      player.vel.set(0, 0, 0);
+      mining = false;
+      resetHoldPlace?.();
+      notice('RAMMER ONLINE · E TO EXIT');
+    }
+
+    function stopDrive(exitMsg = 'DISMOUNTED') {
+      if (!drive) return;
+      const inst = drive.inst;
+      if (inst) {
+        inst._drive = null;
+        if (inst.mesh) {
+          inst.mesh.visible = true;
+
+          const legNames = ['front left', 'front right', 'back left', 'back right'];
+          const legs = legNames.map((n) => inst.mesh.getObjectByName(n)).filter(Boolean);
+          for (const leg of legs) {
+            leg.rotation.x = 0;
+            if (leg.userData.baseY != null) leg.position.y = leg.userData.baseY;
+          }
+          inst.mesh.rotation.set(0, drive.heading, 0);
+          inst.mesh.position.set(inst.x, inst.y + (inst._baseYOff ?? 0), inst.z);
+          inst.mesh.updateMatrixWorld(true);
+          if (legs.length >= 4) {
+            const wp = new THREE.Vector3();
+            const pts = legs.map((leg) => { leg.getWorldPosition(wp); return { x: wp.x, y: wp.y, z: wp.z }; });
+            const grounds = pts.map((p) => {
+              const g = world.getSurfaceHeight(p.x, p.z, inst.y + 8);
+              return Number.isFinite(g) ? g : inst.y;
+            });
+            const avg = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+            const frontG = avg([grounds[0], grounds[1]]), backG = avg([grounds[2], grounds[3]]);
+            const leftG = avg([grounds[0], grounds[2]]), rightG = avg([grounds[1], grounds[3]]);
+            const frontZ = avg([pts[0].z, pts[1].z]), backZ = avg([pts[2].z, pts[3].z]);
+            const leftX = avg([pts[0].x, pts[2].x]), rightX = avg([pts[1].x, pts[3].x]);
+            const spanZ = Math.max(0.5, Math.abs(frontZ - backZ));
+            const spanX = Math.max(0.5, Math.abs(rightX - leftX));
+            const pitch = -Math.atan2(backG - frontG, spanZ);
+            const roll = Math.atan2(rightG - leftG, spanX);
+            inst.mesh.rotation.set(pitch, drive.heading, roll);
+            inst.mesh.updateMatrixWorld(true);
+
+            let minDelta = Infinity;
+            for (let i = 0; i < pts.length; i++) {
+              legs[i].getWorldPosition(wp);
+              minDelta = Math.min(minDelta, grounds[i] - wp.y);
+            }
+            if (Number.isFinite(minDelta)) inst.mesh.position.y += minDelta;
+            inst.y = inst.mesh.position.y - (inst._baseYOff ?? 0);
+            inst.top = inst.y + inst.def.height * 1.45;
+            if (inst.machine) inst.machine.y = inst.y + (inst.def.height * 1.45) / 2;
+          }
+
+          inst.mesh.updateMatrixWorld(true);
+          const _rb = new THREE.Box3().setFromObject(inst.mesh);
+          const _rg = world.getSurfaceHeight(inst.x, inst.z, inst.y + 8);
+          if (Number.isFinite(_rg) && _rb.min.y > _rg + 0.03) {
+            const drop = _rb.min.y - _rg;
+            inst.mesh.position.y -= drop;
+            inst.y = inst.mesh.position.y - (inst._baseYOff ?? 0);
+            inst.top = inst.y + inst.def.height * 1.45;
+            if (inst.machine) inst.machine.y = inst.y + (inst.def.height * 1.45) / 2;
+          }
+        }
+      }
+
+      const side = drive.heading + Math.PI / 2;
+      const px = inst ? inst.x + Math.cos(side) * 2.8 : player.pos.x;
+      const pz = inst ? inst.z + Math.sin(side) * 2.8 : player.pos.z;
+      const py = world.getSurfaceHeight(px, pz, (inst ? inst.y : player.pos.y) + 6);
+      player.pos.set(px, Number.isFinite(py) ? py : (inst ? inst.y : player.pos.y), pz);
+      player.vel.set(0, 0, 0);
+      player.onGround = false;
+      drive = null;
+      postMat.uniforms.uDriveRed.value = 0;
+      notice(exitMsg);
+    }
+
+    function updateDrive(dt) {
+      if (!drive) return;
+      const inst = drive.inst;
+      if (!inst || !inst.mesh || !inst.mesh.parent) { stopDrive('RAMMER LOST'); return; }
+
+      if (keys.KeyE || keys.Escape) { keys.KeyE = false; keys.Escape = false; stopDrive(); return; }
+
+      const forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+      const turnInput = (keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0);
+
+
+      const RAMMER_FUEL = { carbon: 12, heavy_fuel_oil: 576 };
+      const rammerFuelValue = (s) => {
+        if (!s) return 0;
+        if (s.id === 'carbon') return RAMMER_FUEL.carbon * (s.n || 0);
+        if (s.id === 'heavy_fuel_oil') return RAMMER_FUEL.heavy_fuel_oil * (s.n || 0);
+        if (s.liquid?.id === 'gasoline') return 18 * (s.liquid.amount || 0);
+        return 0;
+      };
+      const rammerSlots = () => inst.state?.slots || {};
+      const rammerHasFuel = () => { const sl = rammerSlots(); for (let i = 0; i < 5; i++) if (rammerFuelValue(sl[`fuel${i}`]) > 0.01) return true; return false; };
+      const rammerPullFuel = () => {
+        const sl = rammerSlots();
+        for (let i = 0; i < 5; i++) {
+          const k = `fuel${i}`; const s = sl[k]; if (!s) continue;
+          if (s.id === 'carbon') { s.n--; if (s.n <= 0) delete sl[k]; drive.fuelBuf += RAMMER_FUEL.carbon; return true; }
+          if (s.id === 'heavy_fuel_oil') { s.n--; if (s.n <= 0) delete sl[k]; drive.fuelBuf += RAMMER_FUEL.heavy_fuel_oil; return true; }
+          if (s.liquid?.id === 'gasoline' && (s.liquid.amount || 0) > 0.001) {
+            const take = Math.min(1, s.liquid.amount);
+            s.liquid.amount -= take; if (s.liquid.amount <= 0.001) delete s.liquid;
+            drive.fuelBuf += take * 18; return true;
+          }
+        }
+        return false;
+      };
+      const rammerBurn = (amt) => {
+        let left = amt;
+        while (left > 0.001) {
+          if (drive.fuelBuf >= left) { drive.fuelBuf -= left; left = 0; break; }
+          left -= drive.fuelBuf; drive.fuelBuf = 0;
+          if (!rammerPullFuel()) break;
+        }
+        return amt - left;
+      };
+      const hasFuel = (drive.fuelBuf > 0.01) || rammerHasFuel();
+      const fwd = hasFuel ? forward : 0;
+      if (!hasFuel && forward !== 0) { drive.noFuelT -= dt; if (drive.noFuelT <= 0) { notice('NO FUEL · PRESS TAB'); drive.noFuelT = 2; } } else drive.noFuelT = 0;
+
+
+      const boosting = (keys.ShiftLeft || keys.ShiftRight) && hasFuel && fwd > 0;
+      const boostMul = boosting ? 2 : 1;
+      const maxFwd = 28.8 * boostMul;
+      const maxBack = 4.5;
+      const accel = 2.2 * (boosting ? 2 : 1);
+      const brake = 3.5;
+      const coast = 1.2;
+      const turnRate = 0.55;
+
+
+      if (fwd > 0 && Math.abs(turnInput) < 0.01 && Math.abs(drive.turnAcc) < 0.01) {
+        drive.straightT += dt;
+      } else {
+        drive.straightT = Math.max(0, drive.straightT - dt * 1.5);
+      }
+      const ramp = Math.min(1, drive.straightT / 6);
+      const targetMax = 7.2 * boostMul + (maxFwd - 7.2 * boostMul) * ramp;
+
+      if (fwd > 0) {
+        const cap = targetMax;
+        if (drive.speed < cap) drive.speed = Math.min(cap, drive.speed + accel * dt);
+        else drive.speed = Math.max(cap, drive.speed - coast * dt);
+      } else if (fwd < 0) {
+        const cap = -maxBack;
+        if (drive.speed > cap) drive.speed = Math.max(cap, drive.speed - accel * 0.7 * dt);
+      } else {
+
+        const decel = hasFuel ? coast : brake;
+        if (drive.speed > 0) drive.speed = Math.max(0, drive.speed - decel * dt);
+        else if (drive.speed < 0) drive.speed = Math.min(0, drive.speed + decel * dt);
+      }
+
+
+      const burn = (Math.abs(drive.speed) / maxFwd * 6 + (Math.abs(turnInput) > 0.01 ? 0.5 : 0) + (fwd !== 0 ? 0.4 : 0)) * dt * boostMul;
+      if (burn > 0.001 && (Math.abs(drive.speed) > 0.05 || fwd !== 0 || Math.abs(turnInput) > 0.01)) rammerBurn(burn);
+      if (drive.fuelBuf <= 0.01 && !rammerHasFuel() && Math.abs(drive.speed) < 0.1) drive.speed = 0;
+      const fuelLeft = drive.fuelBuf + [0,1,2,3,4].reduce((a,i)=>a+rammerFuelValue(rammerSlots()[`fuel${i}`]),0);
+      inst.state.status = fuelLeft > 0.01 ? `FUEL ${Math.ceil(fuelLeft)}` : 'NO FUEL';
+
+
+      const step = THREE.MathUtils.degToRad(4);
+      const turnDelta = turnInput * turnRate * dt;
+      drive.turnAcc += turnDelta;
+
+      while (drive.turnAcc >= step) { drive.heading += step; drive.turnAcc -= step; drive.stepKick = 1; }
+      while (drive.turnAcc <= -step) { drive.heading -= step; drive.turnAcc += step; drive.stepKick = 1; }
+
+
+
+      drive.turnSnap += (drive.heading - drive.turnSnap) * (1 - Math.exp(-dt * 18));
+
+
+      const spd = drive.speed;
+      const mx = -Math.sin(drive.heading) * spd * dt;
+      const mz = -Math.cos(drive.heading) * spd * dt;
+      let nx = inst.x + mx;
+      let nz = inst.z + mz;
+      let ny = world.getSurfaceHeight(nx, nz, inst.y + 8);
+      if (!Number.isFinite(ny)) ny = inst.y;
+
+      const climb = ny - inst.y;
+      const blocked = (world.field && world.field.sample(nx, ny + 1.2, nz) > 0) || climb > 1.4;
+      if (blocked) {
+        drive.speed *= 0.3;
+        nx = inst.x; nz = inst.z; ny = inst.y;
+      } else {
+        inst.x = nx; inst.z = nz; inst.y = ny; inst.top = ny + inst.def.height * 1.45;
+      }
+      inst.rot = drive.heading;
+      inst.mesh.position.set(inst.x, inst.y + (inst._baseYOff ?? 0), inst.z);
+      inst.mesh.rotation.y = drive.heading;
+      if (inst.machine) { inst.machine.x = inst.x; inst.machine.y = inst.y + (inst.def.height * 1.45) / 2; inst.machine.z = inst.z; }
+
+
+      if (Math.abs(spd) > 0.5) {
+        const _hitTrees = [];
+        for (const pl of _vegActive.canopy.values()) {
+          if (!pl || !pl.sp || !pl.sp.trunk) continue;
+          const dx = pl.x - inst.x, dz = pl.z - inst.z;
+          if (dx * dx + dz * dz > 3.5 * 3.5) continue;
+          _hitTrees.push(pl);
+        }
+        for (const pl of _hitTrees) {
+          if (!_vegActive.canopy.has(`${pl.gx},${pl.gz}`)) continue;
+          chopTree({
+            pl, sp: pl.sp, dyn: null, parts: pl.sp.parts,
+            pos: new THREE.Vector3(pl.x, pl.y, pl.z),
+            quat: pl.q.clone(), scale: pl.scale, topY: 1, trunkR: pl.sp.trunkR, cutLocalY: 0.18,
+          }, 1);
+        }
+      }
+
+
+      const moving = Math.abs(spd) > 0.2;
+      const walkRate = 1.2 + Math.min(1.8, Math.abs(spd) / 8);
+      if (moving) {
+        const prevStep = Math.floor(drive.stepWalk || 0);
+        drive.walk += dt * walkRate;
+        drive.stepWalk = (drive.stepWalk || 0) + dt * walkRate * 4;
+        const nowStep = Math.floor(drive.stepWalk);
+        for (let s = prevStep + 1; s <= nowStep; s++) {
+          const pan = ((s % 4) - 1.5) / 1.5 * 0.35;
+          footsteps.step(footstepCategory(), 0.45 * masterVolume * 0.7, 0.34 + Math.random() * 0.05, pan, 420);
+        }
+      }
+      drive.stepKick = Math.max(0, drive.stepKick - dt * 3);
+      const stepBob = moving ? Math.sin(drive.walk * Math.PI * 2) * 0.18 : 0;
+      const stepRoll = moving ? Math.sin(drive.walk * Math.PI * 2 + Math.PI / 2) * 0.015 : 0;
+      drive.bob += (stepBob - drive.bob) * Math.min(1, dt * 4);
+
+
+      const legNames = ['front left', 'front right', 'back left', 'back right'];
+      const mesh = inst.mesh;
+      if (mesh) {
+        for (let i = 0; i < legNames.length; i++) {
+          const obj = mesh.getObjectByName(legNames[i]);
+          if (!obj) continue;
+          const phase = drive.walk * Math.PI * 2 + (i === 1 || i === 2 ? Math.PI : 0);
+          const swing = moving ? Math.sin(phase) * 0.35 : 0;
+          const lift = moving ? Math.max(0, Math.cos(phase)) * 0.25 : 0;
+          obj.rotation.x = swing;
+          obj.position.y = (obj.userData.baseY ?? (obj.userData.baseY = obj.position.y)) + lift * 0.15;
+        }
+      }
+
+
+      const camBaseY = inst.y + 1.7;
+      const bobY = drive.bob + drive.stepKick * 0.08;
+      camY = camY === null ? camBaseY : camY + (camBaseY + bobY - camY) * Math.min(1, dt * 5);
+      camera.position.set(inst.x, camY, inst.z);
+
+
+      const sample = 2.2;
+      const hL = world.getSurfaceHeight(inst.x + Math.cos(drive.heading) * sample, inst.z - Math.sin(drive.heading) * sample, inst.y + 6);
+      const hR = world.getSurfaceHeight(inst.x - Math.cos(drive.heading) * sample, inst.z + Math.sin(drive.heading) * sample, inst.y + 6);
+      const fx = -Math.sin(drive.heading), fz = -Math.cos(drive.heading);
+      const rx = Math.cos(drive.heading), rz = -Math.sin(drive.heading);
+      const hF = world.getSurfaceHeight(inst.x + fx * sample, inst.z + fz * sample, inst.y + 6);
+      const hB = world.getSurfaceHeight(inst.x - fx * sample, inst.z - fz * sample, inst.y + 6);
+      const hFR = world.getSurfaceHeight(inst.x + (fx + rx) * sample, inst.z + (fz + rz) * sample, inst.y + 6);
+      const hFL = world.getSurfaceHeight(inst.x + (fx - rx) * sample, inst.z + (fz - rz) * sample, inst.y + 6);
+      const rollTarget = THREE.MathUtils.clamp(Math.atan2((Number.isFinite(hR)?hR:inst.y) - (Number.isFinite(hL)?hL:inst.y), sample * 2) * 2.2, -0.7, 0.7);
+      const pitchTarget = -Math.atan2((Number.isFinite(hB)?hB:inst.y) - (Number.isFinite(hF)?hF:inst.y), sample * 2) * 0.4;
+      const yawTarget = Math.atan2((Number.isFinite(hFR)?hFR:inst.y) - (Number.isFinite(hFL)?hFL:inst.y), sample * 2) * 0.2;
+      drive.camRoll += (rollTarget - drive.camRoll) * (1 - Math.exp(-dt * 6));
+      drive.camPitch += (pitchTarget - drive.camPitch) * (1 - Math.exp(-dt * 4));
+      drive.camYaw += (yawTarget - drive.camYaw) * (1 - Math.exp(-dt * 4));
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = drive.turnSnap + drive.camYaw;
+      camera.rotation.x = drive.camPitch;
+      camera.rotation.z = drive.camRoll + stepRoll;
+
+      player.pos.set(inst.x, inst.y, inst.z);
+      player.vel.set(0, 0, 0);
+      postMat.uniforms.uDriveRed.value = 1;
+    }
 
     function startSleep(inst) {
       if (sleep || !inst || !locked || replayPlay || deathT > 0) return;
       if (invOpen || cmdOpen || mapSystem?.isOpen() || recipeOpen || visibleTree() || workbenchUI.opened || skylineSystem?.isOpen() || achieveOpen) return;
       const wakeDay = clock.day + 1;
       const late = Math.random() < 0.35 ? (60 + Math.random() * 180) : (Math.random() * 20);
-      const targetT = Math.min(TUNING.DAY_SECONDS - 1, late); // morning, sometimes late
+      const targetT = Math.min(TUNING.DAY_SECONDS - 1, late);
       const remaining = (TUNING.DAY_SECONDS - clock.t) + (wakeDay - clock.day - 1) * TUNING.DAY_SECONDS + targetT;
       sleep = {
         phase: 'down', t: 0, fadeDown: 1.2, fadeUp: 0.9,
@@ -12419,7 +13132,7 @@
       }
       if (sleep.phase === 'sleep') {
         const step = 0.05;
-        const budget = 8; // game seconds simulated per real frame max
+        const budget = 8;
         let sim = Math.min(sleep.remaining, budget);
         while (sim > 1e-4) {
           const sdt = Math.min(step, sim);
@@ -12462,7 +13175,7 @@
     function advanceSleepTime(dt) {
       if (timeLock === null) {
         clock.t += dt;
-        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; }
+        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; maybeNuclearStrike(); }
       } else {
         clock.t = timeLock;
       }
@@ -12682,10 +13395,10 @@
         { f: [0, 0, 1], u: [0, 1, 0] },
         { f: [0, 0, -1], u: [0, 1, 0] },
       ];
-      // The panorama has to show the same horizon the player sees, so it uses
-      // the game's own near and far planes: a fixed 2 km plane made every
-      // panorama look like the world stopped two kilometres out, and a
-      // different near plane gave it a different depth precision.
+
+
+
+
       const cam = new THREE.PerspectiveCamera(90, 1, camera.near, Math.max(2000, camera.far));
       const rt = new THREE.WebGLRenderTarget(S, S, { depthBuffer: true });
       rt.texture.colorSpace = THREE.SRGBColorSpace;
@@ -12790,25 +13503,25 @@
     window.__lagSheet = lagSheet;
 
 
-    /* ---------------- replay ----------------
-     * A replay is the player's camera path plus the density edits it made.
-     * Recording is opt in (settings); the pause menu opens the fullscreen
-     * replay panel, which records, lists, plays back and exports.
-     */
+
+
+
+
+
 
     const REPLAY_KEY = 'idte.replay.v1.';
     const REPLAY_SPEEDS = [0.25, 0.5, 1, 2, 4];
     const replayEnabled = () => !!getSetting('replay');
 
-    let replayRec = null;        // the replay being recorded
+    let replayRec = null;
     let replayRecT0 = 0;
-    let replayRecT = 0;          // recorded seconds (game time, not wall clock)
-    let replayPlay = null;       // { replay, t, speed, playing, editIdx, saved }
-    let replayExport = null;     // { rec, track, c2d, canvas, w, h, chunks, done, mime, fps, step, needsSim }
-    let replayHeld = null;       // { id } - the item the playback holds
+    let replayRecT = 0;
+    let replayPlay = null;
+    let replayExport = null;
+    let replayHeld = null;
 
-    // Every density edit is a replay event: mined and placed voxels replay in
-    // the same order they happened.
+
+
     world.field.onEdit = (x, y, z, v) => {
       if (replayRec) pushEdit(replayRec, replayRecT, x, y, z, v);
     };
@@ -12857,7 +13570,7 @@
       return out;
     }
 
-    // --- playback ---
+
 
     function beginPlayback(r, opts = {}) {
       stopReplayRecording();
@@ -12894,8 +13607,8 @@
       }
     }
 
-    // Put every voxel the replay touched back the way it was, so a playback
-    // never leaves a hole in the saved world.
+
+
     function restoreReplayWorld() {
       const p = replayPlay;
       if (!p) return;
@@ -12922,8 +13635,8 @@
     function updateReplayPlayback(dt) {
       const p = replayPlay;
       if (!p) return;
-      // Export steps the replay by a fixed frame time after each captured
-      // frame; interactive playback follows wall-clock time.
+
+
       if (!p.exporting && p.playing) {
         p.t += dt * p.speed;
         if (p.t >= p.replay.dur) {
@@ -12939,8 +13652,8 @@
         player.vel.set(0, 0, 0);
         player.yaw = s.yaw;
         player.pitch = s.pitch;
-        // Snap the smoothed camera state so the recorded view (including
-        // slide/crouch height and tilt) is shown without a settling lag.
+
+
         eyeCur = s.eye ?? player.eye;
         slidePitch = s.slideP ?? 0;
         camY = s.y + eyeCur;
@@ -12972,7 +13685,7 @@
       notice('REPLAY ENDED');
     }
 
-    // --- export ---
+
 
     function containRect(winW, winH, w, h) {
       const k = Math.min(winW / w, winH / h);
@@ -13011,9 +13724,9 @@
       canvas.width = w; canvas.height = h;
       const c2d = canvas.getContext('2d');
       c2d.imageSmoothingEnabled = false;
-      // Frames are pushed explicitly with requestFrame (when available) so the
-      // video gets one captured frame per replay step, not whatever the PC
-      // happened to render in real time.
+
+
+
       const stream = canvas.captureStream(fps);
       const track = stream.getVideoTracks()[0] || null;
       const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
@@ -13080,9 +13793,9 @@
       return Math.max(0, Math.min(1, replayPlay.t / dur));
     }
 
-    // Pump streaming/rebuild work until the world for the current replay time
-    // is ready, so an exported frame is fully made instead of a mid-build
-    // snapshot. Returns true when nothing is left to build.
+
+
+
     function settleWorldForExport(limitMs = 80) {
       const until = performance.now() + limitMs;
       while (performance.now() < until) {
@@ -13199,7 +13912,7 @@
               const s = w.surfaceAt(x, z);
               if (s !== -Infinity && w.waterAt(x + 0.5, s - 1, z + 0.5) > 0) { col = [x, z]; break outer; }
             }
-          if (!col) return { ok: true, note: 'no pond deeper than 1 m in 96 m — nothing to verify' };
+          if (!col) return { ok: true, note: 'no pond deeper than 1 m in 96 m, nothing to verify' };
           const [x, z] = col;
           const s0 = w.surfaceAt(x, z);
           const d0 = ws.depth.get(World.wk(x, z));
@@ -13269,7 +13982,9 @@
 
       if (!paused && !sleep) {
       const _pMove = performance.now();
-      if (!invOpen && !cmdOpen && !workbenchUI.opened && !skylineSystem?.isOpen() && !mapSystem?.isOpen() && !replayPlay) {
+      if (drive) {
+        updateDrive(dt); updateBreath(dt);
+      } else if (!invOpen && !cmdOpen && !workbenchUI.opened && !skylineSystem?.isOpen() && !mapSystem?.isOpen() && !replayPlay) {
         movePlayer(dt); updateBreath(dt);
       } else {
         player.vel.x = 0; player.vel.z = 0;
@@ -13277,7 +13992,7 @@
       perf.move += performance.now() - _pMove;
 
 
-      if (mining && locked && !invOpen && !cmdOpen) {
+      if (mining && locked && !invOpen && !cmdOpen && !drive) {
         mineTimer -= dt;
         while (mineTimer <= 0) { doMine(); mineTimer += heldTool().rate; }
       } else mining = false;
@@ -13285,12 +14000,13 @@
 
       if (timeLock === null) {
         clock.t += dt;
-        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; }
+        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; maybeNuclearStrike(); }
       } else {
         clock.t = timeLock;
       }
       updateDaylight();
       updateAmbientMusic(dt);
+      updateMachineSounds(dt);
       if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
       if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
       if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
@@ -13316,8 +14032,8 @@
       if (noticeT > 0) noticeT = Math.max(0, noticeT - dt);
 
 
-      // A replay drives the camera: the recorded path replaces the player's
-      // own movement, and the recorded clock replaces the running one.
+
+
       if (replayPlay) updateReplayPlayback(dt);
       else if (replayRec) {
         replayRecT += dt;
@@ -13327,7 +14043,7 @@
       }
 
       if (replayPlay) {
-        // eyeCur/slidePitch come from the replay sample
+
       } else {
         eyeCur += ((sliding ? 1.02 : player.eye) - eyeCur) * Math.min(1, dt * 10);
         slidePitch += ((sliding ? 0.14 : 0) - slidePitch) * Math.min(1, dt * 8);
@@ -13335,26 +14051,28 @@
       const speed = Math.hypot(player.vel.x, player.vel.z);
       const localRight = player.vel.x * Math.cos(player.yaw) - player.vel.z * Math.sin(player.yaw);
       const moveLean = Math.max(-1, Math.min(1, localRight / 5.5));
-      const leanTarget = -moveLean * (sliding ? 0.16 : 0.12);
-      cameraRoll += (leanTarget - cameraRoll) * (1 - Math.exp(-dt * 3.8));
-      const movingGrounded = player.onGround && !sliding && speed > 0.65;
-      if (movingGrounded) cameraBob += dt * (keys.ShiftLeft || keys.ShiftRight ? 13 : 9);
-      const landingSpring = -landingOffset * 88 - landingVelocity * 17;
-      landingVelocity += landingSpring * dt;
-      landingOffset += landingVelocity * dt;
-      if (Math.abs(landingOffset) < 0.0005 && Math.abs(landingVelocity) < 0.005) { landingOffset = 0; landingVelocity = 0; }
-      const camTargetY = player.pos.y + eyeCur;
-      camY = camY === null ? camTargetY : camY + (camTargetY - camY) * Math.min(1, dt * 22);
-      const shake = shakeT > 0 ? shakeT * 0.12 : 0;
-      camera.position.set(
-        player.pos.x + (Math.random() - 0.5) * shake,
-        camY + (movingGrounded ? Math.abs(Math.sin(cameraBob)) * 0.035 : 0) + landingOffset + (Math.random() - 0.5) * shake,
-        player.pos.z + (Math.random() - 0.5) * shake);
-      // Slide/crouch isn't in the replay; keep the view from dipping into
-      // the ground when a slide was recorded.
-      if (replayPlay) camera.position.y = Math.max(camera.position.y, player.pos.y + 0.25);
-      camera.rotation.y = player.yaw + (Math.random() - 0.5) * shake * 0.5;
-      camera.rotation.x = player.pitch + slidePitch - landingOffset * 0.24 + (Math.random() - 0.5) * shake * 0.5;
+      if (!drive) {
+        const leanTarget = -moveLean * (sliding ? 0.16 : 0.12);
+        cameraRoll += (leanTarget - cameraRoll) * (1 - Math.exp(-dt * 3.8));
+        const movingGrounded = player.onGround && !sliding && speed > 0.65;
+        if (movingGrounded) cameraBob += dt * (keys.ShiftLeft || keys.ShiftRight ? 13 : 9);
+        const landingSpring = -landingOffset * 88 - landingVelocity * 17;
+        landingVelocity += landingSpring * dt;
+        landingOffset += landingVelocity * dt;
+        if (Math.abs(landingOffset) < 0.0005 && Math.abs(landingVelocity) < 0.005) { landingOffset = 0; landingVelocity = 0; }
+        const camTargetY = player.pos.y + eyeCur;
+        camY = camY === null ? camTargetY : camY + (camTargetY - camY) * Math.min(1, dt * 22);
+        const shake = shakeT > 0 ? shakeT * 0.12 : 0;
+        camera.position.set(
+          player.pos.x + (Math.random() - 0.5) * shake,
+          camY + (movingGrounded ? Math.abs(Math.sin(cameraBob)) * 0.035 : 0) + landingOffset + (Math.random() - 0.5) * shake,
+          player.pos.z + (Math.random() - 0.5) * shake);
+
+
+        if (replayPlay) camera.position.y = Math.max(camera.position.y, player.pos.y + 0.25);
+        camera.rotation.y = player.yaw + (Math.random() - 0.5) * shake * 0.5;
+        camera.rotation.x = player.pitch + slidePitch - landingOffset * 0.24 + (Math.random() - 0.5) * shake * 0.5;
+      }
 
 
       const _pJobs = performance.now();
@@ -13391,7 +14109,7 @@
       }
 
       if (sleep) {
-        // Keep camera on the bed looking up while world fast-forwards.
+
         eyeCur += ((player.eye) - eyeCur) * Math.min(1, dt * 10);
         slidePitch += ((0) - slidePitch) * Math.min(1, dt * 8);
         const camTargetY = player.pos.y + eyeCur;
@@ -13456,6 +14174,7 @@
         w.hitCd = Math.max(0, (w.hitCd || 0) - dt);
         if (!w.dying && !w.hitCd && w.pos.distanceTo(player.pos) < 1.9) {
           w.hitCd = 1.5;
+          playWrapperSound('attack', w.pos);
           hurt(11, 'bleeding');
           if (Math.random() < 0.35) addWound('pain');
         }
@@ -13481,17 +14200,18 @@
 
 
       const _pMisc = performance.now();
-      // The far rings own their own distance haze, so scene.fog only has to cover
-      // the editable terrain. The haze is complete exactly where the fake terrain
-      // ends (outer ring edge or camera far plane), so no border of it shows.
+
+
+
       const nominalFar = viewRadius * CHUNK_SIZE;
       const horizon = farTerrain.outer;
       const visFar = horizon > 0 ? Math.min(horizon, nominalFar * 1.1) : nominalFar;
-      // The far plane has to be pushed into the projection matrix, or the
-      // camera keeps the plane it was built with (400 m) and the world is
-      // clipped a few hundred metres out — which is why changing the FOV
-      // "fixed" the horizon: that path rebuilds the projection.
-      const far = Math.max(400, horizon > 0 ? Math.min(horizon * 1.02, nominalFar * 1.1) : nominalFar * 1.1);
+
+
+
+
+      let far = Math.max(400, horizon > 0 ? Math.min(horizon * 1.02, nominalFar * 1.1) : nominalFar * 1.1);
+      for (const fx of nukeFx) far = Math.max(far, Math.hypot(fx.x - camera.position.x, fx.z - camera.position.z) + 700);
       if (far !== camera.far) {
         camera.far = far;
         camera.updateProjectionMatrix();
@@ -13540,6 +14260,7 @@
       updateTorches(dt, now);
       updateDoorSwings(dt);
       updateC4(dt);
+      updateNukeFx(dt);
 
 
       updateViewmodel(dt);
@@ -13548,9 +14269,9 @@
       sun.position.copy(camera.position).addScaledVector(SUN_DIR, 80);
       sun.target.position.copy(camera.position);
       sun.target.updateMatrixWorld();
-      // The sky bodies sit at a fixed distance from the camera, like the old
-      // sun disc: near enough to be inside the far plane, far enough that a
-      // mountain in front of them hides them.
+
+
+
       const skyDist = 280;
       const sunAt = new THREE.Vector3().copy(camera.position).addScaledVector(SUN_DIR, skyDist);
       sunDisc.position.copy(sunAt);
@@ -13578,6 +14299,7 @@
       const blurTarget = workbenchUI.opened ? 0 : stage.blur + eyeBlur;
       postMat.uniforms.uRadBlur.value += (blurTarget - postMat.uniforms.uRadBlur.value) * k;
       postMat.uniforms.uRadDark.value += (stage.dark - postMat.uniforms.uRadDark.value) * k;
+      postMat.uniforms.uDriveRed.value = drive ? 1 : 0;
       postMat.uniforms.uTime.value = now / 1000;
       perf.misc += performance.now() - _pMisc;
 
@@ -13606,16 +14328,16 @@
         panoRequested = false;
         capturePanorama();
       }
-      // Video export: wait for the world to finish building this replay
-      // time, then capture exactly one frame per export step at the chosen
-      // framerate instead of sampling the PC's realtime rate.
+
+
+
       if (exporting) {
         const ready = !world.dirty.length && !world.loading.length && !world.waterDirty.length
           ? true : settleWorldForExport(80);
         if (ready && replayExport && replayPlay) {
           const ex = replayExport;
           ex.c2d.drawImage(renderer.domElement, 0, 0, ex.w, ex.h);
-          // the DOM crosshair is not part of the canvas capture
+
           const cx = ex.w / 2, cy = ex.h / 2, g = ex.c2d;
           g.strokeStyle = 'rgba(255,255,255,0.9)';
           g.lineWidth = Math.max(1, Math.round(ex.h / 720));
@@ -13688,7 +14410,7 @@
       for (let i = 0; i < 4000; i++) {
         if (_vegStreamTask) vegStreamStep(8);
         else { vegUpdate(px, pz); if (!_vegStreamTask) break; }
-        // Flush dirty instance updates
+
         for (const sp of VEG_SPECIES) {
           if (!sp.dirty) continue;
           vegUpdateInstances(sp);
@@ -13711,8 +14433,8 @@
     window.__NUCLEARISM_HAS_FAR_TERRAIN__ = viewRadius > DETAIL_CHUNK_RADIUS;
     window.__NUCLEARISM_LOAD_STATUS__ = 'Generating spawn terrain...';
     const hasFarTerrain = window.__NUCLEARISM_HAS_FAR_TERRAIN__;
-    // The first-run intro sits over the loading screen, so its own button
-    // carries the progress the loading screen behind it shows.
+
+
     const setIntroProgress = (p) => {
       if (!introBtn || !introBtn.disabled) return;
       const pct = Math.max(0, Math.min(99, Math.floor(p * 100)));

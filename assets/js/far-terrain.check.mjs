@@ -1,10 +1,10 @@
-// Far-terrain seam checks: node assets/js/far-terrain.check.mjs
-// The fake horizon rings have to continue the ground the player is standing
-// on. They used to sit a flat 6 m under the terrain trend, so where the
-// detailed chunks ended the world visibly dropped off in a straight line in
-// front of the player, and a cliff down to a smoothed world sat just beyond
-// it. These checks run the real game.js helpers against the real chunk
-// layout.
+
+
+
+
+
+
+
 
 import { readFileSync } from 'node:fs';
 
@@ -52,15 +52,15 @@ const { farRingEdge, farRingBeyond, farRingBlendWeight } = gameRuntime(
   { DETAIL_CHUNK_RADIUS, CHUNK_SIZE, FAR_RING_BLEND },
 );
 
-// The detailed chunks span centre-96 .. centre+112 in both axes: the chunk
-// columns are pcx-6 .. pcx+6 and the chunk next to the player's own starts
-// at the player's chunk origin.
+
+
+
 const EDGE_NEG = DETAIL_CHUNK_RADIUS * CHUNK_SIZE;
 const EDGE_POS = (DETAIL_CHUNK_RADIUS + 1) * CHUNK_SIZE;
 check(EDGE_NEG === 96 && EDGE_POS === 112, `detail square is -96..+112 (got -${EDGE_NEG}..+${EDGE_POS})`);
 
 const centre = 0;
-// Inside the detail square the ring keeps the real ground.
+
 check(farRingEdge(-16, centre) === EDGE_NEG, `near side of the detail square ends at ${EDGE_NEG}`);
 check(farRingEdge(16, centre) === EDGE_POS, `far side of the detail square ends at ${EDGE_POS}`);
 check(farRingBeyond(0, 0, centre, centre) < 0, 'the player stands inside the detail square');
@@ -70,8 +70,8 @@ check(farRingBeyond(EDGE_POS + 1, 0, centre, centre) === 1, 'a cell past the det
 check(farRingBeyond(-EDGE_NEG - 1, 0, centre, centre) === 1,
   'a cell past the near edge is outside it (the square is asymmetric)');
 
-// The blend: at the edge the ring is still the real ground, and it eases into
-// the smooth trend over the next 48 m. No jump at the edge, no cliff.
+
+
 check(farRingBlendWeight(0) === 0, 'the ring keeps the real ground at the detail edge');
 check(farRingBlendWeight(-40) === 0, 'the ring keeps the real ground inside the detail square');
 check(farRingBlendWeight(FAR_RING_BLEND) === 1, 'the ring is fully on the trend at the end of the blend');
@@ -83,16 +83,16 @@ for (let d = 0; d <= FAR_RING_BLEND; d += 2) {
 }
 check(monotone, 'the blend weight rises monotonically, so the seam cannot jump');
 
-// The haze has to finish at the outer edge of the visible range, or the fake
-// terrain ends on a hard line, but it must not swallow the middle of the
-// horizon: the fade is a fourth power over the range.
+
+
+
 check(FAR_HAZE_REACH >= 5, `far haze reaches the rim (FAR_HAZE_REACH=${FAR_HAZE_REACH})`);
 
-// The far plane only reaches the screen if the projection matrix is rebuilt
-// when it changes. The camera is built with a 400 m plane; the game sets
-// camera.far every frame, and without the rebuild the world is clipped a few
-// hundred metres out (which is why changing the FOV "fixed" the horizon:
-// that path rebuilds the projection).
+
+
+
+
+
 const farAssign = gameSource.indexOf('camera.far = far;');
 check(farAssign > 0, 'the frame loop sets the camera far plane');
 check(farAssign > 0 && gameSource.slice(farAssign, farAssign + 200).includes('updateProjectionMatrix'),

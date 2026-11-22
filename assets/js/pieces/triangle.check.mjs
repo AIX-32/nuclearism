@@ -1,9 +1,9 @@
-// Self-checks for the triangle wedge: node assets/js/pieces/triangle.check.mjs
-//
-// The wedge is half of a 3 x 3 m square. These checks prove that the mesh
-// really is a right triangle prism, that its right angle walks through the
-// four corners of the square as it rotates, and that the cell boxes line up
-// with the mesh they claim to describe.
+
+
+
+
+
+
 
 import { KIND as TRI, ITEMS as TRI_ITEMS, RECIPES as TRI_RECIPES } from './triangle.js';
 
@@ -11,9 +11,9 @@ const ok = [];
 function check(cond, msg) { ok.push([!!cond, msg]); }
 
 const W = 3, D = 3, TH = 0.25;
-const X0 = 4, Y0 = 10, Z0 = 7;   // an arbitrary anchor for the piece
+const X0 = 4, Y0 = 10, Z0 = 7;
 
-// --- the kind ----------------------------------------------------------------
+
 check(TRI.name === 'triangle', 'the kind is called triangle');
 check(TRI.rot === 4, 'the wedge has four rotations');
 check(TRI.solid === true, 'the wedge is solid');
@@ -22,7 +22,7 @@ check(TRI.geom === 'triangle', 'the wedge uses the custom triangle geometry');
 check(typeof TRI.geometry === 'function', 'the wedge builds its own geometry');
 check(typeof TRI.rotY === 'function', 'the wedge rotates with rotY');
 
-// --- the cells ---------------------------------------------------------------
+
 for (let rot = 0; rot < 4; rot++) {
   const cells = TRI.cells(X0, Y0, Z0, rot);
   check(cells.length === 9, `rot ${rot} claims 9 cells`);
@@ -30,7 +30,7 @@ for (let rot = 0; rot < 4; rot++) {
   check(cells.every(([k]) => k.split(',').length === 3), `rot ${rot} cell keys are x,y,z`);
   check(cells.every(([, b]) => b.minY >= Y0 && b.maxY <= Y0 + 1), `rot ${rot} cell boxes stay in their layer`);
   check(cells.every(([, b]) => b.maxY - b.minY === TH), `rot ${rot} cell boxes are one slab thick`);
-  // Every box has to sit inside the cell it names.
+
   const inside = cells.every(([k, b]) => {
     const [cx, cy, cz] = k.split(',').map(Number);
     return b.minX >= cx && b.maxX <= cx + 1 && b.minZ >= cz && b.maxZ <= cz + 1
@@ -39,7 +39,7 @@ for (let rot = 0; rot < 4; rot++) {
   check(inside, `rot ${rot} cell boxes are inside their cells`);
 }
 
-// The four rotations must not all look the same.
+
 const layouts = [0, 1, 2, 3].map((r) => TRI.cells(X0, Y0, Z0, r).map(([k, b]) =>
   `${k}:${b.minX},${b.maxX},${b.minZ},${b.maxZ}`).sort().join('|'));
 check(new Set(layouts).size === 4, 'the four rotations give four different cell layouts');
@@ -47,8 +47,8 @@ check(layouts[0] !== layouts[1], 'rot 0 and rot 1 differ (the diagonal really mo
 check(layouts[1] !== layouts[2], 'rot 1 and rot 2 differ');
 check(layouts[2] !== layouts[3], 'rot 2 and rot 3 differ');
 
-// --- the mesh ----------------------------------------------------------------
-// A tiny three.js stand in: the runtime hands its own THREE to the kind.
+
+
 const THREE = {
   BufferGeometry: class {
     constructor() { this.attributes = {}; }
@@ -68,7 +68,7 @@ check(pos.length % 9 === 0 && pos.length > 0, 'the geometry is made of triangles
 check(geom.attributes.uv && geom.attributes.uv.array.length / 2 === pos.length / 3,
   'every vertex has a texture coordinate');
 
-// The prism is a unit right triangle in XZ, right angle at (-0.5,-0.5).
+
 const corners = new Set();
 for (let i = 0; i < pos.length; i += 3) corners.add(`${pos[i].toFixed(3)},${pos[i + 2].toFixed(3)}`);
 check(corners.size === 3, 'the prism has three corners in XZ');
@@ -79,7 +79,7 @@ check(Math.abs(half([-0.5, -0.5], [0.5, -0.5]) - 1) < 1e-9, 'the first leg is on
 check(Math.abs(half([-0.5, -0.5], [-0.5, 0.5]) - 1) < 1e-9, 'the second leg is one unit');
 check(Math.abs(half([0.5, -0.5], [-0.5, 0.5]) - Math.SQRT2) < 1e-9, 'the hypotenuse is the diagonal');
 
-// The normals must point out of the prism.
+
 const mid = [0, 0, 0];
 for (let i = 0; i < pos.length; i += 3) { mid[0] += pos[i]; mid[1] += pos[i + 1]; mid[2] += pos[i + 2]; }
 for (let i = 0; i < mid.length; i++) mid[i] /= pos.length / 3;
@@ -102,8 +102,8 @@ for (let t = 0; t < pos.length; t += 9) {
 }
 check(outward, 'every face of the prism faces outwards');
 
-// --- the mesh in world space ------------------------------------------------
-// The mesh is scaled by (W, TH, D), turned by rotY(rot) and moved to center().
+
+
 function worldCorners(rot) {
   const c = TRI.center(X0, Y0, Z0, rot);
   const s = TRI.scale(X0, Y0, Z0, rot);
@@ -116,28 +116,28 @@ function worldCorners(rot) {
   });
 }
 
-// The right angle of the wedge: where does it point for each rotation?
+
 const RIGHT_ANGLE = [
   [X0, Z0], [X0, Z0 + 3], [X0 + 3, Z0 + 3], [X0 + 3, Z0],
 ];
 for (let rot = 0; rot < 4; rot++) {
   const c = worldCorners(rot);
-  const ra = c[0];   // the right angle of the unit prism
+  const ra = c[0];
   const [ex, ez] = RIGHT_ANGLE[rot];
   check(Math.abs(ra.x - ex) < 1e-9 && Math.abs(ra.z - ez) < 1e-9,
     `rot ${rot} puts the right angle at (${ex}, ${ez})`);
-  // The hypotenuse runs corner to corner of the square.
+
   const h = Math.hypot(c[1].x - c[2].x, c[1].z - c[2].z);
   check(Math.abs(h - 3 * Math.SQRT2) < 1e-9, `rot ${rot} has a corner to corner hypotenuse`);
-  // The three corners are three corners of the 3 x 3 square.
+
   const cornersOfSquare = [[X0, Z0], [X0 + 3, Z0], [X0, Z0 + 3], [X0 + 3, Z0 + 3]];
   check(c.every((p) => cornersOfSquare.some(([qx, qz]) =>
     Math.abs(p.x - qx) < 1e-9 && Math.abs(p.z - qz) < 1e-9)),
     `rot ${rot} sits on the corners of its square`);
 }
 
-// --- the cells against the mesh ----------------------------------------------
-// Sample the square and compare the wedge (from the mesh) with the cell boxes.
+
+
 function pointInTriangle(p, tri) {
   const sign = (a, b) => (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
   const s1 = sign(tri[0], tri[1]), s2 = sign(tri[1], tri[2]), s3 = sign(tri[2], tri[0]);
@@ -167,19 +167,19 @@ for (let rot = 0; rot < 4; rot++) {
     `rot ${rot} does not block much of the open half (${(100 * outsideCovered / outside).toFixed(0)}%)`);
 }
 
-// The player must be able to stand in the open half of a cut cell and must
-// be stopped by the solid half of the same cell.
+
+
 for (let rot = 0; rot < 4; rot++) {
   const tri = worldCorners(rot);
   const boxes = TRI.cells(X0, Y0, Z0, rot);
   let openFree = true, solidBlocked = true;
   for (const [key, b] of boxes) {
     const [cx, , cz] = key.split(',').map(Number);
-    // The corners of the cell.
+
     const pts = [[cx, cz], [cx + 1, cz], [cx, cz + 1], [cx + 1, cz + 1]];
-    // The hypotenuse runs from the second to the third corner of the prism,
-    // so the sign against that edge says which side of the diagonal a point
-    // is on: positive is the solid side of the wedge.
+
+
+
     const side = ([px, pz]) => {
       const a = tri[1], c = tri[2];
       const s = (c.x - a.x) * (pz - a.z) - (c.z - a.z) * (px - a.x);
@@ -189,17 +189,17 @@ for (let rot = 0; rot < 4; rot++) {
     const onEdge = pts.filter((p) => side(p) === 0);
     const outside = pts.filter((p) => side(p) === -1);
     if (outside.length === 0) {
-      // A fully solid cell must block the player.
+
       if (!covered({ x: cx + 0.5, z: cz + 0.5 }, boxes)) solidBlocked = false;
       continue;
     }
     if (inside.length === 0) {
-      // An empty cell must not block the player.
+
       if (covered({ x: cx + 0.5, z: cz + 0.5 }, boxes)) solidBlocked = false;
       continue;
     }
-    // A cut cell: the middle of the solid half is blocked, the middle of the
-    // open half is free.
+
+
     const mid = (list) => ({
       x: list.reduce((a, p) => a + p[0], 0) / list.length,
       z: list.reduce((a, p) => a + p[1], 0) / list.length,
@@ -213,7 +213,7 @@ for (let rot = 0; rot < 4; rot++) {
   check(openFree, `rot ${rot} leaves the open half of the cut cells walkable`);
 }
 
-// --- the items ---------------------------------------------------------------
+
 for (const tier of ['wood', 'brick', 'concrete', 'shielded']) {
   const id = `triangle_${tier}`;
   check(!!TRI_ITEMS[id], `item "${id}" exists`);
@@ -229,4 +229,4 @@ for (const [cond, msg] of ok) {
   if (!cond) { failed++; console.error('FAIL:', msg); }
 }
 if (failed) { console.error(`triangle check failed: ${failed}/${ok.length}`); process.exit(1); }
-console.log(`triangle OK — ${ok.length} assertions`);
+console.log(`triangle OK: ${ok.length} assertions`);

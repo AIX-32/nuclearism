@@ -1,6 +1,6 @@
-// Shared settings: one schema, one store, one renderer.
-// The main-menu page and the in-game pause overlay both render from this
-// module, so a new setting is added here and nowhere else.
+
+
+
 
 import { idbGet, idbSet, idbRemove } from './idb-store.js';
 

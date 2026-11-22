@@ -1,6 +1,6 @@
-// Floor panels: a thin 3 m x 3 m deck (same form as a roof). The slab sits at
-// the top of its cell so its walking surface lines up with the top of the
-// pieces below it and walls/floors can stack flush above.
+
+
+
 
 import { baseAt, edgeSupport } from './placement.js';
 

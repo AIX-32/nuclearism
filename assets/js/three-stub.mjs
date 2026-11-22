@@ -1,5 +1,5 @@
-// A tiny three.js stand in, so the building runtime can be exercised in node
-// without a browser: enough for the meshes, the placement and the shadow.
+
+
 
 export function stubThree() {
   class Vector3 {
@@ -24,8 +24,8 @@ export function stubThree() {
     constructor(sx = 1, sy = 1, sz = 1) {
       const n = 24;
       const uvArr = new Float32Array(n * 2);
-      // Vertices stay flat: the placement and shadow code works from cells, and
-      // the only caller that reads real attributes is the door frame builder.
+
+
       this.attributes = {
         position: { array: new Float32Array(n * 3), itemSize: 3 },
         normal: { array: new Float32Array(n * 3), itemSize: 3 },
@@ -83,7 +83,7 @@ export function stubThree() {
   };
 }
 
-// A flat world: solid ground up to y = 0, and nothing above it.
+
 export function flatWorld() {
   return {
     field: { get: (x, y, z) => (y <= 0 ? 1 : 0) },

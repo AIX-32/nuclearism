@@ -1,4 +1,4 @@
-// Self-checks for the roof piece: node assets/js/pieces/roof.check.mjs
+
 
 import { BUILD_TIERS } from '../build-tiers.js';
 import { KIND as WALL } from './wall.js';
@@ -8,11 +8,11 @@ import { KIND as ROOF, ITEMS as ROOF_ITEMS, RECIPES as ROOF_RECIPES } from './ro
 const ok = [];
 function check(cond, msg) { ok.push([!!cond, msg]); }
 
-// The full mesh height, from the soffit to the ridge.
+
 const TH = ROOF.scale().y;
 const W = 3, D = 3;
 
-// --- the roof cells ---------------------------------------------------------
+
 const X = 4, Y = 10, Z = 7;
 const cells = ROOF.cells(X, Y, Z);
 check(cells.length === W * D, `a roof owns ${W * D} cells`);
@@ -38,7 +38,7 @@ check(new Set(cells.map(([k]) => k.split(',')[0])).size === W, 'the roof spans t
 check(new Set(cells.map(([k]) => k.split(',')[2])).size === D, 'the roof spans three z cells');
 check(cells.every(([k]) => k.split(',')[1] === String(Y)), 'the roof sits in a single level');
 
-// A roof is twice as thick as a wall, so it shields better than one.
+
 const wallTH = WALL.cells(0, 0, 0, 0)[0][1].maxZ - WALL.cells(0, 0, 0, 0)[0][1].minZ;
 check(TH > wallTH, `a roof is thicker than a wall (${TH} m > ${wallTH} m)`);
 for (const tier of ['wood', 'brick', 'concrete', 'shielded']) {
@@ -50,7 +50,7 @@ check(1 - Math.pow(BUILD_TIERS.shielded.transmission, TH) > 0.99, 'a shielded ro
 check(1 - Math.pow(BUILD_TIERS.concrete.transmission, TH) > 0.7, 'a concrete roof stops most of the fallout');
 check(1 - Math.pow(BUILD_TIERS.wood.transmission, TH) < 0.5, 'a wood roof only helps a little');
 
-// --- a fake building system, with the same rules as the runtime -------------
+
 function makeSys(pieces = [], ground = new Set(), height = -100) {
   const map = new Map();
   const sys = {
@@ -79,9 +79,9 @@ function makeSys(pieces = [], ground = new Set(), height = -100) {
   return sys;
 }
 
-// --- a roof on a wall -------------------------------------------------------
-const wall = WALL.cells(X, Y, Z, 0);          // the wall stands on the cells y..y+2
-const wallTop = Y + 3;                        // its top surface
+
+const wall = WALL.cells(X, Y, Z, 0);
+const wallTop = Y + 3;
 const wallCells = new Set(wall.map(([k]) => k));
 const sys = makeSys([wall]);
 
@@ -102,19 +102,19 @@ check(Math.abs(roofCells[0][1].maxY - (wallTop + TH)) < 1e-9,
   `the top of the roof is ${TH} m above the top of the wall`);
 check(ROOF.support(sys, X, roofBase, Z), 'a roof on a wall is supported');
 
-// The same for a wall that runs the other way.
+
 const wallZ = WALL.cells(X, Y, Z, 1);
 const sysZ = makeSys([wallZ]);
 check(ROOF.base(sysZ, X, Z) === wallTop, 'a roof aimed at a z wall drops onto its top');
 check(ROOF.support(sysZ, X, wallTop, Z), 'a roof on a z wall is supported');
 
-// --- a roof on a floor ------------------------------------------------------
+
 const floor = FLOOR.cells(X, Y, Z);
 const sysF = makeSys([floor]);
 check(ROOF.base(sysF, X, Z) === Y + 1, 'a roof aimed at a floor drops onto its top');
 check(ROOF.support(sysF, X, Y + 1, Z), 'a roof on a floor is supported');
 
-// --- a roof must never float ------------------------------------------------
+
 const empty = makeSys();
 check(!ROOF.support(empty, X, Y + 5, Z), 'a roof with nothing under it is refused');
 const oneBlock = makeSys([], new Set([`${X},${Y + 4},${Z}`]));
@@ -122,13 +122,13 @@ check(!ROOF.support(oneBlock, X, Y + 5, Z), 'a roof held by a single block is re
 const row = makeSys([], new Set(Array.from({ length: 3 }, (_, i) => `${X + i},${Y + 4},${Z}`)));
 check(ROOF.support(row, X, Y + 5, Z), 'a roof on a single row of ground is supported');
 
-// Nothing under the panel at all.
+
 const bare = makeSys([], new Set(), -100);
 check(!ROOF.support(bare, X, Y + 5, Z), 'a floating roof is refused');
 const terrainGap = makeSys([], new Set(), Y + 4);
 check(!ROOF.support(terrainGap, X, Y + 5, Z), 'terrain one metre below the soffit is not support');
 
-// --- the mesh ---------------------------------------------------------------
+
 const FAKE_THREE = {
   BufferGeometry: class {
     constructor() { this.attributes = {}; }
@@ -154,7 +154,7 @@ check(Math.abs(minX + 0.5) < 1e-9 && Math.abs(maxX - 0.5) < 1e-9, 'the roof mesh
 check(Math.abs(minZ + 0.5) < 1e-9 && Math.abs(maxZ - 0.5) < 1e-9, 'the roof mesh spans its centred unit box in z');
 check(pos.length % 9 === 0, 'the roof mesh is made of whole triangles');
 check(pos.length / 9 >= 8, 'the roof mesh has a body, not just a slab');
-// The ridge is a flat strip, so there is something to stand on.
+
 const ridgeZ = new Set();
 for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] - 0.5) < 1e-9) ridgeZ.add(pos[i + 2].toFixed(3));
 check(ridgeZ.size === 2, 'the roof has a flat ridge along the middle');
@@ -168,8 +168,8 @@ check(Math.abs(scale.y - TH) < 1e-9, 'the mesh is scaled to the thickness of the
 const center = ROOF.center(X, Y, Z);
 check(Math.abs(center.y - (Y + TH / 2)) < 1e-9, 'the mesh sits on the cell it belongs to');
 
-// Compose the local geometry exactly as BuildingSystem.rebuild() does. The
-// rendered shape and its collision cells must occupy the same world box.
+
+
 for (const rot of [0, 1]) {
   const rc = ROOF.cells(X, Y, Z, rot);
   const angle = ROOF.rotY(rot), co = Math.cos(angle), si = Math.sin(angle);
@@ -188,7 +188,7 @@ for (const rot of [0, 1]) {
   `rot ${rot} collision boxes contain the transformed mesh`);
 }
 
-// --- the items --------------------------------------------------------------
+
 for (const tier of ['wood', 'brick', 'concrete', 'shielded']) {
   const id = `roof_${tier}`;
   check(ROOF_ITEMS[id]?.building?.kind === 'roof', `item "${id}" builds a roof`);
@@ -204,4 +204,4 @@ for (const [cond, msg] of ok) {
   if (!cond) { failed++; console.error('FAIL:', msg); }
 }
 if (failed) { console.error(`roof check failed: ${failed}/${ok.length}`); process.exit(1); }
-console.log(`roof OK — ${ok.length} assertions`);
+console.log(`roof OK: ${ok.length} assertions`);

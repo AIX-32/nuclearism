@@ -1,9 +1,9 @@
-// The replay panel: a fullscreen menu with the recorder, the saved replays,
-// the export settings and the playback transport.
-//
-// The module owns the DOM; the game owns the state and does the work. Every
-// action is a callback into the game context, so this file stays free of
-// three.js and of the renderer.
+
+
+
+
+
+
 
 export const EXPORT_RESOLUTIONS = [
   { v: 1280, h: 720, label: '720p' },
@@ -54,7 +54,7 @@ export function createReplayUI(ctx) {
   let selected = null;
   let items = [];
 
-  /* ---------- option rows ---------- */
+
 
   function buildOptions(el, list, get, set) {
     if (!el) return;
@@ -83,7 +83,7 @@ export function createReplayUI(ctx) {
   buildOptions(pixEl, [{ v: 'ps1', label: 'PS1 PIXELS' }, { v: 'full', label: 'FULL RES' }],
     () => (opts.pixels ? 'ps1' : 'full'), (o) => { opts.pixels = o.v === 'ps1'; });
 
-  /* ---------- the replay list ---------- */
+
 
   function paintList() {
     if (!listEl) return;
@@ -139,7 +139,7 @@ export function createReplayUI(ctx) {
     paintList();
   }
 
-  /* ---------- transport ---------- */
+
 
   function paintBar() {
     const st = ctx.state();
@@ -158,7 +158,7 @@ export function createReplayUI(ctx) {
   if (barSpeed) barSpeed.addEventListener('click', () => ctx.cycleSpeed());
   if (barSeek) barSeek.addEventListener('input', () => ctx.seek(+barSeek.value / 1000));
 
-  /* ---------- panel ---------- */
+
 
   function paintStatus() {
     const st = ctx.state();

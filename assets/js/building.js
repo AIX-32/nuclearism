@@ -1,20 +1,20 @@
-// Base building: placeable pieces that shield radiation directionally.
-//
-// A piece is a shape from `assets/js/pieces/` (see pieces/README.md for the
-// contract). Every piece owns a block of 1 m grid cells and every cell carries
-// a slice of the piece's box, so the radiation shadow march can attenuate per
-// slice instead of missing a 25 cm panel between two sample points.
+
+
+
+
+
+
 
 import { BUILD_TIERS, BUILD_TIER_ORDER } from './build-tiers.js';
 import { KINDS } from './pieces/registry.js';
 
 const KEY = (x, y, z) => `${x},${y},${z}`;
 
-// The mesh a piece is drawn in. The kind belongs in the key: a wall and a
-// floor of the same tier are different shapes and must not share a mesh.
+
+
 export function meshKey(piece) { return `${piece.tier}|${piece.kind}`; }
 
-// Length of the ray segment that lies inside an axis-aligned box.
+
 function boxLen(ox, oy, oz, dx, dy, dz, box, maxD) {
   let t0 = 0, t1 = maxD;
   const axes = [[ox, dx, box.minX, box.maxX], [oy, dy, box.minY, box.maxY], [oz, dz, box.minZ, box.maxZ]];
@@ -32,22 +32,22 @@ function boxLen(ox, oy, oz, dx, dy, dz, box, maxD) {
   return t1 - t0;
 }
 
-// Where a new piece would land against an anchor, as a list of candidates in
-// order of preference. Pure maths, so it can be checked without a browser.
-//
-//   fps  - the footprints of the kind, one per rotation: { rot, ox, sx, oz, sz }
-//          (the offset of the piece inside its cell and its size)
-//   af   - the anchor's footprint in world space: { x0, x1, z0, z1 }
-//   p    - the point the player is aiming at
-//   dir  - the ray the player is looking along
-//
-// The piece is laid flush against the anchor: against the face that is looked
-// at, or on the edge that is looked down on. It lines up with the anchor's
-// own lattice, so a base comes out as one perfect grid.
+
+
+
+
+
+
+
+
+
+
+
+
 export function snapPlan(fps, af, p, dir, wantRot = 0, face = null) {
   if (!fps || !fps.length) return [];
-  // R is an instruction, not a preference: never rotate or relocate a piece
-  // to a different socket merely because the requested one is inconvenient.
+
+
   const fp = fps.find((f) => f.rot === ((wantRot % fps.length + fps.length) % fps.length)) || fps[0];
   const ax = Math.abs(dir.x), ay = Math.abs(dir.y), az = Math.abs(dir.z);
   const fromAbove = face ? face.y > 0.45 : ay > ax && ay > az;
@@ -58,14 +58,14 @@ export function snapPlan(fps, af, p, dir, wantRot = 0, face = null) {
     axis = Math.abs(ox) > Math.abs(oz) ? 'x' : 'z';
     side = (axis === 'x' ? ox : oz) < 0 ? -1 : 1;
   } else {
-    // The face that was hit wins over the camera's dominant direction. A
-    // diagonal glance therefore stays on the surface the player targeted.
+
+
     axis = face ? (Math.abs(face.x) > Math.abs(face.z) ? 'x' : 'z') : (ax > az ? 'x' : 'z');
     side = face ? Math.sign(face[axis]) : (dir[axis] > 0 ? -1 : 1);
   }
   const overTop = fp.layers <= 1 && af.y1 - af.y0 > 1.2 && p.y >= af.y1 - 0.4;
   if (overTop) {
-    // Floor/roof on top of a tall wall: extend toward the viewer so roofs are easy to place.
+
     const thinX = (af.x1 - af.x0) < (af.z1 - af.z0);
     axis = thinX ? 'x' : 'z';
     const overOther = axis === 'x' ? 'z' : 'x';
@@ -101,7 +101,7 @@ export function snapPlan(fps, af, p, dir, wantRot = 0, face = null) {
   return [{ x, z, rot: fp.rot }];
 }
 
-// Directional shadow over a cell map: 1 = clear line, ~0 = fully shielded.
+
 export function shadowCells(cells, px, py, pz, dx, dy, dz, maxDist = 24) {
   let x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
   const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
@@ -141,18 +141,18 @@ export class BuildingSystem {
     this.T = ctx.THREE;
     this.world = ctx.world || null;
     this.patchMaterial = ctx.patchMaterial || null;
-    this.pieces = new Map();   // id -> piece
-    this.cells = new Map();     // cell key -> [{ piece, tier, box }]
+    this.pieces = new Map();
+    this.cells = new Map();
     this.group = new this.T.Group();
     ctx.scene.add(this.group);
-    this.meshes = new Map();    // "tier|kind" -> InstancedMesh
-    this.meshPieces = new Map();// "tier|kind" -> [piece]
+    this.meshes = new Map();
+    this.meshPieces = new Map();
     this.nextId = 1;
   }
 
   kind(name) { return KINDS[name] || null; }
 
-  // Textures are optional: a missing file just leaves the flat tier colour.
+
   load() {
     for (const [tier, def] of Object.entries(BUILD_TIERS)) {
       const mat = new this.T.MeshLambertMaterial({ color: def.color });
@@ -166,13 +166,13 @@ export class BuildingSystem {
           tex.minFilter = this.T.LinearMipmapLinearFilter;
           if (this.T.SRGBColorSpace) tex.colorSpace = this.T.SRGBColorSpace;
           mat.map = tex;
-          // The tier colour is the fallback for a missing texture. Once the
-          // photo is there it multiplies it, so drop back to white and let the
-          // picture speak for itself.
+
+
+
           mat.color.setHex(0xffffff);
           mat.needsUpdate = true;
-        }, undefined, () => { /* no texture: keep the flat colour */ });
-      } catch (e) { /* no loader: keep the flat colour */ }
+        }, undefined, () => {                                        });
+      } catch (e) {                                       }
     }
     return this;
   }
@@ -189,7 +189,7 @@ export class BuildingSystem {
     return this._materials.get(tier);
   }
 
-  // The unit box every piece is scaled from.
+
   boxGeometry() {
     if (this._geo) return this._geo;
     const g = new this.T.BoxGeometry(1, 1, 1);
@@ -209,10 +209,10 @@ export class BuildingSystem {
     return this._geoms.get(kind.geom);
   }
 
-  // --- world helpers the piece kinds use -------------------------------
+
   surfaceHeight(x, z, fromY = 90) {
     if (!this.world) return 0;
-    // getSurfaceHeight rounds to the column centre, so feed it integers.
+
     return Math.floor(this.world.getSurfaceHeight(x, z, fromY));
   }
   groundAt(x, y, z) {
@@ -236,7 +236,7 @@ export class BuildingSystem {
     const oy = Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY);
     const oz = Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ);
     if (ox <= eps || oy <= eps || oz <= eps) return false;
-    // Let perpendicular thin panels cross at a corner (forming a cube on one floor).
+
     const thin = (v) => v <= 0.3 + eps;
     const aThinX = thin(a.maxX - a.minX), aThinZ = thin(a.maxZ - a.minZ);
     const bThinX = thin(b.maxX - b.minX), bThinZ = thin(b.maxZ - b.minZ);
@@ -248,7 +248,7 @@ export class BuildingSystem {
     for (const c of this._cellEntries(key)) if (this._boxesOverlap(c.box, box)) return true;
     return false;
   }
-  // The top cell (exclusive) of the tallest piece standing in this column.
+
   topAt(x, z) {
     let top = null;
     for (const p of this.pieces.values()) {
@@ -263,7 +263,7 @@ export class BuildingSystem {
     }
     return top;
   }
-  // The exclusive top cell of a piece (a floor at cell y tops out at y + 1).
+
   pieceTop(piece) {
     let top = piece.y;
     for (const [key] of piece.cells) {
@@ -273,9 +273,9 @@ export class BuildingSystem {
     return top;
   }
 
-  // Terrain height only: an unrelated nearby wall must not lift a ground
-  // placement onto its roof. fromY keeps underground placement on the local
-  // floor instead of jumping to the overworld surface.
+
+
+
   groundBase(kindName, x, z, rot, fromY = 90) {
     const kind = this.kind(kindName);
     if (!kind) return 0;
@@ -292,8 +292,8 @@ export class BuildingSystem {
     if (!f) return false;
     const e = 0.001;
     const minY = box.minY + Math.max(0, sweep);
-    // With a voxel-only test world, contact at the supporting face is not an
-    // overlap. The real field uses smooth samples with a small contact inset.
+
+
     if (!f.sample) {
       for (let x = Math.floor(box.minX + e); x < box.maxX - e; x++) {
         for (let y = Math.ceil(minY + e); y < box.maxY - e; y++) {
@@ -316,7 +316,7 @@ export class BuildingSystem {
     return false;
   }
 
-  // --- placement --------------------------------------------------------
+
   _allowedClip(kindName, otherKind) {
     const slab = kindName === 'floor' || kindName === 'roof' || kindName === 'triangle';
     const wall = otherKind === 'wall' || otherKind === 'door';
@@ -401,7 +401,7 @@ export class BuildingSystem {
     return false;
   }
 
-  // Open or close a swinging piece (doors).
+
   toggle(piece) {
     if (!piece || !this.pieces.has(piece.id)) return false;
     const kind = this.kind(piece.kind);
@@ -411,10 +411,10 @@ export class BuildingSystem {
     return true;
   }
 
-  // True when the point is inside a solid piece.
-  // A piece's box reaches the far edge of its cell, so a point sitting exactly
-  // on that edge belongs to the next cell: the neighbours are checked too, or
-  // a player standing on a deck would fall through it.
+
+
+
+
   solidAt(x, y, z) {
     const fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z);
     for (let i = 0; i < 2; i++) {
@@ -432,8 +432,8 @@ export class BuildingSystem {
     return false;
   }
 
-  // Exact cylinder-vs-box body collision. Point samples miss low decks,
-  // stairs and thin panels between the player's eight horizontal probes.
+
+
   boxHitsBody(box, x, y, z, radius, height) {
     if (y + height <= box.minY + 0.0001 || y >= box.maxY - 0.0001) return false;
     const qx = Math.max(box.minX, Math.min(x, box.maxX));
@@ -465,7 +465,7 @@ export class BuildingSystem {
     return false;
   }
 
-  // Directional shadow: 1 = clear line, ~0 = fully behind shielding.
+
   shadow(px, py, pz, dx, dy, dz, maxDist = 24) {
     return shadowCells(this.cells, px, py, pz, dx, dy, dz, maxDist);
   }
@@ -482,8 +482,8 @@ export class BuildingSystem {
     let normal = null;
     const n = hit.face?.normal;
     if (n) {
-      // InstancedMesh returns the local face normal. Apply this piece's yaw;
-      // object.quaternion is the shared mesh's, not the instance's.
+
+
       const kind = this.kind(piece.kind);
       const a = kind?.rotY ? kind.rotY(piece.rot) : 0;
       const c = Math.cos(a), s = Math.sin(a);
@@ -503,13 +503,13 @@ export class BuildingSystem {
     return { piece, distance: hit.distance, point: hit.point, normal };
   }
 
-  // --- snapping ------------------------------------------------------------
-  // Pieces snap to each other, not to the world grid: the piece you aim at is
-  // the anchor, and the new piece is laid flush against it, on the anchor's
-  // own lattice, so a base comes out as one perfect grid.
 
-  // The mesh footprint of a placed piece, in world space, plus the cells it
-  // stands on and how tall it is.
+
+
+
+
+
+
   pieceFootprint(piece) {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     let z0 = Infinity, z1 = -Infinity;
@@ -526,8 +526,8 @@ export class BuildingSystem {
     return { x0, x1, y0, y1, z0, z1, cx0, cx1, cz0, cz1 };
   }
 
-  // Where a kind sits inside its cell for one rotation: the offset of its
-  // footprint, its size, the cells it takes and how many layers high it is.
+
+
   kindFootprint(kindName, rot) {
     const kind = this.kind(kindName);
     if (!kind) return null;
@@ -546,8 +546,8 @@ export class BuildingSystem {
     return { ox: x0, sx: x1 - x0, oz: z0, sz: z1 - z0, cx0, cx1, cz0, cz1, layers: ys.size };
   }
 
-  // Where a new piece would land if it snapped to the piece the player aims
-  // at. Returns { x, z, rot, y } or null when there is nothing to snap to.
+
+
   snap(kindName, origin, dir, wantRot = 0, maxDist = 6) {
     const kind = this.kind(kindName);
     if (!kind) return null;
@@ -570,8 +570,8 @@ export class BuildingSystem {
     const onTop = topFace || nearTop;
     let candidate;
     if (onTop && vertical) {
-      // Wall on wall stacks exactly; on a deck its R-selected footprint and
-      // the aimed edge determine the cell. Never search a different column.
+
+
       candidate = anchorVertical
         ? { x: hit.piece.x, z: hit.piece.z, rot: wantRot }
         : snapPlan(fps, af, hit.point, dir, wantRot, hit.normal)[0];
@@ -580,17 +580,17 @@ export class BuildingSystem {
     }
     if (!candidate) return null;
     const y = onTop && (vertical || anchorVertical) ? this.pieceTop(hit.piece) : hit.piece.y;
-    // Do not hop to another socket when this one is occupied or unsupported.
-    // The caller shows the same rejected target in red and placement refuses it.
+
+
     return { x: candidate.x, z: candidate.z, rot: candidate.rot, y, anchored: true };
   }
 
   rebuild() {
     const groups = new Map();
     for (const p of this.pieces.values()) {
-      // The kind is part of the key: two kinds never share a mesh, or they
-      // would be drawn with each other's shape (a wall would lie flat like a
-      // floor) and the raycast would hit the wrong geometry.
+
+
+
       const key = meshKey(p);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
@@ -661,8 +661,8 @@ export class BuildingSystem {
       const kind = kinds[ki];
       const tier = BUILD_TIER_ORDER[ti];
       if (!kind || !tier) continue;
-      // Never discard an existing base because its terrain has since been
-      // mined into it or a collision rule became stricter.
+
+
       const piece = this.place(kind, tier, x, y, z, rot || 0, true);
       if (piece) {
         if (hp) piece.hp = hp;

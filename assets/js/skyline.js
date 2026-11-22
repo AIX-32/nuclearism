@@ -1,12 +1,12 @@
-// Skyline logistics.
-//
-// A pylon is a tall mast near a group of machines. With the zipline wrench
-// the player picks an item up from one workbench and sends it to another: the
-// item rides the wire between the two pylons in a cargo pod and lands in the
-// destination's input slots, where the machine picks it up and crafts on its
-// own.
-//
-// Nothing in here needs art: a pod is a small box and a wire is a line.
+
+
+
+
+
+
+
+
+
 
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
@@ -19,10 +19,10 @@ const POD_CAP = 32;
 
 export const SKYLINE_MODE = { RECIPE: 'recipe', STORE: 'store' };
 
-// --- pure helpers -----------------------------------------------------------
 
-// A recipe's real ingredient list. `in` recipes net their own output out of
-// the inputs, the same way the crafting bench does.
+
+
+
 export function recipeNeeds(recipe) {
   if (!recipe) return {};
   const needs = { ...(recipe.in || recipe.needs || {}) };
@@ -36,7 +36,7 @@ export function recipeNeeds(recipe) {
   return needs;
 }
 
-// What a recipe actually hands over.
+
 export function recipeOutputs(recipe) {
   if (!recipe) return {};
   const out = { ...(recipe.out || {}) };
@@ -49,7 +49,7 @@ export function recipeOutputs(recipe) {
   return out;
 }
 
-// The recipes a machine can run. Crafting benches use the bag recipes.
+
 export function recipeList(machine, craftRecipes) {
   if (!machine) return [];
   if (machine.def.kind === 'crafting') return craftRecipes || [];
@@ -57,7 +57,7 @@ export function recipeList(machine, craftRecipes) {
   return [];
 }
 
-// A stable name for a placed machine, so a route survives a save/load.
+
 export function machineKey(machine) {
   if (!machine) return '';
   return `${machine.def.id}@${machine.x.toFixed(2)},${machine.y.toFixed(2)},${machine.z.toFixed(2)}`;
@@ -79,7 +79,7 @@ export function storageRoles(machine) {
 
 export function inputRoles() { return ['input0', 'input1', 'input2', 'input3']; }
 
-// Where a delivered item belongs in the destination.
+
 export function deliveryRoles(machine, itemId, items) {
   if (!machine) return [];
   const def = machine.def;
@@ -98,8 +98,8 @@ export function deliveryRoles(machine, itemId, items) {
   return inputRoles();
 }
 
-// Everything a machine could hand to a pod: what it holds right now plus
-// whatever it is able to make.
+
+
 export function sourceItems(machine, craftRecipes) {
   const out = new Map();
   const add = (id, n) => {
@@ -121,8 +121,8 @@ export function sourceItems(machine, craftRecipes) {
   return [...out.values()];
 }
 
-// What the destination can do with the item: every recipe that eats it.
-// A container has no recipes, so it just stores the item.
+
+
 export function destItems(machine, itemId, craftRecipes) {
   const opts = [];
   const list = recipeList(machine, craftRecipes);
@@ -150,8 +150,8 @@ export function destItems(machine, itemId, craftRecipes) {
   return opts;
 }
 
-// The auto-connect rule: a destination that already runs a recipe does not
-// need to be asked again when another source feeds that same recipe.
+
+
 export function matchRoute(routes, dstKey, itemId) {
   if (!Array.isArray(routes)) return null;
   const hits = routes.filter((r) => r.dstKey === dstKey && r.mode === SKYLINE_MODE.RECIPE
@@ -159,9 +159,9 @@ export function matchRoute(routes, dstKey, itemId) {
   return hits.length ? hits[0] : null;
 }
 
-// --- slot helpers -----------------------------------------------------------
 
-// Put a stack into the first roles that take it. Returns what did not fit.
+
+
 export function pushIntoSlots(slots, roles, stack) {
   if (!stack || !stack.n) return null;
   let rest = { ...stack };
@@ -184,7 +184,7 @@ export function pushIntoSlots(slots, roles, stack) {
   return rest;
 }
 
-// Take up to n of one item out of the given roles. Returns how much moved.
+
 export function takeFromSlots(slots, roles, id, n) {
   let left = n, taken = 0;
   for (const role of roles) {
@@ -198,7 +198,7 @@ export function takeFromSlots(slots, roles, id, n) {
   return taken;
 }
 
-// --- the panel --------------------------------------------------------------
+
 
 class SkylineUI {
   constructor(system) {
@@ -255,16 +255,16 @@ class SkylineUI {
   }
 }
 
-// --- the system -------------------------------------------------------------
+
 
 export class SkylineSystem {
   constructor(ctx) {
-    this.ctx = ctx;                 // { THREE, scene, items, machines, craftRecipes, notice, ... }
+    this.ctx = ctx;
     this.T = ctx.THREE;
     this.routes = [];
     this.pods = [];
     this.nextId = 1;
-    this.pending = null;            // { src, item } while a destination is picked
+    this.pending = null;
     this.acc = 0;
     this.now = 0;
     this.lastDispatch = new Map();
@@ -300,8 +300,8 @@ export class SkylineSystem {
 
   closeUI() { this._ui?.close(); }
 
-  // The panel is built the first time it is needed, so the system can also
-  // run headless (the node check does).
+
+
   get ui() {
     if (!this._ui) this._ui = new SkylineUI(this);
     return this._ui;
@@ -311,7 +311,7 @@ export class SkylineSystem {
   get craftRecipes() { return this.ctx.craftRecipes || []; }
   get machines() { return this.ctx.machines; }
 
-  // --- pylons ---------------------------------------------------------------
+
 
   pylons() {
     if (!this.machines) return [];
@@ -340,7 +340,7 @@ export class SkylineSystem {
     return best;
   }
 
-  // Pylons always connect to nearby pylons, forming one network.
+
   rebuildNetwork() {
     this.wireMat.resolution.set(window.innerWidth, window.innerHeight);
     const list = this.pylons();
@@ -403,10 +403,10 @@ export class SkylineSystem {
     return path;
   }
 
-  // --- the wrench ------------------------------------------------------------
 
-  // Right-click a machine with the zipline wrench. The first click asks what
-  // to take, the second asks where to put it.
+
+
+
   useWrenchOn(machine) {
     if (!machine) return true;
     if (!this.pylonFor(machine)) { this.ctx.notice?.('NO PYLON IN RANGE'); return true; }
@@ -434,7 +434,7 @@ export class SkylineSystem {
       this.closeUI();
       return true;
     }
-    // The destination already runs a recipe that eats this item: no menu.
+
     const auto = matchRoute(this.routes, machineKey(machine), item);
     if (auto) {
       this.addRoute(src, machine, item, auto.mode, auto.idx);
@@ -496,7 +496,7 @@ export class SkylineSystem {
     return list[route.idx] || null;
   }
 
-  // --- the wire --------------------------------------------------------------
+
 
   wirePoint(a, b, t) {
     const attachY = (p) => {
@@ -538,7 +538,7 @@ export class SkylineSystem {
     }
   }
 
-  // --- the tick --------------------------------------------------------------
+
 
   dropRoute(route) {
     const i = this.routes.indexOf(route);
@@ -558,7 +558,7 @@ export class SkylineSystem {
     return this.routes.some((r) => r.dstKey === key);
   }
 
-  // The recipe at the source that makes the routed item.
+
   sourceRecipe(src, item) {
     for (const r of recipeList(src, this.craftRecipes)) {
       const outs = recipeOutputs(r);
@@ -582,7 +582,7 @@ export class SkylineSystem {
     for (const route of this.routes) {
       const src = this.byKey(route.srcKey);
       const dst = this.byKey(route.dstKey);
-      // A machine or its access pylon went away: the line is dead.
+
       const a = src && this.pylonFor(src), b = dst && this.pylonFor(dst);
       if (!src || !dst || !a || !b || !this.pylonPath(a, b)) {
         this.dropRoute(route);
@@ -591,7 +591,7 @@ export class SkylineSystem {
       live.push({ route, src, dst });
     }
 
-    // The destination crafts what it was given.
+
     for (const { route, dst } of live) {
       if (route.mode !== SKYLINE_MODE.RECIPE) continue;
       const recipe = this.resolveRecipe(route, dst);
@@ -600,8 +600,8 @@ export class SkylineSystem {
       }
     }
 
-    // One source makes one thing at a time: the route that is still missing
-    // its item gets the machine.
+
+
     const producer = new Map();
     for (const { route, src } of live) {
       const prev = producer.get(route.srcKey);
@@ -612,12 +612,12 @@ export class SkylineSystem {
       const recipe = this.sourceRecipe(src, route.item);
       if (!recipe || src.state.job || (src.state.queue || []).length) continue;
       const fed = this.machines.startJobFromSlots(src, recipe);
-      // Nothing feeds the machine yet: fall back to the bag so a lone bench
-      // still keeps working.
+
+
       if (!fed && !this.hasIncoming(src)) this.machines.startJob(src, recipe);
     }
 
-    // Pick the item up and send it down the line.
+
     for (const { route, src, dst } of live) {
       if (this.podFor(route)) continue;
       const srcKey = route.srcKey;
@@ -630,13 +630,13 @@ export class SkylineSystem {
     }
   }
 
-  // Does the source already hold the item of this route?
+
   holds(src, id) {
     for (const role of outputRoles(src)) if (src.state.slots[role]?.id === id) return true;
     return false;
   }
 
-  // The route whose item the source does not have yet wins the machine.
+
   prefers(src, route, current) {
     const a = this.holds(src, route.item);
     const b = this.holds(src, current.item);
@@ -705,8 +705,8 @@ export class SkylineSystem {
     const p2 = this.wirePoint(a, b, Math.min(1, pod.t + 0.02));
     const dx = p2.x - p.x, dz = p2.z - p.z;
     const len = Math.hypot(dx, dz) || 1;
-    const fx = dx / len, fz = dz / len; // forward along wire (XZ)
-    const px = -fz, pz = fx;            // sideways
+    const fx = dx / len, fz = dz / len;
+    const px = -fz, pz = fx;
     const hang = 0.58 + Math.sin(pod.bob) * 0.04;
     pod.mesh.position.set(
       p.x + px * pod.swing * 0.24 + fx * pod.sway * 0.14,
@@ -729,18 +729,18 @@ export class SkylineSystem {
       const p0 = this.wirePoint(a, b, pod.t);
       const aheadT = Math.min(1, pod.t + 0.03);
       const p1 = this.wirePoint(a, b, aheadT);
-      const slope = (p1.y - p0.y) / Math.max(0.001, p0.distanceTo(p1)); // negative = going down
+      const slope = (p1.y - p0.y) / Math.max(0.001, p0.distanceTo(p1));
 
-      // accelerate from slow to fast on every wire
+
       pod.v = Math.min(maxSpeed, (pod.v || maxSpeed * 0.15) + maxSpeed * 1.4 * dt);
-      // downhill pulls you faster, uphill slows a bit
+
       pod.v = Math.max(maxSpeed * 0.12, Math.min(maxSpeed * 1.15, pod.v + (-slope) * 6 * dt));
 
       pod.swingVel += ((Math.random() - 0.5) * 14 - pod.swing * 22 - pod.swingVel * 2.2) * dt;
       pod.swing += pod.swingVel * dt;
       pod.swing = Math.max(-1.1, Math.min(1.1, pod.swing));
 
-      // swing forward when going down, back when going up
+
       pod.swayVel += ((-slope) * 18 + (Math.random() - 0.5) * 6 - pod.sway * 18 - pod.swayVel * 2.6) * dt;
       pod.sway += pod.swayVel * dt;
       pod.sway = Math.max(-1.0, Math.min(1.0, pod.sway));
@@ -776,7 +776,7 @@ export class SkylineSystem {
     }
   }
 
-  // --- persistence -----------------------------------------------------------
+
 
   serialize() {
     return this.routes.map((r) => ({

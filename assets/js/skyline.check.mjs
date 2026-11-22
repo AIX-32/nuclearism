@@ -1,4 +1,4 @@
-// Pure checks for the skyline logistics rules. No browser, no three.js.
+
 
 import {
   recipeNeeds, recipeOutputs, recipeList, machineKey, outputRoles, storageRoles,
@@ -9,7 +9,7 @@ import {
 const ok = [];
 const check = (cond, name) => ok.push([!!cond, name]);
 
-// --- recipes ----------------------------------------------------------------
+
 
 const inRecipe = { in: { iron: 2, carbon: 1 }, out: { steel_ingot: 1 }, time: 5 };
 const outRecipe = { out: { plate: 1 }, needs: { steel_ingot: 1 } };
@@ -23,7 +23,7 @@ const netted = { in: { iron: 1 }, out: { iron: 1, dust: 2 }, time: 2 };
 check(recipeNeeds(netted).iron === undefined, 'an in recipe nets its own output out of the needs');
 check(recipeOutputs(netted).iron === undefined, 'an in recipe nets its own input out of the output');
 
-// --- machines ----------------------------------------------------------------
+
 
 const machine = (kind, extra = {}) => ({
   def: { id: kind, kind, outputs: 4, storageSlots: 14, ...extra },
@@ -49,7 +49,7 @@ check(outputRoles(crusher).join(',') === 'output0,output1,output2,output3', 'out
 check(storageRoles(crate).length === 14, 'a container has its own storage roles');
 check(inputRoles().length === 4, 'a machine has four input slots');
 
-// --- what a source can supply -------------------------------------------------
+
 
 check(sourceItems(crusher, []).length === 2, 'a processor offers what it can make');
 check(sourceItems(crusher, []).some((o) => o.id === 'crushed_copper'), 'the processor offers crushed copper');
@@ -59,7 +59,7 @@ const fromCrate = sourceItems(crate, []);
 check(fromCrate.length === 2, 'a container offers what it holds');
 check(fromCrate.find((o) => o.id === 'iron').n === 12, 'a container reports the stack size');
 
-// --- what a destination can do --------------------------------------------------
+
 
 const furnace = machine('processor', {
   recipes: [
@@ -77,7 +77,7 @@ const storeDest = destItems(crate, 'iron', []);
 check(storeDest.length === 1 && storeDest[0].mode === SKYLINE_MODE.STORE, 'a container just stores the item');
 check(destItems(furnace, 'unobtainium', [])[0].mode === SKYLINE_MODE.STORE, 'a machine with no recipe for it stores it too');
 
-// --- the auto-connect rule -------------------------------------------------------
+
 
 const routes = [{
   id: 1, srcKey: 'a@0,0,0', dstKey: machineKey(furnace), item: 'crushed_iron',
@@ -87,7 +87,7 @@ check(!!matchRoute(routes, machineKey(furnace), 'crushed_iron'), 'a destination 
 check(!matchRoute(routes, machineKey(furnace), 'crushed_copper'), 'another item does not match the route');
 check(!matchRoute(routes, 'other@0,0,0', 'crushed_iron'), 'a route belongs to its own destination');
 
-// --- where a delivered item lands ---------------------------------------------------
+
 
 check(deliveryRoles(furnace, 'crushed_iron', {}).join(',') === 'input0,input1,input2,input3', 'a machine takes deliveries in its inputs');
 check(deliveryRoles(crate, 'iron', {})[0] === 'slot0', 'a container takes deliveries in its storage');
@@ -95,7 +95,7 @@ const reactor = machine('reactor', { rodSlots: 5 });
 check(deliveryRoles(reactor, 'control_rod', { control_rod: { rod: true } })[0] === 'rod0', 'a rod goes into a cooling slot');
 check(deliveryRoles(reactor, 'tbu_fuel', { tbu_fuel: { fuel: true } })[0] === 'fuel', 'fuel goes into the fuel slot');
 
-// --- moving stacks ------------------------------------------------------------------
+
 
 const slots = {};
 const left = pushIntoSlots(slots, inputRoles(), { id: 'iron', n: 5 });

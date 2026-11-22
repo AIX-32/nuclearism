@@ -166,7 +166,7 @@ export class WorkbenchUI {
       this.workArea.style.alignContent = '';
       this.workArea.style.justifyContent = '';
     } else {
-      const slotSize = 56;
+      const slotSize = this.layout.grid?.cell || 64;
       this.workArea.style.display = 'grid';
       this.workArea.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${slotSize}px))`;
       this.workArea.style.gridTemplateRows = 'auto';
@@ -197,6 +197,17 @@ export class WorkbenchUI {
         continue;
       }
 
+      if (el.type === 'bore') {
+        const node = document.createElement('div');
+        node.className = 'workbench-bore';
+        node.dataset.id = el.id;
+        node.style.gridColumn = `${el.x + 1} / span ${el.w}`;
+        node.style.gridRow = `${el.y + 1} / span ${el.h}`;
+        this.buildBore(node);
+        this.workArea.appendChild(node);
+        continue;
+      }
+
       if (el.type === 'power') continue;
 
       if (el.type === 'recipes') continue;
@@ -219,6 +230,11 @@ export class WorkbenchUI {
           if (view?.item) this.bridge.showTip?.({ id: view.item, n: view.count || 1 }, e.clientX, e.clientY);
         });
         node.addEventListener('mouseleave', () => this.bridge.hideTip?.());
+        node.addEventListener('mousedown', (e) => {
+          if (e.button !== 1) return;
+          e.preventDefault();
+          this.bridge.sortContainer?.();
+        });
         node.addEventListener('click', () => {
           if (role === 'output' || role.startsWith('output')) this.bridge.collect?.(role);
           else this.bridge.take?.(role);
@@ -331,7 +347,7 @@ export class WorkbenchUI {
       btn.addEventListener('pointerup', stop);
       btn.addEventListener('pointerleave', stop);
       btn.addEventListener('pointercancel', stop);
-      // Keyboard activation does not emit pointerdown; detail === 0 marks it.
+
       btn.addEventListener('click', (e) => { if (e.detail === 0) fire(); });
       stops.push(stop);
     });
@@ -425,6 +441,39 @@ export class WorkbenchUI {
     if (wheel) {
       wheel.classList.toggle('active', !!state.wheel);
       wheel.textContent = state.wheel ? 'STOP' : 'SPIN';
+    }
+  }
+
+  buildBore(node) {
+    node.innerHTML = `
+      <div class="bore-pitch">
+        <span class="bore-pitch-label">PITCH</span>
+        <button type="button" data-bore-action="pitchUp" title="Pitch up 5°">▲</button>
+        <b class="bore-pitch-value" data-bore="pitch">0°</b>
+        <button type="button" data-bore-action="pitchDown" title="Pitch down 5°">▼</button>
+        <button type="button" data-bore-action="pitchLevel" title="Level pitch">LEVEL</button>
+        <span class="bore-pitch-hint">-60° to +30°</span>
+      </div>
+    `;
+    node.querySelectorAll('[data-bore-action]').forEach((btn) => {
+      const action = btn.dataset.boreAction;
+      btn.addEventListener('click', () => {
+        this.bridge.boreControl?.(action);
+        this.renderBoreDynamic();
+      });
+    });
+    this.renderBoreDynamic();
+  }
+
+  renderBoreDynamic() {
+    const node = this.workArea?.querySelector('.workbench-bore');
+    if (!node) return;
+    const state = this.bridge.boreState?.();
+    if (!state) return;
+    const pitch = node.querySelector('[data-bore="pitch"]');
+    if (pitch) {
+      const deg = Math.round((state.pitch || 0) * 180 / Math.PI);
+      pitch.textContent = `${deg > 0 ? '+' : ''}${deg}°`;
     }
   }
 
@@ -551,27 +600,26 @@ export class WorkbenchUI {
     if (progressBar) progressBar.style.width = `${pct}%`;
 
     queueList.replaceChildren();
-    const queued = Array.isArray(m.state.queue) ? m.state.queue.slice(0, 5) : [];
-    if (!queued.length && !m.state.job) {
+    const qn = Array.isArray(m.state.queue) ? m.state.queue.length : 0;
+    if (!qn && !m.state.job) {
       const row = document.createElement('div');
       row.className = 'workbench-queue-item empty';
       row.textContent = 'NONE';
       queueList.appendChild(row);
     } else {
-      const rows = [...(m.state.job ? [{ recipe: m.state.job.recipe, active: true }] : []), ...queued.map((q) => ({ recipe: q.recipe, active: false }))];
-      for (const item of rows) {
-        const recipe = item.recipe;
-        const info = this.recipeIconEntry(recipe);
-        const row = document.createElement('div');
-        row.className = `workbench-queue-item${item.active ? ' active' : ''}`;
-        const label = document.createElement('span');
-        label.textContent = info ? (this.bridge.item?.(info.id)?.name || info.id).toUpperCase() : 'RECIPE';
-        const tag = document.createElement('b');
-        tag.textContent = item.active ? 'NOW' : `${Math.max(1, (info?.count || 1))}×`;
-        row.appendChild(label);
-        row.appendChild(tag);
-        queueList.appendChild(row);
+      const wrap = document.createElement('div');
+      wrap.className = 'workbench-queue-stack';
+      const cards = Math.min(qn || 1, 3);
+      for (let i = 0; i < cards; i++) {
+        const c = document.createElement('i');
+        c.style.setProperty('--qi', String(i));
+        wrap.appendChild(c);
       }
+      const n = document.createElement('b');
+      n.className = 'workbench-queue-count';
+      n.textContent = String(qn);
+      wrap.appendChild(n);
+      queueList.appendChild(wrap);
     }
   }
 
@@ -664,6 +712,7 @@ export class WorkbenchUI {
     }
     this.renderMachineWorkflow();
     this.renderBweDynamic();
+    this.renderBoreDynamic();
     if (!this.craftRail.hidden) this.renderCraftRail();
     const anyProgress = this.bridge.progressValue?.() ?? 0;
     this.setActive(anyProgress > 0 && anyProgress < 1);
@@ -690,6 +739,11 @@ export class WorkbenchUI {
         slot.addEventListener('mouseleave', () => this.bridge.hideTip?.());
       } else slot.innerHTML = '';
       this.dragDrop?.bind(slot, this.bridge.invAdapter?.(index));
+      slot.addEventListener('mousedown', (e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        if (index >= 7) this.bridge.sortInventory?.();
+      });
       slot.addEventListener('click', (e) => {
         if (e.shiftKey && stack) {
           e.preventDefault();

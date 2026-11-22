@@ -39,6 +39,14 @@ const LOADING_TIPS = [
   'Put every ore through the crusher, then smelt the powder to get double the ingots.',
   'Mine dirt with gardening gloves to get seeds and plant them in a greenhouse for good food.',
   'Use skylines to connect machines and automate things.',
+  'Try to get the "Rammer" it is a good way to get around large areas quickly. Also rams down trees and other obstacles.',
+  'Make Unrad to remove radiation from your body.',
+  'Blueprints are things you need to research to unlock new more advanced machines and recipes.',
+  'Making loading screen tips is fun.',
+  'Paranoia is an effect that makes you see things that are not there. It is caused by hunger and darkness.',
+  'The Assembler is a machine that is a not replacement for the Manufactory, they make different things.',
+  'The bucket wheel excavator is the largest machine in the game, It is used to mine insane amounts of ore and dirt.',
+  'You can middle-click an inventory or container to sort items by category, then alphabetically.',
 ];
 
 async function readJSON(key, fallback) {
@@ -157,18 +165,20 @@ menu.classList.remove('hidden');
 
 let loadingFrame = 0;
 let tipTimer = 0;
-let tipIndex = 0;
+let tipIdx = -1;
 
-function showTip(i) {
-  if (!loadingTip) return;
-  tipIndex = ((i % LOADING_TIPS.length) + LOADING_TIPS.length) % LOADING_TIPS.length;
-  loadingTip.textContent = LOADING_TIPS[tipIndex];
+function showRandomTip() {
+  if (!loadingTip || !LOADING_TIPS.length) return;
+  let next = Math.floor(Math.random() * LOADING_TIPS.length);
+  if (LOADING_TIPS.length > 1) while (next === tipIdx) next = Math.floor(Math.random() * LOADING_TIPS.length);
+  tipIdx = next;
+  loadingTip.textContent = LOADING_TIPS[next];
 }
 
 function startTips() {
   clearInterval(tipTimer);
-  showTip(Math.floor(Math.random() * LOADING_TIPS.length));
-  tipTimer = setInterval(() => showTip(tipIndex + 1), 7000);
+  showRandomTip();
+  tipTimer = setInterval(showRandomTip, 7000);
 }
 
 function stopTips() {
@@ -235,9 +245,9 @@ function animateLoadingScreen() {
   loadingFrame = requestAnimationFrame(tick);
 }
 
-// Leaves the loading state: hides the loading screen and the menu, stops the
-// panorama and hands the pointer to the game. The game calls this too when the
-// first-run intro is dismissed, so both paths end in the same place.
+
+
+
 function finishLoading() {
   stopTips();
   cancelAnimationFrame(loadingFrame);
@@ -335,7 +345,7 @@ function beginWorld(w) {
   playBtn.textContent = 'LOADING';
   playBtn.disabled = true;
   import('./game.js').then(() => window.__NUCLEARISM_READY__).then(() => {
-    // ready state handled by animateLoadingScreen tick
+
   }).catch((e) => {
     console.error('world failed to load', (e && e.stack) || e);
     setLoadingScreen(false);

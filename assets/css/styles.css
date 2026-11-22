@@ -2348,36 +2348,42 @@ button.workbench-work-cell:hover {
   min-height: 0;
 }
 
-.workbench-queue-item {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  width: 100%;
-  min-height: 20px;
-  padding: 2px 4px;
-  background: rgba(255, 255, 255, .02);
-  border: 0;
-  font: 700 9px/1 ui-monospace, monospace;
-  color: rgba(255, 255, 255, .82);
-  text-transform: uppercase;
-}
-
-.workbench-queue-item.active {
-  border: 0;
-  background: rgba(255, 255, 255, .06);
-}
-
-.workbench-queue-item b {
-  font: 700 8px/1 ui-monospace, monospace;
-  letter-spacing: .08em;
-}
-
 .workbench-queue-item.empty {
   justify-content: center;
   color: rgba(255, 255, 255, .5);
   text-transform: uppercase;
   letter-spacing: .12em;
+  font: 700 9px/1 ui-monospace, monospace;
+  padding: 2px 4px;
+}
+
+.workbench-queue-stack {
+  position: relative;
+  width: 38px;
+  height: 32px;
+}
+
+.workbench-queue-stack i {
+  position: absolute;
+  left: calc(var(--qi) * 3px);
+  top: calc(var(--qi) * -3px);
+  width: 26px;
+  height: 22px;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .28);
+  box-sizing: border-box;
+}
+
+.workbench-queue-count {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  min-width: 16px;
+  padding: 1px 3px;
+  font: 700 9px/1 ui-monospace, monospace;
+  color: #fff;
+  background: rgba(0, 0, 0, .75);
+  text-align: center;
 }
 
 .workbench-label {
@@ -2402,8 +2408,8 @@ button.workbench-work-cell:hover {
 }
 
 .workbench-slot {
-  gap: 6px;
-  padding: 6px 6px 8px;
+  gap: 2px;
+  padding: 2px;
   color: #fff;
   background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(0, 0, 0, .32));
   border: 1px solid rgba(255, 255, 255, .14);
@@ -2437,15 +2443,17 @@ button.workbench-work-cell:hover {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 7px 4px 6px;
+  gap: 2px;
+  padding: 2px;
   background: rgba(0, 0, 0, .18);
   border: 1px solid rgba(255, 255, 255, .08);
 }
 
 .workbench-slot-content img {
-  width: clamp(22px, 62%, 42px);
-  height: clamp(22px, 62%, 42px);
+  width: 78%;
+  height: 78%;
+  max-width: 56px;
+  max-height: 56px;
   object-fit: contain;
   image-rendering: pixelated;
 }
@@ -2565,6 +2573,14 @@ button.workbench-work-cell:hover {
   height: 100%;
   min-height: 0;
 }
+
+.workbench-bore { display: flex; align-items: center; width: 100%; height: 100%; padding: 4px 8px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.14); box-sizing: border-box; }
+.bore-pitch { display: flex; align-items: center; gap: 8px; width: 100%; font: 700 11px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .06em; }
+.bore-pitch-label { color: #bbbbbb; margin-right: 4px; }
+.bore-pitch-value { min-width: 42px; text-align: center; color: #f4e542; }
+.bore-pitch button { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.2); padding: 4px 8px; font: inherit; cursor: pointer; }
+.bore-pitch button:hover { background: rgba(255,255,255,.16); }
+.bore-pitch-hint { margin-left: auto; color: #888; font-size: 10px; letter-spacing: .04em; }
 
 .bwe-controls {
   display: flex;
@@ -4491,6 +4507,12 @@ body.lowhp #hpFill {
   background: #ff4a3a;
 }
 
+.mapMark .mi.strike {
+  transform: none;
+  background: #ffb000;
+  box-shadow: inset 0 0 0 2px #ff5a00;
+}
+
 .mapMark .mb {
   display: flex;
   flex-direction: column;
@@ -4734,7 +4756,7 @@ body.lowhp #hpFill {
   padding-bottom: 10px;
 }
 
-/* ---- settings ---- */
+
 .settings-list {
   width: min(560px, 94vw);
   max-height: 62vh;
@@ -4836,12 +4858,12 @@ body.lowhp #hpFill {
   margin: 10px auto;
 }
 
-/* =====================================================================
-   MOTION
-   Every overlay panel fades in and out instead of popping. A hidden panel
-   keeps its layout (visibility:hidden, not display:none) so the fade can
-   play in reverse; the content slides up a little while the backdrop fades.
-   ===================================================================== */
+
+
+
+
+
+
 
 #invPanel,
 #recipePanel,
@@ -4879,7 +4901,7 @@ body.lowhp #hpFill {
   pointer-events: none;
 }
 
-/* the hidden state must not be display:none, or there is no fade to play */
+
 #invPanel.hidden,
 #recipePanel.hidden,
 #mapPanel.hidden,
@@ -4921,15 +4943,15 @@ body.lowhp #hpFill {
   transform: translateY(12px);
 }
 
-/* the pause menu content leaves faster than its backdrop */
+
 #overlay .panel {
   animation: none;
   transition: opacity .12s ease;
 }
 
-/* =====================================================================
-   MICRO-INTERACTION
-   ===================================================================== */
+
+
+
 
 .slot,
 .workbench-slot,
@@ -4982,7 +5004,7 @@ body.lowhp #hpFill {
   transform: scale(.94);
 }
 
-/* keyboard users get the same outline the mouse hover gets */
+
 #invPanel :focus-visible,
 #recipePanel :focus-visible,
 #treePanel :focus-visible,
@@ -4997,7 +5019,7 @@ body.lowhp #hpFill {
   outline-offset: 2px !important;
 }
 
-/* dragging a stack around should never select the panel text */
+
 #invPanel,
 #recipePanel,
 #treePanel,
@@ -5018,7 +5040,7 @@ body.lowhp #hpFill {
   -webkit-user-select: text;
 }
 
-/* one scrollbar look everywhere the UI scrolls */
+
 .recipeItems,
 .recipe-list,
 .recipe-detail,
@@ -5098,7 +5120,7 @@ body.lowhp #hpFill {
     transition-duration: .01ms !important;
   }
 }
-/* loading screen (current markup) */
+
 #overlay .view-loading {
   position: relative;
   width: 100%;
@@ -5161,7 +5183,7 @@ body.lowhp #hpFill {
   position: relative;
   overflow: hidden;
 }
-/* a clock hand: pivots on the centre of the square and spins clockwise */
+
 .loading-spinner-hand {
   position: absolute;
   left: 50%;
@@ -5173,7 +5195,7 @@ body.lowhp #hpFill {
   transform-origin: 50% 100%;
   animation: loadingSpin 1.1s linear infinite;
 }
-/* the hub the hand turns on */
+
 .loading-spinner::after {
   content: '';
   position: absolute;
@@ -5200,7 +5222,7 @@ body.lowhp #hpFill {
   color: rgba(255, 255, 255, .65);
   text-shadow: 0 1px 6px rgba(0, 0, 0, .7);
 }
-/* narrow screens: the centred hint would sit on the tip text, so it moves up */
+
 @media (max-width: 860px) {
   .loading-hint {
     bottom: calc(clamp(26px, 7vh, 72px) + 108px);
@@ -5211,22 +5233,22 @@ body.lowhp #hpFill {
   }
 }
 
-/* loading screen layering */
+
 #menu.loading-behind {
-  /* keep the menu above the game UI (minimap, HUD) so the panorama is the
-     backdrop the loading text sits on, but below the loading overlay (60) */
+
+
   z-index: 50;
   opacity: 1;
   pointer-events: none;
 }
-/* the loading screen only borrows the panorama as a backdrop: the menu's own
-   panels would collide with the loading text, so only the canvas stays */
+
+
 #menu.loading-behind .menu-panel,
 #menu.loading-behind .menu-corner {
   opacity: 0;
 }
-/* the main menu dims the panorama hard for its own text; the loading screen
-   wants it readable, so the scrim is softened */
+
+
 #menu.loading-behind::after {
   background:
     linear-gradient(90deg, rgba(0, 0, 0, .78) 0%, rgba(0, 0, 0, .45) 45%, rgba(0, 0, 0, .28) 100%),
@@ -5243,7 +5265,7 @@ body.lowhp #hpFill {
   display: block;
 }
 
-/* modal containers (restored) */
+
 .box {
   display: flex;
   flex-direction: column;
@@ -5494,7 +5516,7 @@ body.lowhp #hpFill {
   letter-spacing: 1px;
 }
 #replayRec b { color: #ff4d4d; font-size: 12px; line-height: 1; }
-/* urgent notice centered over the crosshair */
+
 #urgentCard {
   position: fixed;
   left: 50%;
@@ -5529,7 +5551,7 @@ body.lowhp #hpFill {
   display: none;
 }
 
-/* hide rules for modals outside the motion layer */
+
 #replayPanel.hidden,
 #replayBar.hidden,
 #replayRec.hidden,
@@ -5540,7 +5562,7 @@ body.lowhp #hpFill {
   display: none;
 }
 
-/* promo slideshow */
+
 .menu-promo {
   position: absolute;
   right: clamp(22px, 7vw, 110px);

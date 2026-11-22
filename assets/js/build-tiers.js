@@ -1,9 +1,9 @@
-// Building tiers: the material data for every placeable building piece.
-//
-// `transmission` is the fraction of radiation that survives ONE METRE of the
-// material, so a thin wall only blocks what its thickness times that factor
-// allows. Wood barely helps, shielded concrete almost stops the field (but
-// never all of it).
+
+
+
+
+
+
 
 export const BUILD_TIERS = {
   wood: { name: 'WOOD', transmission: 0.55, hp: 100, color: 0x8a5a33, texture: 'assets/textures/buildings/wood.jpg' },
@@ -14,7 +14,7 @@ export const BUILD_TIERS = {
 
 export const BUILD_TIER_ORDER = ['wood', 'brick', 'concrete', 'shielded'];
 
-// What an upgrade costs, keyed by the tier being upgraded FROM.
+
 export const BUILD_UPGRADES = {
   wood: { stone: 10, sand: 4, wood: 2 },
   brick: { stone: 15, gravel: 6, sand: 4, iron_ingot: 1 },

@@ -10,7 +10,7 @@
 
 
 export const MAP_CHUNK = 16;
-// One texel per metre: the map is a pixel map, so every scale stays blocky.
+
 const TILE_PX = 16;
 const REVEAL_RADIUS = 3;
 const TILE_CACHE_MAX = 1400;
@@ -20,12 +20,12 @@ const TILE_BUDGET_MS = 4;
 const MIN_ZOOM = 0.04;
 const MAX_ZOOM = 10;
 
-// Terrain is flat colour per biome. Height only picks one of a few discrete
-// shades, so the map reads as stepped pixel bands instead of a smooth relief.
+
+
 const BAND_SHADE = [0.76, 0.84, 0.91, 0.97, 1.03, 1.09, 1.15, 1.21];
 const BAND_METRES = 10;
 
-// Structures are flat pixel blocks in the map palette.
+
 const SITE_COLORS = {
   building_a: '#9a968c',
   garage: '#7c7a73',
@@ -46,7 +46,7 @@ const MACHINE_COLORS = {
   pylon: '#d8e4ff',
 };
 
-// Base building pieces, coloured by material tier.
+
 const WALL_COLORS = {
   wood: '#8a5a33',
   brick: '#9a4a3a',
@@ -80,12 +80,12 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const LAYER_DEFAULTS = {
   terrain: true, sites: true, machines: true, walls: true,
-  deaths: true, bookmarks: true,
+  deaths: true, bookmarks: true, strikes: true,
 };
 
 const LAYER_NAMES = {
   terrain: 'TERRAIN', sites: 'SITES', machines: 'MACHINES', walls: 'WALLS',
-  deaths: 'DEATHS', bookmarks: 'MARKS',
+  deaths: 'DEATHS', bookmarks: 'MARKS', strikes: 'STRIKES',
 };
 
 export class MapSystem {
@@ -95,6 +95,7 @@ export class MapSystem {
     this.tiles = new Map();
     this.bookmarks = [];
     this.deaths = [];
+    this.strikes = [];
     this.layers = { ...LAYER_DEFAULTS };
     this.nextId = 1;
     this.tick = 0;
@@ -258,6 +259,17 @@ export class MapSystem {
         this.nextId = Math.max(this.nextId, (d.id | 0) + 1);
       }
     }
+    if (Array.isArray(data.strikes)) {
+      for (const s of data.strikes) {
+        if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.z)) continue;
+        this.strikes.push({
+          id: Number.isFinite(s.id) ? s.id : this.nextId++,
+          x: +s.x, z: +s.z, day: Number.isFinite(s.day) ? s.day : 1,
+          r: Number.isFinite(s.r) ? +s.r : 28,
+        });
+        this.nextId = Math.max(this.nextId, (s.id | 0) + 1);
+      }
+    }
     if (data.layers && typeof data.layers === 'object') {
       for (const k of Object.keys(LAYER_DEFAULTS)) {
         if (typeof data.layers[k] === 'boolean') this.layers[k] = data.layers[k];
@@ -274,6 +286,9 @@ export class MapSystem {
       })),
       deaths: this.deaths.map((d) => ({
         id: d.id, x: +d.x.toFixed(2), z: +d.z.toFixed(2), day: d.day, t: +d.t.toFixed(0),
+      })),
+      strikes: this.strikes.map((s) => ({
+        id: s.id, x: +s.x.toFixed(2), z: +s.z.toFixed(2), day: s.day, r: +(+s.r || 28).toFixed(2),
       })),
       layers: { ...this.layers },
     };
@@ -303,9 +318,18 @@ export class MapSystem {
     this.opts.save?.();
   }
 
+  noteStrike(x, z, day, r = 28) {
+    const near = this.strikes.find((s) => Math.hypot(s.x - x, s.z - z) < 12);
+    if (near) { near.x = +x; near.z = +z; near.day = day; near.r = r; }
+    else this.strikes.push({ id: this.nextId++, x: +x, z: +z, day: day | 0, r: +r });
+    this._dirty = true;
+    this.opts.save?.();
+    this.requestDraw();
+  }
+
   _markerById(sel) {
     if (!sel) return null;
-    const list = sel.type === 'death' ? this.deaths : this.bookmarks;
+    const list = sel.type === 'death' ? this.deaths : sel.type === 'strike' ? this.strikes : this.bookmarks;
     return list.find((m) => m.id === sel.id) || null;
   }
 
@@ -324,7 +348,7 @@ export class MapSystem {
 
   deleteSelected() {
     if (!this.selected) return;
-    const list = this.selected.type === 'death' ? this.deaths : this.bookmarks;
+    const list = this.selected.type === 'death' ? this.deaths : this.selected.type === 'strike' ? this.strikes : this.bookmarks;
     const i = list.findIndex((m) => m.id === this.selected.id);
     if (i >= 0) list.splice(i, 1);
     this.selected = null;
@@ -616,6 +640,7 @@ export class MapSystem {
     ctx.fillRect(0, 0, css, css);
 
     if (this.layers.terrain) this._drawTiles(ctx, view, css, css);
+    if (this.layers.strikes) this._drawCraters(ctx, view, css, css);
 
     const grid = 64;
     const left = p.x - half, right = p.x + half;
@@ -638,11 +663,13 @@ export class MapSystem {
     if (this.layers.machines) this._drawMachines(ctx, view, css, css, true);
     if (this.layers.deaths) this._drawMarkers(ctx, view, css, css, this.deaths, 'death', true);
     if (this.layers.bookmarks) this._drawMarkers(ctx, view, css, css, this.bookmarks, 'bookmark', true);
+    if (this.layers.strikes) this._drawMarkers(ctx, view, css, css, this.strikes, 'strike', true);
 
     this._drawPlayer(ctx, view, css, css);
 
     if (this.layers.bookmarks) this._drawMiniEdgeMarks(ctx, view, css, this.bookmarks, 'bookmark', 4);
     if (this.layers.deaths) this._drawMiniEdgeMarks(ctx, view, css, this.deaths, 'death', 2);
+    if (this.layers.strikes) this._drawMiniEdgeMarks(ctx, view, css, this.strikes, 'strike', 2);
 
     this._drawScaleBar(ctx, view, css, css, 34);
   }
@@ -654,7 +681,7 @@ export class MapSystem {
     const bottom = view.z + h / 2 / view.scale;
     const c0x = chunkCoord(left), c1x = chunkCoord(right);
     const c0z = chunkCoord(top), c1z = chunkCoord(bottom);
-    // Snap chunk edges to whole pixels so neighbouring tiles share an edge.
+
     const sxp = (wx) => Math.round((wx - view.x) * view.scale + w / 2);
     const szp = (wz) => Math.round((wz - view.z) * view.scale + h / 2);
     ctx.imageSmoothingEnabled = MAP_CHUNK * view.scale < TILE_PX;
@@ -667,7 +694,7 @@ export class MapSystem {
       ctx.drawImage(t.land, x0, y0, sxp((cx + 1) * MAP_CHUNK) - x0, szp((cz + 1) * MAP_CHUNK) - y0);
     };
     if (c1x - c0x > 64 || c1z - c0z > 64) {
-      // Far out the chunk grid is huge: walk the explored set instead.
+
       for (const key of this.seen) {
         const [cx, cz] = keyToChunk(key);
         if (cx < c0x || cx > c1x || cz < c0z || cz > c1z) continue;
@@ -695,7 +722,7 @@ export class MapSystem {
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(a);
-      ctx.fillStyle = type === 'death' ? '#ff4a3a' : 'rgba(255,255,255,.88)';
+      ctx.fillStyle = type === 'death' ? '#ff4a3a' : type === 'strike' ? '#ffb000' : 'rgba(255,255,255,.88)';
       ctx.beginPath();
       ctx.moveTo(4, 0);
       ctx.lineTo(-2.5, -3);
@@ -723,6 +750,7 @@ export class MapSystem {
     this._hits = [];
 
     if (this.layers.terrain) this._drawTiles(ctx, view, w, h);
+    if (this.layers.strikes) this._drawCraters(ctx, view, w, h);
     this._drawGrid(ctx, view, w, h);
 
     if (this.layers.sites) this._drawSites(ctx, view, w, h);
@@ -731,6 +759,7 @@ export class MapSystem {
     if (this.layers.machines) this._drawMachines(ctx, view, w, h);
     if (this.layers.deaths) this._drawMarkers(ctx, view, w, h, this.deaths, 'death');
     if (this.layers.bookmarks) this._drawMarkers(ctx, view, w, h, this.bookmarks, 'bookmark');
+    if (this.layers.strikes) this._drawMarkers(ctx, view, w, h, this.strikes, 'strike');
 
     this._drawPlayer(ctx, view, w, h);
     this._drawScaleBar(ctx, view, w, h, 90);
@@ -807,7 +836,7 @@ export class MapSystem {
     }
   }
 
-  // Base building: every piece is a flat block in its material colour.
+
   _drawWalls(ctx, view, w, h, mini = false) {
     const list = this.opts.walls?.() || [];
     for (const p of list) {
@@ -858,6 +887,22 @@ export class MapSystem {
     }
   }
 
+  _drawCraters(ctx, view, w, h) {
+    for (const s of this.strikes) {
+      if (!this.seen.has(chunkKey(chunkCoord(s.x), chunkCoord(s.z)))) continue;
+      const p = this._visible(s.x, s.z, view, w, h, (s.r || 28) * view.scale + 4);
+      if (!p) continue;
+      const r = Math.max(1, (s.r || 28) * view.scale);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#050505';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(90,70,55,0.55)';
+      ctx.lineWidth = Math.max(1, view.scale * 1.5);
+      ctx.stroke();
+    }
+  }
+
   _drawMarkers(ctx, view, w, h, list, type, mini = false) {
     const selectedId = this.selected?.type === type ? this.selected.id : null;
     const hoverId = this._hover?.type === type ? this._hover.id : null;
@@ -885,6 +930,21 @@ export class MapSystem {
         cross(1, 1);
         ctx.fillStyle = active ? '#fff' : '#ff4a3a';
         cross(0, 0);
+      } else if (type === 'strike') {
+        const blast = (ox, oy, c) => {
+          ctx.fillStyle = c;
+          ctx.fillRect(px + ox - 1, py + oy - 3, 3, 1);
+          ctx.fillRect(px + ox - 3, py + oy - 1, 7, 3);
+          ctx.fillRect(px + ox - 1, py + oy + 2, 3, 1);
+          ctx.fillRect(px + ox - 2, py + oy - 2, 1, 1);
+          ctx.fillRect(px + ox + 2, py + oy - 2, 1, 1);
+          ctx.fillRect(px + ox - 2, py + oy + 2, 1, 1);
+          ctx.fillRect(px + ox + 2, py + oy + 2, 1, 1);
+        };
+        blast(1, 1, 'rgba(0,0,0,.6)');
+        blast(0, 0, active ? '#fff' : '#ffb000');
+        ctx.fillStyle = active ? '#fff' : '#ff5a00';
+        ctx.fillRect(px, py, 1, 1);
       } else {
         const diamond = (ox, oy) => {
           ctx.fillRect(px + ox, py + oy - 2, 1, 1);
@@ -905,7 +965,7 @@ export class MapSystem {
         ctx.strokeRect(px - 4.5, py - 4.5, 10, 10);
       }
 
-      const name = type === 'death' ? `DIED D${m.day}` : m.name;
+      const name = type === 'death' ? `DIED D${m.day}` : type === 'strike' ? `NUKE D${m.day}` : m.name;
       if (active && !mini) this._label(ctx, name, s.x + 9, s.y + 3.5, true);
 
       if (!mini) this._hits.push({ type, id: m.id, sx: s.x, sy: s.y, label: name });
@@ -956,7 +1016,7 @@ export class MapSystem {
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
     const ang = Math.atan2(fz, fx);
 
-    // Flat facing wedge: no soft glow, just a hard pixel cone.
+
     const rad = Math.min(90, Math.min(w, h) * 0.2);
     ctx.fillStyle = 'rgba(255,255,255,.09)';
     ctx.beginPath();
@@ -1039,16 +1099,18 @@ export class MapSystem {
       const dist = (m) => Math.hypot(m.x - p.x, m.z - p.z);
       const marks = [...this.bookmarks].sort((a, b) => dist(a) - dist(b));
       const deaths = [...this.deaths].sort((a, b) => dist(a) - dist(b));
+      const strikes = [...this.strikes].sort((a, b) => dist(a) - dist(b));
       const row = (m, type) => {
         const sel = this.selected?.type === type && this.selected.id === m.id;
-        const name = type === 'death' ? `DIED · DAY ${m.day}` : m.name;
+        const name = type === 'death' ? `DIED · DAY ${m.day}` : type === 'strike' ? `NUKE · DAY ${m.day}` : m.name;
         return `<div class="mapMark${sel ? ' sel' : ''}" data-mark="${type}" data-id="${m.id}">` +
           `<i class="mi ${type}"></i><span class="mb"><span class="mn">${escapeHtml(name)}</span>` +
           `<span class="md">${m.x.toFixed(0)}, ${m.z.toFixed(0)} · ${dist(m).toFixed(0)} m</span></span></div>`;
       };
       this.markersEl.innerHTML =
         (marks.length ? marks.map((m) => row(m, 'bookmark')).join('') : '<div class="mapEmpty">NO BOOKMARKS · B IN GAME</div>') +
-        (deaths.length ? `<div class="mapSectionTitle">DEATH SPOTS</div>${deaths.map((m) => row(m, 'death')).join('')}` : '');
+        (deaths.length ? `<div class="mapSectionTitle">DEATH SPOTS</div>${deaths.map((m) => row(m, 'death')).join('')}` : '') +
+        (strikes.length ? `<div class="mapSectionTitle">NUCLEAR STRIKES</div>${strikes.map((m) => row(m, 'strike')).join('')}` : '');
     }
 
     const selMark = this.selected?.type === 'bookmark' ? this._markerById(this.selected) : null;

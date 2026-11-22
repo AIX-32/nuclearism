@@ -1,7 +1,7 @@
-// Chunk rebuild checks: node assets/js/chunk-dirty.check.mjs
-// The real bodies from game.js run here without a browser: the dirty range
-// decides which chunk meshes can change after an edit, and the sliced sample
-// loader has to fill exactly the same grid as the plain nested loop did.
+
+
+
+
 
 import { readFileSync } from 'node:fs';
 
@@ -10,7 +10,7 @@ function check(cond, msg) { results.push([!!cond, msg]); }
 
 const src = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 
-// Pull a body out of game.js: `function name(` or a class method `name(args) {`.
+
 function bodyOf(needle) {
   const at = src.indexOf(needle);
   if (at < 0) throw new Error(`not found in game.js: ${needle}`);
@@ -31,13 +31,13 @@ function bodyOf(needle) {
   throw new Error(`unterminated body: ${needle}`);
 }
 
-// ---------------------------------------------------------------- dirty range
+
 const CHUNK_SIZE = 16;
 const dirtyRange = new Function('CHUNK_SIZE', `return function dirtyRange(lo, hi, pad) {${bodyOf('dirtyRange(lo, hi, pad) {')}};`)(CHUNK_SIZE);
 
-// A chunk mesh is built from its own voxels plus the one voxel frame it
-// samples around itself, so an edit reaches every chunk whose frame holds an
-// edited voxel. That is the rule the range has to match.
+
+
+
 function affectedChunks(lo, hi) {
   const out = [];
   for (let c = Math.floor((lo - 1) / CHUNK_SIZE); c <= Math.floor((hi + 1) / CHUNK_SIZE); c++) out.push(c);
@@ -58,16 +58,16 @@ for (const [lo, hi] of [[20, 20], [16, 16], [15, 15], [31, 31], [0, 0], [12, 34]
     `dirty range ${lo}..${hi} matches the chunk frame rule`);
 }
 
-// The old code padded every axis by a whole chunk: a single mined block
-// queued up to 27 rebuilds.
+
+
 check(rangeOf(20, 20).length === 1, 'a block in the middle of a chunk dirties one chunk');
 check(rangeOf(16, 16).length === 2, 'a block on a chunk border dirties the neighbour too');
 check(rangeOf(20, 20).length < 9, 'a single block no longer dirties 27 chunks');
 
-// The torch light reaches beyond the edited box, so that call still pads.
+
 check(rangeOf(0, 32, 1).length > rangeOf(0, 32, 0).length, 'the padded range is wider than the exact one');
 
-// ------------------------------------------------------------ sample loading
+
 const SAMPLE_SIZE = CHUNK_SIZE + 2;
 const S2 = SAMPLE_SIZE * SAMPLE_SIZE;
 const TOTAL = SAMPLE_SIZE * SAMPLE_SIZE * SAMPLE_SIZE;
@@ -77,7 +77,7 @@ const loadSlice = new Function('SAMPLE_SIZE', 'S2', 'industrialPadAt',
 const refreshPending = new Function('SAMPLE_SIZE', 'S2', 'CHUNK_SIZE',
   `return function refreshPending() {${bodyOf('refreshPending() {')}};`)(SAMPLE_SIZE, S2, CHUNK_SIZE);
 
-// The density the fake field reports: a plain function of the voxel.
+
 const density = (x, y, z) => x * 1000 + y * 7 + z * 0.5;
 
 function fakeChunk() {
@@ -94,7 +94,7 @@ function fakeChunk() {
   };
 }
 
-// The plain nested fill the mesher expects: index (i+1) + (j+1)*S + (k+1)*S2.
+
 function referenceGrid() {
   const s = new Float32Array(TOTAL);
   const { ox, oy, oz } = fakeChunk();
@@ -106,7 +106,7 @@ function referenceGrid() {
 }
 
 const oneShot = fakeChunk();
-while (!loadSlice.call(oneShot, TOTAL)) { /* loads everything at once */ }
+while (!loadSlice.call(oneShot, TOTAL)) {                                }
 check(oneShot.samplesLoaded, 'the sample grid reports itself loaded');
 let same = oneShot.samples.length === referenceGrid().length;
 for (let i = 0; same && i < oneShot.samples.length; i++) {
@@ -123,16 +123,16 @@ for (let i = 0; i < sliced.samples.length; i++) if (sliced.samples[i] !== ref[i]
 check(same2 && sliced.samplesLoaded, 'the grid is the same when it is loaded in slices');
 check(guard > 1, 'the load really is spread over several slices');
 
-// An edit that lands while the grid is still filling must survive it: the
-// rebuild re-reads the pending voxels.
+
+
 const racing = fakeChunk();
 racing.pending.push([36, 38, -14, -12, 51, 53]);
 while (!racing.samplesLoaded && guard++ < 200) loadSlice.call(racing, 600);
 check(racing.pending.length === 1, 'an edit that lands during the load is not dropped');
 
-// An edit only re-reads the edited voxels: the rest of the grid is kept.
+
 const edited = fakeChunk();
-while (!loadSlice.call(edited, TOTAL)) { /* full load */ }
+while (!loadSlice.call(edited, TOTAL)) {                 }
 const before = Float32Array.from(edited.samples);
 edited.pending.push([32 + 4, 32 + 6, -16 + 2, -16 + 4, 48 + 3, 48 + 5]);
 edited.world.field.valueAt = (x, y, z) => density(x, y, z) + 1000;

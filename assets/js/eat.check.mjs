@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// The eating animation lives inside game.js (it drives the viewmodel), so this
-// checks the wiring in the shipping source instead of a copy of it.
+
+
 const src = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 
 assert.match(src, /const EAT_TIME = [\d.]+;/, 'eating has a duration');

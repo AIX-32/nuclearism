@@ -1,15 +1,15 @@
-// Door: a 3 m wide wall panel with a doorway cutout in the middle (1 m wide,
-// 2 m tall at the bottom). It places and snaps like a wall segment so runs stay
-// flush, but the opening is always passable.
-//
-// `rot` matches the wall: direction the panel runs and which side of its cell
-// it hugs, so a doorway sits flush in a wall line.
+
+
+
+
+
+
 
 import { anySupport, baseAt } from './placement.js';
 
 const W = 3, H = 3, TH = 0.25;
-const OPEN_W = 1; // middle column
-const OPEN_H = 2; // bottom 2 m
+const OPEN_W = 1;
+const OPEN_H = 2;
 
 function isOpening(i, j) {
   const mid = Math.floor((W - OPEN_W) / 2);
@@ -51,11 +51,11 @@ function frameGeometry(THREE) {
     g.translate(cx, cy, cz);
     parts.push(g);
   };
-  // Unit-sized frame (scaled by KIND.scale to 3x3x0.25): left post, right post, top lintel.
-  const pw = (W - OPEN_W) / 2 / W; // 1/3
-  const ph = H / H;                // 1
-  const lw = OPEN_W / W;           // 1/3
-  const lh = (H - OPEN_H) / H;     // 1/3
+
+  const pw = (W - OPEN_W) / 2 / W;
+  const ph = H / H;
+  const lw = OPEN_W / W;
+  const lh = (H - OPEN_H) / H;
   add(-0.5 + pw / 2, 0, 0, pw, ph, 1);
   add(0.5 - pw / 2, 0, 0, pw, ph, 1);
   add(0, 0.5 - lh / 2, 0, lw, lh, 1);
@@ -114,7 +114,7 @@ export const KIND = {
   },
 };
 
-// No swinging leaf any more; kept as a no-op for callers that still import it.
+
 export function swingFrame() { return null; }
 
 export const ITEMS = {

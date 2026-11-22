@@ -1,10 +1,10 @@
-// Self-checks for the meshes the building pieces are drawn in:
-//   node assets/js/building.mesh.check.mjs
-//
-// Two kinds of the same tier must never share an InstancedMesh: the mesh
-// draws every instance with the shape of its first piece, so a wall in a
-// floor's mesh would lie flat like a floor and a floor in a wall's mesh
-// would stand up like a wall.
+
+
+
+
+
+
+
 
 import { BuildingSystem, meshKey } from './building.js';
 import { stubThree, flatWorld } from './three-stub.mjs';
@@ -40,7 +40,7 @@ for (const [kind, want] of Object.entries(scales)) {
   `the ${kind} is drawn at its own size (${got ? got.join(',') : 'none'} vs ${want.join(',')})`);
 }
 
-// A wall and a floor of the same tier are different meshes.
+
 check(meshKey({ tier: 'wood', kind: 'wall' }) !== meshKey({ tier: 'wood', kind: 'floor' }),
   'a wall and a floor of the same tier do not share a mesh');
 
@@ -49,4 +49,4 @@ for (const [cond, msg] of ok) {
   if (!cond) { failed++; console.error('FAIL:', msg); }
 }
 if (failed) { console.error(`building mesh check failed: ${failed}/${ok.length}`); process.exit(1); }
-console.log(`building mesh OK — ${ok.length} assertions`);
+console.log(`building mesh OK: ${ok.length} assertions`);

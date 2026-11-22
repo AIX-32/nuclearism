@@ -1,6 +1,6 @@
-// Shared pointer drag-and-drop for every item slot in the game.
-// A slot supplies stack/take/put/restore; the controller owns the ghost,
-// hit-testing and the click suppression a drag needs.
+
+
+
 
 const DRAG_THRESHOLD = 5;
 
@@ -110,8 +110,8 @@ export class DragDrop {
     if (!target || target === d.spec) return false;
     if (target.accepts && !target.accepts(d.stack)) return false;
     const cur = target.stack?.();
-    // A swap puts the target's item back into the source, so the source
-    // must accept it too; identical ids always round-trip safely.
+
+
     if (cur && cur.id !== d.stack.id && d.spec.accepts && !d.spec.accepts(cur)) return false;
     return true;
   }
@@ -135,7 +135,7 @@ export class DragDrop {
     const target = targetEl ? this.specs.get(targetEl) : null;
     this.clearOver();
     this.reset();
-    if (!active) return; // a plain click: let the slot's own click handler run
+    if (!active) return;
     this.suppressClick();
 
     let leftover = d.stack;

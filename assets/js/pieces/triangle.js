@@ -1,35 +1,35 @@
-// Triangle wedges: half of a 3 x 3 m square, so a base can be shaped into
-// corners, wedges and honeycomb cells instead of only squares.
-//
-// A wedge is a right triangle prism: the right angle sits in one corner of the
-// square, the legs run along the two edges that meet there, and the
-// hypotenuse runs corner to corner across the square. `rot` turns the whole
-// square by 90 degrees, so the diagonal can point any way.
-//
-// The mesh is a real prism (see `geometry`), built in a local frame whose
-// right angle is at the (0,0) corner, and turned by `rotY`. The cell boxes
-// are derived from the same local frame, so the solid cells always line up
-// with the mesh.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { anySupport, baseAt } from './placement.js';
 
 const W = 3, D = 3, TH = 0.25;
 
-// --- the local frame ------------------------------------------------------
-//
-// In local coordinates the square runs from (0,0) to (3,3), the right angle
-// is at (0,0) and the wedge covers u + v <= 3. Local cell (i,k) is:
-//   i + k <= 1  fully inside the wedge
-//   i + k == 2  cut in half by the diagonal (the hypotenuse runs through it)
-//   i + k >= 3  outside the wedge
-//
-// One 90 degree turn about the centre of the square maps a point (u,v) to
-// (v, W - u), which is the same rotation three.js applies for a positive
-// rotation about Y. So the local frame turned `rot` times is exactly what
-// `rotY(rot)` does to the mesh.
+
+
+
+
+
+
+
+
+
+
+
+
 function turn(u, v) { return [v, W - u]; }
 
-// Where local cell (i,k) ends up after `rot` turns.
+
 const CELL_OF = [
   (i, k) => [i, k],
   (i, k) => [k, 2 - i],
@@ -37,9 +37,9 @@ const CELL_OF = [
   (i, k) => [2 - k, i],
 ];
 
-// The solid part of a local cell, as [x0, x1, z0, z1]. No axis aligned box
-// can follow a diagonal exactly, so a cut cell keeps a half-cell compromise;
-// the leg-end boxes follow the leg and preserve the prism's full footprint.
+
+
+
 function localBox(i, k) {
   if (i + k <= 1) return [i, i + 1, k, k + 1];
   if (i + k === 2) return i === 0
@@ -48,7 +48,7 @@ function localBox(i, k) {
   return null;
 }
 
-// Turn a local box into its world box.
+
 function turnBox(box, rot) {
   let [x0, x1, z0, z1] = box;
   for (let r = 0; r < rot; r++) {
@@ -70,7 +70,7 @@ function cells(x, y, z, rot) {
       const [bx0, bx1, bz0, bz1] = turnBox(local, r);
       out.push([`${x + wi},${y},${z + wk}`, {
         minX: x + bx0, maxX: x + bx1,
-        // Sit at the cell top, so the next piece does not float above the slab.
+
         minY: y + 1 - TH, maxY: y + 1,
         minZ: z + bz0, maxZ: z + bz1,
       }]);
@@ -79,9 +79,9 @@ function cells(x, y, z, rot) {
   return out;
 }
 
-// The prism: a unit right triangle (right angle at (-0.5,-0.5) in XZ) with a
-// unit height, so scaling it by (W, TH, D) gives the wedge. THREE is handed
-// in by the runtime so this module stays importable in node.
+
+
+
 function prism(THREE) {
   const A = [-0.5, -0.5], B = [0.5, -0.5], C = [-0.5, 0.5];
   const LO = -0.5, HI = 0.5;
@@ -94,24 +94,24 @@ function prism(THREE) {
     }
   };
   const V = (p, y) => [p[0], y, p[1]];
-  const s = 3;                       // texture repeats, like the runtime box
-  const hyp = Math.SQRT1_2;         // outward normal of the hypotenuse
-  // top and bottom
+  const s = 3;
+  const hyp = Math.SQRT1_2;
+
   tri(V(A, HI), V(C, HI), V(B, HI), [0, 1, 0],
     [0, 0], [0, s], [s, 0]);
   tri(V(A, LO), V(B, LO), V(C, LO), [0, -1, 0],
     [0, 0], [s, 0], [0, s]);
-  // leg along z = -0.5
+
   tri(V(A, LO), V(B, HI), V(B, LO), [0, 0, -1],
     [0, 0], [s, s], [s, 0]);
   tri(V(A, LO), V(A, HI), V(B, HI), [0, 0, -1],
     [0, 0], [0, s], [s, s]);
-  // leg along x = -0.5
+
   tri(V(A, LO), V(C, LO), V(C, HI), [-1, 0, 0],
     [0, 0], [s, 0], [s, s]);
   tri(V(A, LO), V(C, HI), V(A, HI), [-1, 0, 0],
     [0, 0], [s, s], [0, s]);
-  // hypotenuse from B to C
+
   tri(V(B, LO), V(C, HI), V(C, LO), [hyp, 0, hyp],
     [0, 0], [s, s], [s, 0]);
   tri(V(B, LO), V(B, HI), V(C, HI), [hyp, 0, hyp],
@@ -130,8 +130,8 @@ export const KIND = {
   attenuate: true,
   geom: 'triangle',
   geometry(THREE) { return prism(THREE); },
-  // The mesh is turned about the middle of the square, so the right angle
-  // walks through the four corners of the square as rot goes 0..3.
+
+
   rotY(rot) { return (rot % 4) * Math.PI / 2; },
 
   cells,

@@ -27,11 +27,46 @@ const ORE_TABLE = [
 const MAXSLOT = 99;
 const MACHINE_SCALE = 1.45;
 const RTG_RATE = 4;
-const POWER_FLOW = 50;          // minimum PU/s a machine can draw from the network
-const POWER_REFILL_SECONDS = 15; // seconds to fill an empty buffer at the minimum flow
+const POWER_FLOW = 50;
+const POWER_REFILL_SECONDS = 15;
 const NET_RANGE = 6;
 const POLE_RANGE = 24;
 const TOUCH_RANGE = 2.2;
+
+function boreMaskFromModel(model, T, cell = 0.5) {
+  model.updateMatrixWorld(true);
+  const inv = model.matrixWorld.clone().invert();
+  const box = new T.Box3().setFromObject(model);
+  const size = box.getSize(new T.Vector3());
+  if (size.x < 0.01 || size.y < 0.01) return { mask: [[0, 0.5]], frontZ: 0, backZ: 0 };
+  const ray = new T.Raycaster();
+  const dir = new T.Vector3(0, 0, 1);
+  const mask = [];
+  const seen = new Set();
+  const x0 = Math.floor(box.min.x / cell) * cell;
+  const x1 = Math.ceil(box.max.x / cell) * cell;
+  const y0 = Math.floor(box.min.y / cell) * cell;
+  const y1 = Math.ceil(box.max.y / cell) * cell;
+  const zStart = box.min.z - 0.5;
+  const far = (box.max.z - box.min.z) + 1;
+  for (let x = x0 + cell / 2; x < x1; x += cell) {
+    for (let y = y0 + cell / 2; y < y1; y += cell) {
+      ray.set(new T.Vector3(x, y, zStart), dir);
+      ray.far = far;
+      const hits = ray.intersectObject(model, true);
+      if (!hits.length) continue;
+      const p = new T.Vector3(x, y, 0).applyMatrix4(inv);
+      const k = `${Math.round(p.x / cell)},${Math.round(p.y / cell)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      mask.push([p.x, p.y]);
+    }
+  }
+
+  const frontLocal = new T.Vector3(0, 0, box.min.z).applyMatrix4(inv).z;
+  const backLocal = new T.Vector3(0, 0, box.max.z).applyMatrix4(inv).z;
+  return { mask: mask.length ? mask : [[0, (box.min.y + box.max.y) / 2]], frontZ: Math.min(frontLocal, backLocal), backZ: Math.max(frontLocal, backLocal) };
+}
 
 export class MachineSystem {
   constructor(ctx) {
@@ -74,6 +109,7 @@ export class MachineSystem {
       try {
         const g = await loader.loadAsync(def.model);
         model = g.scene;
+        if (def.modelRotY) model.rotation.y += def.modelRotY;
         model.updateMatrixWorld(true);
         const size = new this.T.Box3().setFromObject(model).getSize(new this.T.Vector3());
         model.scale.setScalar((def.height * MACHINE_SCALE) / Math.max(size.y, 0.001));
@@ -87,8 +123,9 @@ export class MachineSystem {
       }
       const bounds = new this.T.Box3().setFromObject(model);
       const footprint = bounds.getSize(new this.T.Vector3());
+      const bore = (def.kind === 'bore' || def.bore) ? boreMaskFromModel(model, this.T, 0.5) : null;
 
-      this.templates.set(def.id, { def, model, layout, animations, size: footprint });
+      this.templates.set(def.id, { def, model, layout, animations, size: footprint, bore });
     }));
     return this;
   }
@@ -103,8 +140,8 @@ export class MachineSystem {
     const col = colors[def.kind] || 0x8090a8;
     const h = def.height * MACHINE_SCALE;
     if (def.kind === 'pylon') {
-      // A stand-in mast: a slim column with an arm on top, so a skyline reads
-      // as a skyline even before the model exists.
+
+
       const mast = new T.Mesh(new T.BoxGeometry(0.32, h, 0.32), new T.MeshLambertMaterial({ color: 0x8d97a4 }));
       mast.position.y = h / 2;
       g.add(mast);
@@ -132,7 +169,7 @@ export class MachineSystem {
     if (!world || !world.field || !world.markEdited) return;
     const field = world.field;
 
-    // Underground/bunker: do not bulldoze a carved room's floor or ceiling.
+
     const roofY = Math.ceil(y + 2.2);
     let covered = 0;
     for (const [dx, dz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
@@ -160,11 +197,11 @@ export class MachineSystem {
     world.markEdited(x0, x1, y0, y1, z0, z1);
   }
 
-  // The BWE model has a static house, a boom (`frontboom`) and the bucket wheel
-  // (`bw` -> `wheel`). Both the boom and the wheel group get re-parented under a
-  // single pivot at the boom root, so lowering the boom carries the wheel with
-  // it. The front rope is re-stretched each frame between the fixed mast and the
-  // moving boom tip.
+
+
+
+
+
   setupBwe(mesh, def) {
     const T = this.T;
     const cfg = def.bwe || {};
@@ -198,8 +235,8 @@ export class MachineSystem {
       mast, boomAnchorLocal: anchor,
       ropeSpan: cfg.ropeSpan || 14,
       ropeCenter: cfg.ropeCenter ?? 0.25,
-      // Targets are what the controls step; the *Cur values are the heavy,
-      // smoothed pose that is actually rendered.
+
+
       yaw: 0, boom: 0, yawCur: 0, boomCur: 0,
       wheelOn: false, spinVel: 0, digT: 0,
     };
@@ -228,8 +265,8 @@ export class MachineSystem {
   controlBwe(inst, action) {
     const b = inst && inst.bwe;
     if (!b) return false;
-    // A BWE should feel like it weighs thousands of tonnes: each input is a
-    // tiny nudge and the render pose catches up slowly in tickBwe().
+
+
     if (action === 'yawLeft') b.yaw += 0.015;
     else if (action === 'yawRight') b.yaw -= 0.015;
     else if (action === 'boomUp') b.boom = Math.max(-0.16, b.boom - 0.005);
@@ -237,8 +274,8 @@ export class MachineSystem {
     else if (action === 'wheel') b.wheelOn = !b.wheelOn;
     else return false;
     if (action.startsWith('yaw')) {
-      // Wrap target and current pose together so the smoothing never takes the
-      // long way around at the ±180° seam.
+
+
       const twoPi = Math.PI * 2;
       if (b.yaw > Math.PI) { b.yaw -= twoPi; b.yawCur -= twoPi; }
       else if (b.yaw < -Math.PI) { b.yaw += twoPi; b.yawCur += twoPi; }
@@ -246,11 +283,23 @@ export class MachineSystem {
     return true;
   }
 
+  controlBore(inst, action) {
+    if (!inst || inst.def.kind !== 'bore') return false;
+    const step = Math.PI / 36;
+    let pitch = inst.state.pitch || 0;
+    if (action === 'pitchDown') pitch -= step;
+    else if (action === 'pitchUp') pitch += step;
+    else if (action === 'pitchLevel') pitch = 0;
+    else return false;
+    inst.state.pitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 6, pitch));
+    return true;
+  }
+
   tickBwe(m, dt, net) {
     const b = m.bwe, st = m.state;
     if (!b) { st.status = 'IDLE'; return; }
-    // Critically-damped-ish easing: yaw is the slowest, boom follows a little
-    // faster. Frame-rate independent, so it feels the same at any FPS.
+
+
     const yawK = 1 - Math.exp(-dt / 1.2);
     const boomK = 1 - Math.exp(-dt / 1.6);
     b.yawCur += (b.yaw - b.yawCur) * yawK;
@@ -362,24 +411,31 @@ export class MachineSystem {
     const y = opts.y !== undefined ? opts.y : this.ctx.world.getSurfaceHeight(x, z, 90);
     if (!tpl.def.noPad && !opts.onBuilding && !opts.restore) this.flattenPad(x, y, z, Math.max(hx, hz));
     const mesh = tpl.model.clone(true);
-    const spinNode = tpl.def.spin ? mesh.getObjectByName(tpl.def.spin) : null;
-    if (spinNode && spinNode.position.lengthSq() > 0.0001) {
-      const pivotOffset = spinNode.position.clone();
-      spinNode.position.set(0, 0, 0);
-      for (const child of spinNode.children) {
-        if (child.isObject3D) child.position.add(pivotOffset);
+    const spinNames = tpl.def.spin ? [].concat(tpl.def.spin) : [];
+    const spinNodes = [];
+    for (const name of spinNames) mesh.traverse((o) => { if (o.name === name && !spinNodes.includes(o)) spinNodes.push(o); });
+    for (const spinNode of spinNodes) {
+
+
+      if (spinNode.children.length && spinNode.position.lengthSq() > 0.0001) {
+        const pivotOffset = spinNode.position.clone();
+        spinNode.position.set(0, 0, 0);
+        for (const child of spinNode.children) {
+          if (child.isObject3D) child.position.add(pivotOffset);
+        }
       }
     }
 
     mesh.position.set(x, y + mesh.position.y, z);
-    mesh.rotation.y = rot;
+    mesh.rotation.y = rot + (tpl.def.modelRotY || 0);
+    if (tpl.def.kind === 'bore') mesh.rotation.order = 'YXZ';
     const bwe = tpl.def.kind === 'bwe' ? this.setupBwe(mesh, tpl.def) : null;
     this.ctx.scene.add(mesh);
     const inst = {
       uid: this.uidSeq++, def: tpl.def, x, y, z, rot, mesh, layout: tpl.layout,
       top: y + tpl.def.height * MACHINE_SCALE, hx, hz,
-      spinNode, bwe,
-      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE' },
+      spinNode: spinNodes[0] || null, spinNodes, bwe, boreMask: tpl.bore || null,
+      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0 },
       mixer: null, action: null, net: null,
     };
     if (tpl.animations.length) {
@@ -441,11 +497,11 @@ export class MachineSystem {
 
   chargePower(m, dt, net) {
     if (!this.hasPowerPort(m)) return;
-    // Generators only feed the pool; they are not consumers, so they keep no
-    // buffer of their own (a cranked machine must not become a battery).
+
+
     if (m.def.kind === 'generator') return;
-    // Capacity machines store the network's energy themselves, so they are
-    // filled from the pool after everything else has drawn (see update()).
+
+
     if (m.def.capacity) return;
     const cap = this.powerCap(m);
     const cur = m.state.buffer || 0;
@@ -482,6 +538,8 @@ export class MachineSystem {
       slotAdapter: (role) => this.slotAdapter(role),
       take: (role) => this.take(role),
       collect: (role) => this.take(role),
+      sortContainer: () => this.sortContainer(),
+      sortInventory: () => this.sortInventory(),
       craftOptions: () => this.craftOptions(),
       craftRecipe: (recipe, mods) => this.craftRecipe(recipe, mods),
       hasCraftList: () => !!this.openInst && (this.openInst.def.kind === 'crafting' || this.openInst.def.kind === 'processor'),
@@ -504,6 +562,12 @@ export class MachineSystem {
         };
       },
       bweControl: (action) => this.controlBwe(this.openInst, action),
+      boreState: () => {
+        const m = this.openInst;
+        if (!m || m.def.kind !== 'bore') return null;
+        return { pitch: m.state.pitch || 0, status: m.state.status };
+      },
+      boreControl: (action) => this.controlBore(this.openInst, action),
       onActive: (active) => {
         const m = this.openInst; if (!m || !m.action) return;
         if (active) { m.action.reset(); m.action.play(); m.action.paused = false; }
@@ -557,6 +621,11 @@ export class MachineSystem {
     }
     if (role.startsWith('rod')) return !!this.ITEMS[stack.id]?.rod;
     if (m.def.kind === 'reactor' && role === 'fuel') return !!this.ITEMS[stack.id]?.fuel;
+    if ((m.def.drive || m.def.bore) && role.startsWith('fuel')) {
+      if (stack.id === 'carbon' || stack.id === 'heavy_fuel_oil') return true;
+      return !!(stack.liquid && stack.liquid.id === 'gasoline' && (stack.liquid.amount || 0) > 0);
+    }
+    if (role === 'upgrade0') return !!this.ITEMS[stack.id]?.boreUpgrade;
     return true;
   }
 
@@ -599,7 +668,7 @@ export class MachineSystem {
     if (m.def.kind === 'reactor' && role === 'fuel' && !item.fuel) return stack;
 
     const cur = m.state.slots[role] || null;
-    // One physical rod per cooling slot: swapping never merges stacks.
+
     if (role.startsWith('rod')) {
       m.state.slots[role] = stack;
       return cur;
@@ -624,13 +693,69 @@ export class MachineSystem {
     };
   }
 
+  sortCategory(id) {
+    const d = this.ITEMS[id];
+    if (!d) return 7;
+    if (d.workbench) return 8;
+    if (d.tool || d.torch || d.geiger) return 0;
+    if (d.armor || d.plate) return 1;
+    if (d.consumable) return 2;
+    if (d.container) return 3;
+    if (d.fuel) return 9;
+    if (/ ORE$/.test(d.name)) return 5;
+    if (/ (INGOT|DUST|PLATE|SOLENOID)$/.test(d.name)) return 6;
+    if (d.block) return 4;
+    return 7;
+  }
+
+  sortedStacks(src) {
+    const stacks = [];
+    for (const s of src) {
+      if (!s) continue;
+      const cap = this.ITEMS[s.id]?.stack || 64;
+      const prev = stacks.find((x) => x.id === s.id && !x.liquid && !s.liquid && !x.plates?.length && !s.plates?.length && x.n < cap);
+      if (prev) {
+        const mv = Math.min(cap - prev.n, s.n);
+        prev.n += mv;
+        if (s.n - mv > 0) stacks.push({ ...s, n: s.n - mv });
+      } else stacks.push({ ...s, plates: s.plates ? [...s.plates] : undefined, liquid: s.liquid ? { ...s.liquid } : undefined });
+    }
+    stacks.sort((a, b) => {
+      const ca = this.sortCategory(a.id), cb = this.sortCategory(b.id);
+      if (ca !== cb) return ca - cb;
+      const na = (this.ITEMS[a.id]?.name || a.id).toLowerCase();
+      const nb = (this.ITEMS[b.id]?.name || b.id).toLowerCase();
+      if (na !== nb) return na < nb ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    return stacks;
+  }
+
+  sortContainer() {
+    const m = this.openInst;
+    if (!m || m.def.kind !== 'storage') return;
+    const roles = Object.keys(m.state.slots).filter((r) => /^slot\d+$/.test(r)).sort((a, b) => +a.slice(4) - +b.slice(4));
+    if (!roles.length) return;
+    const stacks = this.sortedStacks(roles.map((r) => m.state.slots[r]));
+    for (let i = 0; i < roles.length; i++) m.state.slots[roles[i]] = stacks[i] || null;
+    this.ui.refresh();
+    this.ctx.syncBars();
+  }
+
+  sortInventory() {
+    const stacks = this.sortedStacks(this.inv.main);
+    for (let i = 0; i < this.inv.main.length; i++) this.inv.main[i] = stacks[i] || null;
+    this.ui.refresh();
+    this.ctx.syncBars();
+  }
+
   drop(i, role) {
     const m = this.openInst; if (!m) return false;
     const { grid, idx, stack } = this.invStack(i);
     if (!stack) return false;
-    // Quick-move (shift-click) only merges into the same item or fills an
-    // empty slot: never swap. A swap bounces the item straight back out of a
-    // full container, so the move silently did nothing.
+
+
+
     const cur = m.state.slots[role] || null;
     if (cur && (cur.id !== stack.id || cur.liquid || stack.liquid || cur.n >= MAXSLOT)) return false;
     const before = stack.n;
@@ -854,9 +979,9 @@ export class MachineSystem {
     return this.startJob(m, recipe, mods);
   }
 
-  // A job that runs on what the machine is holding, not on the player's bag.
-  // This is what makes a skyline factory work: the pod drops the ingredients
-  // into the input slots and the machine starts on its own.
+
+
+
   startJobFromSlots(m, recipe) {
     if (!m || !recipe) return false;
     const cost = m.def.kind === 'crafting' ? this.craftCost(m) : 0;
@@ -999,8 +1124,8 @@ export class MachineSystem {
 
 
   buildNetworks() {
-    // Skyline pylons are not power: they must not bridge two distant machines.
-    // Plain storage containers have no power role and should not connect to wires.
+
+
     const ins = this.instances.filter((m) => m.def.kind !== 'pylon' && !(m.def.kind === 'storage' && !m.def.capacity));
     const parent = ins.map((_, i) => i);
     const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
@@ -1113,9 +1238,9 @@ export class MachineSystem {
             if (spinTime > 0) {
               const spinBoost = m.state.spinBoost || 0;
               const powerRate = (def.energy?.gen || 45) * (1 + spinBoost * 0.45);
-              // The crank feeds the grid directly; it stores nothing itself.
+
               net.pool = Math.min(net.cap, net.pool + powerRate * dt);
-              m.spinNode?.rotateY(dt * (m.def.spinRate || 8) * (1 + spinBoost * 0.8));
+              for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 8) * (1 + spinBoost * 0.8));
               m.state.status = 'CRANKING';
             } else {
               m.state.status = 'IDLE';
@@ -1146,6 +1271,7 @@ export class MachineSystem {
         if (k === 'processor' || k === 'crafting') this.tickProcessor(m, dt, net);
         else if (k === 'excavator') this.tickExcavator(m, dt, net);
         else if (k === 'bwe') this.tickBwe(m, dt, net);
+        else if (k === 'bore') this.tickBore(m, dt, net);
         else if (k === 'absorber') this.tickAbsorber(m, dt, net);
         else if (k === 'scrubber') this.tickScrubber(m, dt, net);
         else if (k === 'geiger') {
@@ -1158,10 +1284,10 @@ export class MachineSystem {
     }
 
     for (const net of nets) {
-      // The pool started this frame as the energy already sitting in capacity
-      // buffers. Only the surplus (generation minus what machines drew) can be
-      // charged into them; a shortfall drains them. Both happen at a finite
-      // per-machine flow rate instead of teleporting the whole pool.
+
+
+
+
       let left = net.pool - net.stored;
       for (const m of net.members) {
         if (!m.def.capacity) continue;
@@ -1309,8 +1435,8 @@ export class MachineSystem {
     const job = st.job;
     if (!job) {
       st.progress = 0;
-      // Crafting benches have no input slots and their status text is computed
-      // from the bag on the UI side, so don't scan every recipe each tick.
+
+
       if (m.def.kind === 'crafting') return;
       const n = this.craftOptions(m).length;
       st.status = n ? `${n} RECIPE${n === 1 ? '' : 'S'} READY` : 'NO MATERIALS';
@@ -1327,6 +1453,7 @@ export class MachineSystem {
     job.t += dt;
     st.progress = Math.min(1, job.t / dur);
     st.status = m.def.kind === 'crafting' ? 'CRAFTING' : 'RUNNING';
+    for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 6));
     if (r.rad) this.emitList.push({ x: m.x, y: m.y + 1, z: m.z, rad: r.rad });
     if (m.def.id === 'decontaminator'
       && Math.hypot(this.ctx.player.pos.x - m.x, this.ctx.player.pos.z - m.z) < 3) {
@@ -1381,8 +1508,8 @@ export class MachineSystem {
     const target = fd.cool || fd.heat;
     const ratio = target > 0 ? cool / target : 1;
 
-    // Perfect cooling is the sweet spot: too little lets heat climb and saps output,
-    // too much drags the core below its design point and quietly costs power.
+
+
     const dev = Math.max(0, Math.abs(ratio - 1) - 0.05);
     const coolFactor = ratio >= 1
       ? Math.max(0.15, 1 - dev * 1.2)
@@ -1448,12 +1575,171 @@ export class MachineSystem {
     if (!this.drawPower(m, cost)) { st.status = 'NO POWER'; return; }
     st.progress += dt * (m.def.drillRate || 0.3);
     st.status = seam ? `DRILLING ${this.ITEMS[seam]?.name || seam}` : 'BARREN GROUND';
-    m.spinNode?.rotateY(dt * (m.def.spinRate || 6));
+    for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 6));
     if (st.progress >= 1) {
       st.progress = 0;
       const n = savanna && seam === 'iron' ? 2 : 1;
       this.addOutput(m, seam || this.rollOre(), n);
     }
+  }
+
+  tickBore(m, dt, net) {
+    const st = m.state;
+    const def = m.def.bore || {};
+    const upg = m.state.slots.upgrade0;
+    const speed = (def.speed || 0.003) * ((upg && this.ITEMS[upg.id]?.boreUpgrade?.speed) || 1);
+    const step = def.step || 0.35;
+    const fuelDef = def.fuel || { carbon: 12, heavy_fuel_oil: 576, gasoline: 18 };
+    const T = this.T;
+    const targetPitch = st.pitch || 0;
+    if (st.pitchCur == null) st.pitchCur = targetPitch;
+    st.pitchCur += (targetPitch - st.pitchCur) * (1 - Math.exp(-dt * 2.5));
+    m.mesh.rotation.order = 'YXZ';
+    m.mesh.rotation.x = 0;
+    m.mesh.rotation.z = -st.pitchCur;
+
+    const fuelValue = (s) => {
+      if (!s) return 0;
+      if (s.id === 'carbon') return (fuelDef.carbon || 12) * (s.n || 0);
+      if (s.id === 'heavy_fuel_oil') return (fuelDef.heavy_fuel_oil || 576) * (s.n || 0);
+      if (s.liquid?.id === 'gasoline') return (fuelDef.gasoline || 18) * (s.liquid.amount || 0);
+      return 0;
+    };
+    const slots = st.slots || {};
+    const hasFuel = () => { if ((st.fuelBuf || 0) > 0.01) return true; for (let i = 0; i < 5; i++) if (fuelValue(slots[`fuel${i}`]) > 0.01) return true; return false; };
+    const pullFuel = () => {
+      for (let i = 0; i < 5; i++) {
+        const k = `fuel${i}`, s = slots[k]; if (!s) continue;
+        if (s.id === 'carbon') { s.n--; if (s.n <= 0) delete slots[k]; st.fuelBuf = (st.fuelBuf || 0) + (fuelDef.carbon || 12); return true; }
+        if (s.id === 'heavy_fuel_oil') { s.n--; if (s.n <= 0) delete slots[k]; st.fuelBuf = (st.fuelBuf || 0) + (fuelDef.heavy_fuel_oil || 576); return true; }
+        if (s.liquid?.id === 'gasoline' && (s.liquid.amount || 0) > 0.001) {
+          const take = Math.min(1, s.liquid.amount);
+          s.liquid.amount -= take; if (s.liquid.amount <= 0.001) delete s.liquid;
+          st.fuelBuf = (st.fuelBuf || 0) + take * (fuelDef.gasoline || 18); return true;
+        }
+      }
+      return false;
+    };
+    const burn = (amt) => {
+      let left = amt;
+      while (left > 0.001) {
+        if ((st.fuelBuf || 0) >= left) { st.fuelBuf -= left; left = 0; break; }
+        left -= (st.fuelBuf || 0); st.fuelBuf = 0;
+        if (!pullFuel()) break;
+      }
+      return amt - left;
+    };
+
+    if (!this.hasOutputRoom(m)) { st.status = 'OUTPUT FULL'; return; }
+    if (!hasFuel()) { st.status = 'NO FUEL'; return; }
+
+    const burnNeed = dt * 0.5;
+    const burned = burn(burnNeed);
+    if (burned <= 0.0001) { st.status = 'NO FUEL'; return; }
+
+    const rot = m.rot || 0;
+    const fx = Math.sin(rot), fz = Math.cos(rot);
+    const advance = speed * dt * (burned / burnNeed);
+    st.boreProg = (st.boreProg || 0) + advance;
+    const boreDeg = Math.round((st.pitchCur || 0) * 180 / Math.PI);
+    st.status = `BORING ${boreDeg > 0 ? '+' : ''}${boreDeg}°`;
+    for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 10));
+
+
+    const pitch = st.pitchCur || 0;
+    const hAdvance = advance * Math.cos(pitch);
+    const dy = advance * Math.sin(pitch);
+    m.x += fx * hAdvance;
+    m.z += fz * hAdvance;
+    m.y += dy;
+    m.mesh.position.x = m.x;
+    m.mesh.position.y += dy;
+    m.mesh.position.z = m.z;
+    m.mesh.rotation.z = -pitch;
+    m.mesh.updateMatrixWorld(true);
+    m.top = m.y + m.def.height * MACHINE_SCALE;
+    if (m.machine) { m.machine.x = m.x; m.machine.y = m.y + (m.def.height * MACHINE_SCALE) / 2; m.machine.z = m.z; }
+    this.cableDirty = true;
+
+
+    for (let i = this.instances.length - 1; i >= 0; i--) {
+      const other = this.instances[i];
+      if (other === m) continue;
+      if (Math.abs(other.x - m.x) < (m.hx + other.hx) && Math.abs(other.z - m.z) < (m.hz + other.hz) && Math.abs(other.y - m.y) < 2) {
+        this.remove(other, false);
+      }
+    }
+
+    st.progress = Math.min(1, st.boreProg / step);
+    const world = this.ctx.world;
+    if (!world || !world.field) return;
+    const mask = m.boreMask?.mask || [[0, 1]];
+    const field = world.field;
+
+
+    m.mesh.updateMatrixWorld(true);
+    const seen = new Set();
+    const removed = [];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    const localStep = step / Math.max(0.001, m.mesh.scale.x);
+    const zA = (m.boreMask?.frontZ ?? -0.5) - localStep;
+    const zB = m.boreMask?.backZ ?? 0.5;
+    const zSteps = Math.max(2, Math.ceil((zB - zA) / 0.4));
+    for (let d = 0; d <= zSteps; d++) {
+      const lz = zA + (zB - zA) * (d / zSteps);
+      for (let i = 0; i < mask.length; i++) {
+        const lx = mask[i][0], ly = mask[i][1];
+        const wp = new T.Vector3(lx, ly, lz).applyMatrix4(m.mesh.matrixWorld);
+        const ix = Math.floor(wp.x), iy = Math.floor(wp.y), iz = Math.floor(wp.z);
+        if (iy < 1) continue;
+        const key = `${ix},${iy},${iz}`;
+        if (seen.has(key)) continue;
+        if (field.get(ix, iy, iz) <= 0) continue;
+        seen.add(key);
+        field.set(ix, iy, iz, 0);
+        removed.push([ix, iy, iz]);
+        if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
+        if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+        if (iz < z0) z0 = iz; if (iz > z1) z1 = iz;
+      }
+    }
+
+    for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) {
+      const box = new T.Box3().setFromObject(node);
+      for (let x = Math.floor(box.min.x); x <= Math.floor(box.max.x); x++) {
+        for (let y = Math.max(1, Math.floor(box.min.y)); y <= Math.floor(box.max.y); y++) {
+          for (let z = Math.floor(box.min.z); z <= Math.floor(box.max.z); z++) {
+            const key = `${x},${y},${z}`;
+            if (seen.has(key)) continue;
+            if (field.get(x, y, z) <= 0) continue;
+            seen.add(key);
+            field.set(x, y, z, 0);
+            removed.push([x, y, z]);
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+            if (z < z0) z0 = z; if (z > z1) z1 = z;
+          }
+        }
+      }
+    }
+    if (removed.length) {
+      world.markEdited(x0, x1, y0, y1, z0, z1);
+      let stepsDone = 0;
+      while (st.boreProg >= step) { st.boreProg -= step; stepsDone++; }
+      if (stepsDone && this.ctx.mineDrops && this.ctx.groundBand) {
+        const events = Math.min(12 * stepsDone, Math.max(1, Math.round(removed.length * 0.12)));
+        for (let i = 0; i < events; i++) {
+          const [x, y, z] = removed[Math.floor(Math.random() * removed.length)];
+          const band = this.ctx.groundBand(x, y, z);
+          for (const [id, n] of this.ctx.mineDrops(band, y, x, z)) {
+            if (n > 0) this.addOutput(m, id, n);
+          }
+        }
+      }
+    } else {
+      while (st.boreProg >= step) st.boreProg -= step;
+    }
+    st.progress = Math.min(1, st.boreProg / step);
   }
 
   hasOutputRoom(m) {
@@ -1476,9 +1762,9 @@ export class MachineSystem {
     this.absorbers.push(m);
   }
 
-  // Endgame air filter: powered scrubbers lower the ambient dose everywhere.
-  // Each unit cuts a share of the ambient rate; the total is capped so the
-  // world never becomes completely free of background radiation.
+
+
+
   tickScrubber(m, dt, net) {
     const st = m.state;
     const filter = m.def.filter;
@@ -1676,15 +1962,15 @@ export class MachineSystem {
     return Math.min(0.95, f);
   }
 
-  // Worn armor's flat radShield becomes an ambient/field reduction fraction:
-  // a full suit is ~50%, plates push it higher, and it never reaches 100%.
+
+
   radProtect() {
     const s = this.totalArmorRadShield();
     return Math.min(0.8, s / (s + 60));
   }
 
-  // Powered absorbers cut a field multiplicatively with distance falloff.
-  // Stacking helps, but ABSORB_FLOOR stops them from deleting the hazard.
+
+
   absorbFactor(x, z) {
     let f = 1;
     for (const a of this.absorbers) {
@@ -1707,6 +1993,7 @@ export class MachineSystem {
           .map((q) => ({ i: (m.def.kind === 'crafting' ? (this.ctx.craftRecipes || []) : (m.def.recipes || [])).indexOf(q.recipe), t: +(q.t || 0).toFixed(2) }))
           .filter((q) => q.i >= 0),
         bwe: m.bwe ? { yaw: +(m.bwe.yawCur ?? m.bwe.yaw).toFixed(3), boom: +(m.bwe.boomCur ?? m.bwe.boom).toFixed(3), wheel: !!m.bwe.wheelOn } : null,
+        bore: m.def.bore ? { fb: +(m.state.fuelBuf || 0).toFixed(3), bp: +(m.state.boreProg || 0).toFixed(3), pitch: +(m.state.pitch || 0).toFixed(3) } : null,
       },
     }));
   }
@@ -1733,6 +2020,14 @@ export class MachineSystem {
         inst.bwe.boomCur = boom;
         inst.bwe.wheelOn = !!e.s.bwe.wheel;
       }
+      if (inst.def.bore && e.s.bore) {
+        inst.state.fuelBuf = +e.s.bore.fb || 0;
+        inst.state.boreProg = +e.s.bore.bp || 0;
+        inst.state.pitch = +e.s.bore.pitch || 0;
+        inst.state.pitchCur = inst.state.pitch;
+        inst.mesh.rotation.order = 'YXZ';
+        inst.mesh.rotation.z = -inst.state.pitch;
+      }
 
       if (inst.def.kind === 'processor' || inst.def.kind === 'crafting') {
         const recipes = inst.def.kind === 'crafting' ? (this.ctx.craftRecipes || []) : (inst.def.recipes || []);
@@ -1751,8 +2046,8 @@ export class MachineSystem {
       if (inst.def.kind === 'processor') {
         for (const key of Object.keys(inst.state.slots)) {
           if (key.startsWith('output')) continue;
-          // The input slots are what the skyline feeds: they belong to the
-          // machine, not to the player's bag.
+
+
           if (key.startsWith('input')) continue;
           const s = inst.state.slots[key];
           if (!s) { delete inst.state.slots[key]; continue; }
@@ -1778,11 +2073,12 @@ export class MachineSystem {
   }
 
   open(inst) {
-    // Manual generators never open a panel: one right-click = one crank turn.
+
     if (inst.def.manual) { this.crank(inst); return; }
-    // Pumps also never open a panel: right-click pumps into the held container.
+
     if (inst.def.kind === 'pump') { this.pump(inst); return; }
     if (inst.def.sleep) { this.ctx.startSleep?.(inst); return; }
+    if (inst.def.drive && !inst._drive) { this.ctx.startDrive?.(inst); return; }
     this.openInst = inst;
     this.ctx.onOpen?.();
     this.ui.open(inst, () => {

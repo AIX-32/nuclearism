@@ -1,3 +1,5 @@
+update map.md after you are down adding soemthign decently Importsnt
+
 # Nuclearism Project Map
 
 ## Project purpose
@@ -26,7 +28,7 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 - `assets/js/terrain-realistic.js` is the optional **Realistic** heightfield (`createRealisticTerrain(seed)`): the Ported Pinwheel Vista mountain graph, a baked droplet-erosion field that recentres on the player, slope/altitude surface masks and map colours. Self-contained, no Unity or graph-editor code; `terrain-realistic.check.mjs` verifies it (`node assets/js/terrain-realistic.check.mjs`).
 - `assets/js/menu.js` is the main menu + world select. It runs before game.js is imported: world list (`idte.worlds.v1`), create/rename/play, the animated panorama backdrop (one of `assets/images/menu/panorama-1.png` … `panorama-3.png` picked at random per launch), the clickable splash line under the title (`SPLASHES`, re-rolled on click), and the main-menu settings view (`#menuSettings`, rendered from the shared `settings.js` schema, stored in `idte.settings.v1`).
 - `assets/js/pipes.js` is the grid-snapped decorative pipe system: `PipeSystem` (place, pick, removeAt, serialize/restore), one 1 m XZ cell per pipe, models `assets/models/pipes/{long,short,corner,tee}.glb`.
-- `assets/js/map.js` is the map system: `MapSystem` (corner minimap + fullscreen map), per-chunk terrain tile cache, fog-of-war `seen` set, bookmarks and death spots, layer toggles, pan/zoom and marker management. Pure helpers (`chunkKey`, `worldToScreen`, `screenToWorld`) are exported; `map.check.mjs` self-checks them. The map is a **flat pixel map**: tiles are 1 texel per metre (`TILE_PX = 16`), drawn nearest-neighbour with chunk edges snapped to whole pixels, terrain is flat biome colour in stepped height bands, and buildings/containers/tanks/machines/markers are pixel blocks.
+- `assets/js/map.js` is the map system: `MapSystem` (corner minimap + fullscreen map), per-chunk terrain tile cache, fog-of-war `seen` set, bookmarks, death spots and nuclear-strike markers, layer toggles, pan/zoom and marker management. Pure helpers (`chunkKey`, `worldToScreen`, `screenToWorld`) are exported; `map.check.mjs` self-checks them. The map is a **flat pixel map**: tiles are 1 texel per metre (`TILE_PX = 16`), drawn nearest-neighbour with chunk edges snapped to whole pixels, terrain is flat biome colour in stepped height bands, and buildings/containers/tanks/machines/markers are pixel blocks.
 - `assets/js/block-layout-editor.js` is the grid editor (`ble.html`) for authoring machine panel layouts.
 - `WORKBENCHES.md` explains items, machines and layout extension points.
 
@@ -400,12 +402,26 @@ Relevant parts:
 - `assets/js/radiation.check.mjs` (`node assets/js/radiation.check.mjs`)
 
 What this does:
-- radiation has a direction: the ambient field is attributed to a fixed **fallout spot** derived from the world seed, and every radiating machine is its own point source, so dose always comes *from* somewhere
+- radiation has a direction: the ambient field is attributed to a fixed **fallout spot** derived from the world seed, and every radiating machine or nuclear-strike crater is its own point source, so dose always comes *from* somewhere
 - shadowing is **not raytracing**: a fixed 24-step march over the first 24 m toward the source (one sample per metre), each solid metre keeping 62% of the radiation
 - the march reads the density field, so terrain **and placed blocks** already shield the player: a wall between you and the source cuts the dose, a wall behind you does nothing. `radFactor()` is the hook future wall materials plug into (return a smaller factor for lead or concrete)
-- machine radiation is shadowed **per emitter**, so a reactor behind a wall — or a floor between you and it — radiates far less than one in the open
+- machine/strike radiation is shadowed **per emitter**, so a reactor or strike crater behind a wall — or a floor between you and it — radiates far less than one in the open
 - the RAD meter shows an arrow pointing at the dominant source with its compass bearing and distance; the arrow hides while nothing radiates
 - the field is cached for 100 ms, so the march costs one sample set per tenth of a second, not one per frame
+
+### 12c-b. Nuclear strikes (rare fallout events)
+
+Relevant parts in game.js / content.js / map.js:
+- `TUNING.NUKE_DAY_INTERVAL` (10), `NUKE_CHANCE` (0.5), `NUKE_RADIUS` (80), `NUKE_GAP` (180), `NUKE_RAD` (500)
+- `nuclearStrikes` / `lastNukeCheckDay`, `maybeNuclearStrike()`, `findNukeSite()`, `spawnNuclearStrike()`, `carveNukeCrater()`
+- `spawnNukeFx()` / `updateNukeFx()` — PSX-style blast/mushroom cloud (low-poly, flat/basic/lambert, fog off, frustum-culled off, 180 s life); camera far is extended while FX is active so the cloud can be seen outside visible chunks
+- `MapSystem.noteStrike()` plus `strikes` layer/markers in `map.js`
+
+What this does:
+- every 10th day there is a 50% chance of a nuclear strike; `lastNukeCheckDay` prevents re-rolls and persists in the save
+- the site is chosen away from player bases: no machine or building piece within `r + NUKE_GAP` (208 m) of the crater center, and candidates are sampled far from the player; if no safe site is found, no strike happens
+- the strike carves a large crater into the density field, saves a persistent strike record, adds a map strike marker, and plays a blast/mushroom-cloud effect
+- each crater is a permanent directional radiation emitter in `radField()` (`NUKE_RAD` × that strike's `radMult`), shadowed by terrain/buildings through `radTransmission()`; every strike multiplies `nukeRadMult` by 1.5 for the next one, so a nearby base needs stronger walls facing later craters
 
 ### 13. Mining, ore bands and hand tools
 Relevant parts:
@@ -510,6 +526,16 @@ What this does:
 - a spinning, powered wheel samples 28 rim points, carves the terrain they touch and rolls `mineDrops()` for the removed voxels (same drops as hand mining), capped at 260 voxels per 0.16 s tick
 - loot lands in the BWE's own 64-slot hold, shown as an 8-column scrollable grid; a full hold shows `OUTPUT FULL` and stops digging
 - no flatten pad: the machine is placed on the surface as-is, so the huge tracks sit on uneven ground
+
+### 13g-c. Tunnel bore (slow self-moving TBM)
+Relevant parts:
+- `MACHINE_DEFS.tunnel_bore` (`kind: 'bore'`, `outputs: 12`, `bore: { speed, step, fuel }`)
+- machines.js `tickBore()` / `boreMaskFromModel()`; layout `layoutFor()` `kind: 'bore'`
+
+What this does:
+- a placeable lower-mid-game boring machine: load fuel (carbon, heavy fuel oil or gasoline) into its 5 fuel slots and it slowly chews forward in the direction it faces, carving a tunnel and moving itself by `step` metres
+- the carve mask is sampled from the loaded model's silhouette at template load, so the tunnel cross section matches the model shape; until `assets/models/workbenches/tunnel_bore.gltf` is added it falls back to the placeholder box shape
+- mined blocks roll `mineDrops()` and land in 12 output slots; a full output, no fuel, or a machine/building in the way stops it
 
 ### 13h. Test bench (portable battery power)
 Relevant parts:
@@ -657,7 +683,7 @@ What this does:
 
 ### 14e. Minimap and fullscreen map
 Relevant parts in game.js / map.js:
-- `MapSystem` (map.js): tile cache, `revealAround()`, `drawMini()`, `drawFull()`, `serialize()` / `restore()`, `addBookmark()`, `noteDeath()`
+- `MapSystem` (map.js): tile cache, `revealAround()`, `drawMini()`, `drawFull()`, `serialize()` / `restore()`, `addBookmark()`, `noteDeath()`, `noteStrike()`
 - wiring in game.js after the save is loaded: `mapSystem = new MapSystem({...})` with terrain/biome samplers, player/clock getters, machine list, industrial sites, save/notice and pointer-lock callbacks
 - keys: **B** drops a bookmark at the player's feet, **M** toggles the fullscreen map (also closes inventory/recipes/workbench)
 - `die()` calls `mapSystem.noteDeath(at.x, at.z)` before respawning
@@ -665,10 +691,10 @@ Relevant parts in game.js / map.js:
 What this does:
 - the corner minimap is north-up, 200 m across, and shows only chunks the player has seen (fog of war); it adds a 64 m reference grid, a flat facing wedge, a small scale bar and edge arrows for the nearest off-map bookmarks/deaths, so distant marks are never lost
 - terrain tiles are 16 m chunks rendered once from `terrainTrend` + `biomeAt` at **1 texel per metre** (`TILE_PX = 16`): flat land colour from `BIOME_DEFS[id].top` (exposed mountain rock overrides it with stone grey) shaded by one of 8 discrete 10 m height bands, so the map reads as stepped pixel contours with no smooth relief. Tile edges are snapped to whole pixels and drawn nearest-neighbour, so the map stays blocky at every zoom. Water tiles are never painted (the world is dry)
-- layers: terrain, industrial sites, machines, death spots and bookmarks; every structure is a flat pixel block (buildings/garages concrete grey, containers rust/blue/olive, tanks steel, reactors orange, generators yellow, scrubbers cyan), machines are 3-4 px squares and markers are pixel X / diamond marks with a 1 px shadow. There is no WATER layer
+- layers: terrain, industrial sites, machines, death spots, bookmarks and nuclear strikes; every structure is a flat pixel block (buildings/garages concrete grey, containers rust/blue/olive, tanks steel, reactors orange, generators yellow, scrubbers cyan), machines are 3-4 px squares and markers are pixel X / diamond / strike marks with a 1 px shadow. There is no WATER layer
 - the fullscreen map adds an adaptive world grid (`gridStep()`), a player→selection dashed line, and hover names for machines/markers — there are no permanent on-map labels and no header readouts
 - fullscreen map: drag to pan, wheel/+/−/arrow keys/Home/F for zoom, pan, recenter and fit-explored, double-click to drop a bookmark at the cursor, PLAYER recenters, ADD HERE creates a bookmark at the map centre, FIT frames all seen chunks, click a marker to select it, rename bookmarks inline, delete selected markers, layer toggles persist per world
-- seen chunks, bookmarks, death spots and layer flags are saved in the world save (`map`); uncovering new ground or editing markers triggers a save
+- seen chunks, bookmarks, death spots, strike markers and layer flags are saved in the world save (`map`); uncovering new ground or editing markers triggers a save
 - map tiles are a base-terrain approximation: player mining/building edits and cave voids are not re-baked into cached tiles (the tile cache is the performance ceiling; invalidate tiles if live edits must show)
 
 ### 14f. Achievements and the NEXT STEP objective
@@ -845,8 +871,8 @@ What this does:
 ### 18. Persistence, death and debug hook
 Relevant parts:
 - `SAVE_KEY` (`idte.save.v1`, or `idte.save.v2.<worldId>` for worlds created in the main menu), `World.save(player)` / `World.load()`
-- stored fields: `seed`, density `edits`, `player`, `inv` (hot/main/sel/dose/armor), `vitals` (hp/hunger/wounds/immunity), `playTime`, `guide`, `achievements`, `day`/`dayT`/`timeLock`, `machines`, `pipes`, `map` (seen chunks + bookmarks + death spots + layers), `torches`
-- `window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, machineSystem, pipeSystem, mapSystem, give, giveStack, Liquid, LIQUIDS, caveAt }` debug handle
+- stored fields: `seed`, density `edits`, `player`, `inv` (hot/main/sel/dose/armor), `vitals` (hp/hunger/wounds/immunity), `playTime`, `guide`, `achievements`, `day`/`dayT`/`timeLock`, `lastNukeCheckDay`, `nukeRadMult`, `nuclearStrikes`, `machines`, `pipes`, `map` (seen chunks + bookmarks + death spots + strike markers + layers), `torches`
+- `window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, nuclearStrikes, spawnNuclearStrike, machineSystem, pipeSystem, mapSystem, give, giveStack, Liquid, LIQUIDS, caveAt }` debug handle
 
 What this does:
 - serialises terrain edits, inventory, clock (including `/time allday` lock), machines, pipes and torches to IndexedDB and restores them (old saves without `inv` start empty)
@@ -867,6 +893,7 @@ What this does:
 - `/time` reports the day + clock; `/time set <day> [t]` (or `/time <day>`) changes them (and releases any lock)
 - `/time allday` toggles a freeze at noon (`clock.t = DAY_SECONDS * (DAY_FRACTION / 2)`); `/time night` jumps to mid-night (`clock.t = DAY_SECONDS * (DAY_FRACTION + (1 - DAY_FRACTION) / 2)`) and releases any lock. The frame loop holds `clock.t` and stops advancing the day while locked
 - `/sm` spawns the hunger-smile billboard in front of the player (night only); it stays until day or until a jumpscare, and night hunger < 50 can also trigger it automatically with `PARANOIA`
+- `/nuke` (alias `/strike`) triggers a nuclear strike at a safe site, using the normal strike/carve/FX path
 - ArrowUp/Down walk command history; the dropdown shows the closest item or `/tp` destination names while typing, click or Tab to complete (an empty `/tp ` lists every destination)
 
 ### 18c. Settings (main menu + pause overlay)
@@ -894,7 +921,8 @@ What this does:
 - `BuildingSystem` / `shadowCells()` / `snapPlan()` / `meshKey()` (building.js): wall panels, their per-slice attenuation, the DDA shadow march, the piece-to-piece snapping and the mesh a piece is drawn in; `pick()` / `kindFootprint()` / `pieceFootprint()` / `groundBase()` (building.js) place a piece against the anchor and report the hit face, and `collidesBody()` / `overlapsBody()` / `boxHitsBody()` do the continuous cylinder-vs-box collision; `baseAt()` / `anySupport()` / `edgeSupport()` (pieces/placement.js) decide what a piece may stand on; `BUILD_TIERS` / `BUILD_UPGRADES` (build-tiers.js, re-exported by content.js) hold the four shielding tiers
 - `KINDS` / `pieces/*.js` (pieces/registry.js): the five piece kinds (wall, floor, roof, door, triangle) — geometry, support rules, items and recipes, one module each
 - `doorHit()` / `toggleDoor()` / `updateDoorSwings()` / `swingFrame()` (game.js + pieces/door.js): opening and shutting a door, and the swing animation
-- `radField()` / `radTransmission()` / `radFactor()`: directional field rate, the source the HUD arrow points at, and the per-voxel transmission hook
+- `radField()` / `radTransmission()` / `radFactor()`: directional field rate, dominant source (ambient, machines, strike craters), and the per-voxel transmission hook
+- `maybeNuclearStrike()` / `spawnNuclearStrike()` / `spawnNukeFx()` / `updateNukeFx()`: 10-day 50% strike roll, safe-site carve, persistent directional crater radiation, PSX blast/mushroom-cloud FX
 - `BARE_HANDS` / `mineOreDrop()` / `hasGardeningGloves()`: mining and gating
 - `torches` / `torchLights` / `refreshTorchLights()` / `addTorch()` / `tryTorchPlace()`: placeable lights (torch, lantern, floodlight), drawn by a shared point-light pool
 - `TOOL_MODELS` / `updateViewmodel()` / `triggerSwing()`: held tool viewmodel and swing animation
@@ -936,7 +964,7 @@ What this does:
 - `idte.settings.v1` / `SETTING_DEFS` / `renderSettings()` / `onSettingsChange()`: the shared settings schema, store and UI (render distance, resolution, color depth, FOV, VSYNC, INFO HUD, sensitivity, invert Y, volume, music, replay)
 - `intro` / `maybeShowIntro()` / `openIntro()` / `closeIntro()`: one-time field-manual modal on the first survival load (points at the NEXT STEP card; reopenable from the pause overlay via `manualBtn`); seen state lives in `idte.intro.v1.<worldId>`
 - `World.save()` / `World.load()`: persistence (including `map`)
-- `MapSystem` / `revealAround()` / `addBookmark()` / `noteDeath()` / `drawMini()` / `drawFull()`: minimap and fullscreen map (B = bookmark, M = map)
+- `MapSystem` / `revealAround()` / `addBookmark()` / `noteDeath()` / `noteStrike()` / `drawMini()` / `drawFull()`: minimap and fullscreen map (B = bookmark, M = map)
 - `map.check.mjs`: pure coordinate/chunk-key assertions (`node assets/js/map.check.mjs`)
 
 ### Terrain / climate
@@ -1007,7 +1035,7 @@ For the survival/gameplay layer:
 This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:
 
 1. **Engine** — procedural world generation, deterministic cave systems (surface sinkholes → tunnels → caverns), chunk streaming, terrain density, water sim and rendering (game.js), plus the main menu/world select (menu.js) and pipes (pipes.js).
-2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, a NEXT STEP objective guide, lifetime achievements, and IndexedDB persistence. On top of that sits **base building**: Rust-like placeable pieces (walls, floors, gable roofs, openable doors and triangular wedges) in four material tiers, each piece its own module behind a small kind contract, built cheaply and upgraded in place with a hammer, and every piece shades the radiation that comes from its direction (wood 14%, brick 29%, concrete 50%, shielded concrete 99% of one panel). The pieces snap to **each other**, not to the world grid: the piece you aim at is the anchor and the new one is laid flush against it on the anchor's own lattice — a wall sits exactly against the edge of a deck, a deck butts up to a deck, and a roof laid over a wall's top edge hangs out in the direction you are looking. The whole UI shares one black-alpha, borderless skin.
+2. **Survival layer** — data-driven items/machines/recipes (content.js), a day clock with escalating ambient radiation (dose in real rad units, metered against the human lethal dose) that arrives from a fixed fallout spot and is shadowed by walls, and dose stages, health/hunger/wound vitals, mining and ore bands, steel hand tools and model-backed held items, tree chopping, deterministic industrial sites and instanced vegetation, C4 demolition, surface-mapped footstep audio, a pocket crafting table, timed machine crafting with an ACTIVE/OUTPUTS/PROCESS/QUEUE card, drag-and-drop item management on every slot, consumables (rad-intake drugs), armor with shielding plates, power-networked machines with local buffers, reactors whose five cooling-rod slots must be matched to the fuel (over-cooling costs power), a **blueprint-gated research tier** leading to a fusion reactor and an atmospheric scrubber, rare nuclear strikes that carve persistent directional radioactive craters far from workbenches (with a PSX blast/mushroom cloud and map marker), a NEXT STEP objective guide, lifetime achievements, and IndexedDB persistence. On top of that sits **base building**: Rust-like placeable pieces (walls, floors, gable roofs, openable doors and triangular wedges) in four material tiers, each piece its own module behind a small kind contract, built cheaply and upgraded in place with a hammer, and every piece shades the radiation that comes from its direction (wood 14%, brick 29%, concrete 50%, shielded concrete 99% of one panel). The pieces snap to **each other**, not to the world grid: the piece you aim at is the anchor and the new one is laid flush against it on the anchor's own lattice — a wall sits exactly against the edge of a deck, a deck butts up to a deck, and a roof laid over a wall's top edge hangs out in the direction you are looking. The whole UI shares one black-alpha, borderless skin.
 
 Most important files:
 - [index.html](index.html)
@@ -1024,7 +1052,7 @@ Most important files:
 - [assets/js/pipes.js](assets/js/pipes.js) — decorative pipe grid
 - [assets/js/skyline.js](assets/js/skyline.js) — zipline logistics: pylons, wires and the cargo pods that move items between workbenches
 - [assets/js/settings.js](assets/js/settings.js) — shared settings schema, store and UI
-- [assets/js/map.js](assets/js/map.js) — minimap, fullscreen map, bookmarks and death spots
+- [assets/js/map.js](assets/js/map.js) — minimap, fullscreen map, bookmarks, death spots and strike markers
 - [assets/js/workbench-ui.js](assets/js/workbench-ui.js) — machine panel renderer
 - [WORKBENCHES.md](WORKBENCHES.md) — extension guide for content and layouts
 

@@ -1,23 +1,23 @@
-// Vista-style "Realistic" terrain.
-//
-// Height field follows Pinwheel Studio Vista's Mountain biome graph exactly:
-//   Noise(scale 750, 8 layers, lac 2.26, pers 0.382, seed 321, Perlin01, flip)
-//   * Noise(scale 1000, 1 layer, lac 2.25, pers 0.335, seed 629, Perlin01, flip)
-//   -> Levels(0 / 0.5 / 1 -> 0.05 / 1) -> hydraulic erosion -> height output.
-// The Perlin hash, layered composition and Levels remap are ports of Vista's
-// PatternGenerator.hlsl, Noise.shader and Levels.shader.
-//
-// Vista's erosion is a 200-iteration shallow-water simulation over a whole
-// map, which cannot run per chunk in a browser. Instead a droplet-erosion
-// field is baked once around the player: ~25k droplets run downhill over a
-// 800 m grid and carve dendritic gullies into the base height. Same branching
-// drainage look at a fraction of the cost. The editable world only reaches
-// 96 m, so the field follows the player and fades out beyond its edge.
-//
-// The graph output is 0..1 and Vista scales it by the biome height (500 m).
-// Here it is expanded with a curve that keeps most of the map as gentle
-// meadow, as in Vista's Mountain biome, and turns the rare high values into
-// steep massifs.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -27,8 +27,8 @@ function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 
-// --- Vista Perlin (2D), exact hash from PatternGenerator.hlsl ---------------
-// `_gx`/`_gy` avoid allocating a vector per lattice corner.
+
+
 let _gx = 0, _gy = 0;
 
 function gradDir(ix, iy, seed) {
@@ -65,9 +65,9 @@ function perlin(px, py, seed) {
   return a + (b - a) * uy;
 }
 
-// --- Vista layered noise ---------------------------------------------------
-// NoiseA in the Mountain graph remaps every layer (and the total) with the
-// curve 0.1 -> 0, 1 -> 1. NoiseB's curve is the identity.
+
+
+
 const NOISE_A = { scale: 750, lac: 2.26, pers: 0.382, layers: 8, seed: 321, remap: true };
 const NOISE_B = { scale: 1000, lac: 2.25, pers: 0.335, layers: 1, seed: 629, remap: false };
 
@@ -81,7 +81,7 @@ function layered(x, z, o) {
   let sign = 1;
   let sum = 0;
   for (let i = 1; i <= o.layers; i++) {
-    // PERLIN_01 = 1 - (perlin * 0.5 + 0.5)
+
     let n = 0.5 - perlin(x / scale, z / scale, o.seed) * 0.5;
     if (o.remap) n = remapA(n);
     sum += sign * n * amp;
@@ -94,23 +94,23 @@ function layered(x, z, o) {
     : Math.sign(sum) * clamp01(Math.abs(sum));
 }
 
-// Levels.shader applyLevels(): two linear segments around the middle key,
-// then saturate and map to the output range.
+
+
 function levels(v, inLow, inMid, inHigh, outLow, outHigh) {
   if (v <= inMid) v = (v - inLow) / ((2 * inMid - inLow) - inLow);
   else v = (v - (2 * inMid - inHigh)) / (inHigh - (2 * inMid - inHigh));
   return outLow + (outHigh - outLow) * clamp01(v);
 }
 
-// --- Erosion field ---------------------------------------------------------
+
 const SEA = 20;
-const FIELD_R = 512;       // metres from the field centre
-const CELL = 3;            // metres per grid cell
+const FIELD_R = 512;
+const CELL = 3;
 const GRID = Math.floor((FIELD_R * 2) / CELL) + 1;
 
 export function createRealisticTerrain(seed = 0) {
-  // The game already offsets samples by WORLD_SEED; this adds a second,
-  // incommensurate offset so neighbouring seeds do not share the same field.
+
+
   const ox = (seed % 9973) * 0.731 + 113.7;
   const oz = (seed % 9967) * 0.577 + 71.3;
 
@@ -125,16 +125,16 @@ export function createRealisticTerrain(seed = 0) {
   function baseHeight(sx, sz) {
     const t = clamp01((graph01(sx, sz) - 0.09) / 0.42);
     const relief = 12 * smoothstep(0, 0.4, t) + 155 * Math.pow(t, 3);
-    // Fine breakup for the meadow floor. Vista gets this from its second
-    // (feature size 2 m) erosion pass; two extra Perlin octaves cost far less.
+
+
     const x = sx + ox, z = sz + oz;
     const fine = perlin(x / 130, z / 130, 4721) * 0.7 + perlin(x / 45, z / 45, 5501) * 0.3;
     return SEA + 6 + relief + fine * (2.6 + 2.2 * t);
   }
 
-  let field = null; // { cx, cz, delta }
+  let field = null;
 
-  // Deterministic PRNG so the same seed always carves the same valleys.
+
   function rngAt(cx, cz) {
     let s = (Math.imul(cx | 0, 374761393) ^ Math.imul(cz | 0, 668265263) ^ Math.imul(seed | 0, 1274126177)) >>> 0;
     return () => {
@@ -218,14 +218,14 @@ export function createRealisticTerrain(seed = 0) {
       }
     }
 
-    // Store the change only: negative = carved, positive = deposited.
+
     const delta = new Float32Array(n);
     for (let i = 0; i < n; i++) delta[i] = h[i] - orig[i];
     field = { cx, cz, delta };
   }
 
-  // Bilinear sample of the erosion delta, faded out toward the field edge so
-  // the infinite world beyond it is unaffected.
+
+
   function erosionAt(sx, sz) {
     const fx = (sx - (field.cx - FIELD_R)) / CELL;
     const fz = (sz - (field.cz - FIELD_R)) / CELL;
@@ -245,8 +245,8 @@ export function createRealisticTerrain(seed = 0) {
     return field ? b + erosionAt(sx, sz) : b;
   }
 
-  // Rebuild the erosion field only when the player leaves its comfortable
-  // centre. Cheap to call every frame.
+
+
   function recenter(x, z) {
     if (field && Math.hypot(x - field.cx, z - field.cz) < FIELD_R * 0.7) return;
     buildField(x, z);
@@ -259,8 +259,8 @@ export function createRealisticTerrain(seed = 0) {
     return Math.atan(Math.hypot(hx, hz)) * 57.29578;
   }
 
-  // Surface masks, Vista-style: slope exposes rock, altitude and flatness
-  // keep snow. `surf` is the game biome's surface class.
+
+
   function surface(sx, sz, y, surf) {
     const slope = slopeDeg(sx, sz);
     const rock = smoothstep(24, 40, slope);

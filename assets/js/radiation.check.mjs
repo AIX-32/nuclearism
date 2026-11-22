@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { RAD_OCCL, sourcePoint, transmission, relativeBearing, compass } from './radiation.js';
 
-// The fallout spot is stable for a seed and moves with a new one.
+
 const a = sourcePoint(1234);
 const b = sourcePoint(1234);
 assert.deepEqual(a, b, 'source point is deterministic');
@@ -10,31 +10,31 @@ assert.ok(Math.abs(Math.hypot(a.x, a.z) - 240) < 1e-9, 'source sits at the tuned
 const c = sourcePoint(9999);
 assert.ok(a.x !== c.x || a.z !== c.z, 'a different seed moves the source');
 
-// Open air transmits everything.
+
 const open = () => 1;
 assert.equal(transmission(open, 0, 0, 0, 1, 0, 0), 1, 'open air transmits fully');
 
-// A solid wall between the player and the source absorbs radiation.
+
 const wall = (x) => (x > 4 && x < 12 ? RAD_OCCL.solid : 1);
 const t = transmission(wall, 0, 0, 0, 1, 0, 0);
 assert.ok(t < 1 && t > 0, 'a wall reduces transmission without blocking it entirely');
 assert.equal(transmission(open, 0, 0, 0, 1, 0, 0, { samples: 4, range: 10, solid: 0.5 }), 1);
 
-// A wall behind the player does not help.
+
 const behind = transmission((x) => (x < -4 && x > -12 ? RAD_OCCL.solid : 1), 0, 0, 0, 1, 0, 0);
 assert.equal(behind, 1, 'only the direction of the source is shadowed');
 
-// Fully buried is heavily shielded but never exactly zero.
+
 const buried = transmission(() => RAD_OCCL.solid, 0, 0, 0, 1, 0, 0);
 assert.ok(buried > 0 && buried < 0.2, 'solid rock shields most of the field');
 
-// Screen-relative bearing: ahead is 0, right is +90, behind is 180.
+
 const near = (x, y) => Math.abs(x - y) < 1e-6;
 assert.ok(near(relativeBearing(0, -1, 0), 0), 'source straight ahead reads 0');
 assert.ok(near(relativeBearing(1, 0, 0), 90), 'source to the east reads +90');
 assert.ok(near(relativeBearing(0, 1, 0), 180), 'source behind reads 180');
 
-// Compass labels follow north = -Z.
+
 assert.equal(compass(0, -1), 'N');
 assert.equal(compass(1, 0), 'E');
 assert.equal(compass(0, 1), 'S');

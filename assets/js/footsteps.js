@@ -82,7 +82,7 @@ export function createFootsteps(base = 'assets/audio/footsteps') {
   })();
 
   return {
-    step(category, volume = 0.5) {
+    step(category, volume = 0.5, rate = null, pan = null, muffle = 0) {
       const c = audio();
       if (!c) return;
       const pool = (pools[category] && pools[category].length ? pools[category] : pools.dirt) || [];
@@ -94,19 +94,28 @@ export function createFootsteps(base = 'assets/audio/footsteps') {
 
       const src = c.createBufferSource();
       src.buffer = buf;
-      src.playbackRate.value = 0.94 + Math.random() * 0.12;
+      src.playbackRate.value = rate != null ? rate : (0.94 + Math.random() * 0.12);
 
       const g = c.createGain();
       g.gain.value = volume * (0.9 + Math.random() * 0.2);
 
+      let tail = g;
       src.connect(g);
+      if (muffle > 0) {
+        const lp = c.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = muffle;
+        lp.Q.value = 0.7;
+        g.connect(lp);
+        tail = lp;
+      }
       if (c.createStereoPanner) {
         const p = c.createStereoPanner();
-        p.pan.value = 0.1 * side;
-        side = -side;
-        g.connect(p).connect(c.destination);
+        if (pan != null) p.pan.value = Math.max(-1, Math.min(1, pan));
+        else { p.pan.value = 0.1 * side; side = -side; }
+        tail.connect(p).connect(c.destination);
       } else {
-        g.connect(c.destination);
+        tail.connect(c.destination);
       }
       src.start();
     },

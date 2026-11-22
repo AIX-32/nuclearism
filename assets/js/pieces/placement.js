@@ -1,5 +1,5 @@
-// Shared placement maths. Cell occupancy alone is not support: a thin panel
-// may be on the other side of the cell, and a short slab may not reach its top.
+
+
 const EPS = 1e-9;
 const KEY = (x, y, z) => `${x},${y},${z}`;
 
@@ -10,7 +10,7 @@ function cellList(sys, key) {
   return Array.isArray(e) ? e : [e];
 }
 
-// The highest cell base under the columns a shape really occupies.
+
 export function baseAt(sys, cells) {
   let top = null;
   const seen = new Set();
@@ -38,7 +38,7 @@ function held(sys, x, y, z, box) {
   return false;
 }
 
-// Any bottom cell with real face contact can hold a vertical or partial piece.
+
 export function anySupport(sys, cells, y) {
   return cells.some(([key, box]) => {
     const [x, cy, z] = xyz(key);
@@ -46,7 +46,7 @@ export function anySupport(sys, cells, y) {
   });
 }
 
-// A full straight edge, rather than one arbitrary block, holds a 3 x 3 slab.
+
 export function edgeSupport(sys, cells, y) {
   const at = new Map();
   const xs = new Set(), zs = new Set();
@@ -64,7 +64,7 @@ export function edgeSupport(sys, cells, y) {
   for (const z of zs) if ([...xs].every((x) => row(x, z))) return true;
   for (const x of xs) if ([...zs].every((z) => row(x, z))) return true;
 
-  // A floor/roof placed beside another at the same level counts as edge support.
+
   const hasFloor = (x, z) => cellList(sys, KEY(x, y, z)).some((c) => c.piece && ['floor', 'roof', 'triangle'].includes(c.piece.kind));
   const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
   if ([...xs].every((x) => hasFloor(x, minZ - 1))) return true;

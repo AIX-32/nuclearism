@@ -7,10 +7,10 @@ import { KIND as TRIANGLE, ITEMS as TRIANGLE_ITEMS, RECIPES as TRIANGLE_RECIPES 
 
 export { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES };
 
-// `rad` on items/machines is a dose rate in rad/s while carried or running.
+
 const I = (code, name, extra = {}) => ({ code, name, stack: 99, rad: 0, ...extra });
 const ORE = (mat, code, extra = {}) => I(code, mat.toUpperCase() + ' ORE', { block: true, ...extra });
-// Every sheet/plate shares one texture; the material shows through the tint.
+
 const SHEET_ICON = 'assets/images/items/sheet.png';
 const MAT_TINT = {
   uranium: 0x5fcf76, thorium: 0x7dbd9a, lead: 0x9aa2b0, copper: 0xd66d3f,
@@ -24,7 +24,7 @@ const PLATE = (mat, code) => I(code, mat.toUpperCase() + ' PLATE', { block: fals
 
 const CIRCUIT_MODEL = 'assets/models/items/circuit_board.glb';
 
-// A reactor core has this many interchangeable cooling-rod slots.
+
 export const REACTOR_ROD_SLOTS = 5;
 
 
@@ -46,14 +46,14 @@ export const LIQUID_DEFS = {
 
 
 
-// Building tiers: `transmission` is the fraction of radiation that survives
-// ONE METRE of the material. Wood barely helps, shielded concrete almost stops
-// the field (but never all of it). The tier data lives in build-tiers.js so
-// the piece modules can use it without a circular import.
 
-// The only items that can be placed into the voxel terrain (the density
-// field). Everything else with `block: true` — gravel, glass, carbon, ore,
-// ingots — is a crafting material only.
+
+
+
+
+
+
+
 export const TERRAIN_BLOCKS = ['dirt', 'stone', 'sand'];
 
 export const ITEM_DEFS = {
@@ -63,6 +63,7 @@ export const ITEM_DEFS = {
   ...DOOR_ITEMS,
   ...TRIANGLE_ITEMS,
   stone: { code: 'ST', name: 'STONE', stack: 99, rad: 0, block: true, icon: 'assets/images/items/stone.png' },
+  basalt: { code: 'BA', name: 'BASALT', stack: 99, rad: 0, block: true },
   dirt: { code: 'DI', name: 'DIRT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/dirt.png' },
   carbon: { code: 'C+', name: 'CARBON', stack: 99, rad: 0, block: true, icon: 'assets/images/items/carbon.png' },
   flower: { code: 'FL', name: 'FLOWER', stack: 99, rad: 0, block: false, icon: 'assets/images/vegetation/tall_flower.png' },
@@ -75,10 +76,10 @@ export const ITEM_DEFS = {
   flour: { code: 'WH', name: 'FLOUR', stack: 99, rad: 0, block: false, icon: 'assets/images/items/flour.png' },  wood: { code: 'WD', name: 'WOOD', stack: 99, rad: 0, block: false, icon: 'assets/images/items/wood.png' },
   sand: { code: 'SD', name: 'SAND', stack: 99, rad: 0, block: true, icon: 'assets/images/items/sand.png', desc: 'Fine silica grit for glass and concrete work.' },
   gravel: { code: 'GV', name: 'GRAVEL', stack: 99, rad: 0, block: true, icon: 'assets/images/items/gravel.png', desc: 'Crushed rock used for fill, paths and cement mixes.' },
-  glass: { code: 'GL', name: 'GLASS', stack: 99, rad: 0, block: true, desc: 'Melted silica, made by heating the clean mineral feedstock.' },
+  glass: { code: 'GL', name: 'GLASS', stack: 99, rad: 0, block: true, icon: 'assets/images/items/glass.png', desc: 'Melted silica, made by heating the clean mineral feedstock.' },
   silica: { code: 'SX', name: 'SILICA', stack: 99, rad: 0, block: false, desc: 'Pure silica powder from crushed stone.' },
 
-  // Greenhouse crops
+
   wheat: { code: 'WT', name: 'WHEAT', stack: 99, rad: 0, block: false, icon: 'assets/images/items/wheat.png', consumable: { food: 6 }, desc: 'A bundle of golden grain.' },
   potato: { code: 'PT', name: 'POTATO', stack: 99, rad: 0, block: false, icon: 'assets/images/items/potato.png', consumable: { food: 10 }, desc: 'A starchy tuber.' },
   carrot: { code: 'CT', name: 'CARROT', stack: 99, rad: 0, block: false, icon: 'assets/images/items/carrot.png', consumable: { food: 8 }, desc: 'A sweet root vegetable.' },
@@ -87,7 +88,7 @@ export const ITEM_DEFS = {
   cabbage: { code: 'CB', name: 'CABBAGE', stack: 99, rad: 0, block: false, icon: 'assets/images/items/cabbage.png', consumable: { food: 8 }, desc: 'A leafy green head.' },
   onion: { code: 'ON', name: 'ONION', stack: 99, rad: 0, block: false, icon: 'assets/images/items/onion.png', consumable: { food: 5 }, desc: 'A pungent bulb.' },
 
-  // Seeds (found by mining dirt with gardening gloves, grown in the greenhouse)
+
   herb_seed: { code: 'hs', name: 'HERB SEEDS', stack: 99, rad: 0, block: false, seed: 'herb', icon: 'assets/images/items/seed.png', tint: 0x6dbb4a, desc: 'Plant in a greenhouse to grow herbs.' },
   flower_seed: { code: 'fs', name: 'FLOWER SEEDS', stack: 99, rad: 0, block: false, seed: 'flower', icon: 'assets/images/items/seed.png', tint: 0xe87ab8, desc: 'Plant in a greenhouse to grow flowers.' },
   wheat_seed: { code: 'ws', name: 'WHEAT SEEDS', stack: 99, rad: 0, block: false, seed: 'wheat', icon: 'assets/images/items/seed.png', tint: 0xe0c45a, desc: 'Plant in a greenhouse to grow wheat.' },
@@ -165,7 +166,8 @@ export const ITEM_DEFS = {
   graphite: I('GR', 'GRAPHITE', { block: false, icon: 'assets/images/items/graphite.png' }),
   carbon_mesh: I('CM', 'CARBON MESH', { block: false, icon: 'assets/images/items/carbon_mesh.png' }),
   copper_solenoid: I('CS', 'COPPER SOLENOID', { block: false, icon: 'assets/images/items/copper_solenoid.png' }),
-  electric_motor: I('EM', 'ELECTRIC MOTOR', { block: false }),
+  electric_motor: I('EM', 'ELECTRIC MOTOR', { block: false, icon: 'assets/images/items/electric_motor.png' }),
+  v6_engine: I('V6', 'V6 ENGINE', { block: false, icon: 'assets/images/items/v6_engine.png', boreUpgrade: { speed: 5 }, desc: 'A heavy engine module. Slot into a tunnel bore for 5x speed.' }),
   linear_actuator: I('LA', 'LINEAR ACTUATOR', { block: false, icon: 'assets/images/items/linear_actuator.png' }),
 
   circuit_basic: I('c1', 'BASIC CIRCUIT', { block: false, model: CIRCUIT_MODEL, tint: 0x58d06a }),
@@ -189,12 +191,13 @@ export const ITEM_DEFS = {
   drill_bit: I('DB', 'DRILL BIT', { block: false }),
 
 
-  // Research tier: late recipes are gated behind blueprints studied in the lab.
-  blueprint_reactor: I('BR', 'REACTOR BLUEPRINT', { block: false, stack: 8, desc: 'A fission core design. Requires a sample of enriched uranium to copy.' }),
-  blueprint_fusion: I('BF', 'FUSION BLUEPRINT', { block: false, stack: 8, desc: 'A magnetic-confinement design. The sample has to come from spent reactor fuel.' }),
-  blueprint_scrubber: I('SB', 'SCRUBBER BLUEPRINT', { block: false, stack: 8, desc: 'A high-volume atmospheric filter design for cleaning up the wasteland.' }),
-  blueprint_containment: I('KB', 'CONTAINMENT BLUEPRINT', { block: false, stack: 8, desc: 'A sealed suit pattern rated for the inside of a hot cell.' }),
-  blueprint_excavator: I('XB', 'BWE BLUEPRINT', { block: false, stack: 8, desc: 'A continuous bucket-wheel mining plan. The frame alone needs a small foundry.' }),
+
+  blueprint_reactor: I('BR', 'REACTOR BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A fission core design. Requires a sample of enriched uranium to copy.' }),
+  blueprint_fusion: I('BF', 'FUSION BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A magnetic-confinement design. The sample has to come from spent reactor fuel.' }),
+  blueprint_scrubber: I('SB', 'SCRUBBER BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A high-volume atmospheric filter design for cleaning up the wasteland.' }),
+  blueprint_containment: I('KB', 'CONTAINMENT BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A sealed suit pattern rated for the inside of a hot cell.' }),
+  blueprint_excavator: I('XB', 'BWE BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A continuous bucket-wheel mining plan. The frame alone needs a small foundry.' }),
+  blueprint_rammer: I('RM', 'RAMMER BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A heavy four-leg walker chassis. The gait controller alone fills a data drive.' }),
   filter_cartridge: I('FT', 'SCRUBBER FILTER', { block: false, stack: 16, desc: 'A pleated carbon-and-lead cartridge. Consumed by the atmospheric scrubber.' }),
 
 
@@ -334,34 +337,35 @@ export const ITEM_DEFS = {
   jerry_can_red: I('JC#', 'FUEL JERRY CAN', { block: false, stack: 1, container: { capacity: 50, tier: 4 }, icon: 'assets/images/items/jerry_can_red.png' }),
   jerry_can_white: I('JCH', 'HAZMAT JERRY CAN', { block: false, stack: 1, container: { capacity: 75, tier: 5, acidProof: true }, icon: 'assets/images/items/jerry_can_white.png' }),
 
-  fuel_carton: I('GA', 'GASOLINE CARTON', { block: false, stack: 1, container: { capacity: 5, tier: 0, filter: ['gasoline'] } }),
+  fuel_carton: I('GA', 'GASOLINE CARTON', { block: false, stack: 1, model: 'assets/models/items/zipline_box.gltf', container: { capacity: 5, tier: 0, filter: ['gasoline'] } }),
+  heavy_fuel_oil: I('FO', 'HEAVY FUEL OIL', { block: false, stack: 16, icon: 'assets/images/items/heavy_fuel_oil.png', desc: 'Thick refined fuel. Burns hot and long in heavy engines.' }),
 
   radaway_iv: I('IV', 'RADAWAY IV', { block: false, stack: 99, icon: 'assets/images/liquids/radaway.png' }),
 
 
-  pipe: I('PI', 'PIPE', { block: false, stack: 64, pipeGrid: true }),
-  hammer: { code: 'HM', name: 'HAMMER', stack: 1, rad: 0, icon: 'assets/images/items/hammer.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], build: true }, desc: 'Upgrades a wall to the next tier and pulls it back down again.' },
+  pipe: I('PI', 'PIPE', { block: false, stack: 64, pipeGrid: true, model: 'assets/models/pipes/long.glb' }),
+  hammer: { code: 'HM', name: 'HAMMER', stack: 1, rad: 0, icon: 'assets/images/items/hammer.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], build: true, damage: 20 }, desc: 'Upgrades a wall to the next tier and pulls it back down again.' },
   fuel_generator: I('GG', 'GAS GENERATOR', { block: false, stack: 4, workbench: 'fuel_generator', desc: 'Burns gasoline or ethanol to make power. Fill it from a jerry can.' }),
 
 
 
 
-  pick: { code: 'PK', name: 'PICKAXE', stack: 1, rad: 0, tool: { radius: 1.6, rate: 0.4, yield: 1.25, stone: 3, weak: 0.12, good: ['stone', 'dirt', 'grass'], chop: { reach: 3.6, power: 0.45, hits: 6 } }, icon: 'assets/images/items/pickaxe.png' },
-  drill: { code: 'DR', name: 'DRILL', stack: 1, rad: 0.5, tool: { radius: 2.6, rate: 0.14, yield: 2, good: ['stone', 'dirt', 'grass'] } },
-  shovel: { code: 'SH', name: 'SHOVEL', stack: 1, rad: 0, tool: { radius: 1.8, rate: 0.26, yield: 1, good: ['dirt', 'grass'] } },
+  pick: { code: 'PK', name: 'PICKAXE', stack: 1, rad: 0, tool: { radius: 1.6, rate: 0.4, yield: 1.25, stone: 3, weak: 0.12, good: ['stone', 'basalt', 'dirt', 'grass'], chop: { reach: 3.6, power: 0.45, hits: 6 }, damage: 35 }, icon: 'assets/images/items/pickaxe.png' },
+  drill: { code: 'DR', name: 'DRILL', stack: 1, rad: 0.5, tool: { radius: 2.6, rate: 0.14, yield: 2, good: ['stone', 'basalt', 'dirt', 'grass'], damage: 18 } },
+  shovel: { code: 'SH', name: 'SHOVEL', stack: 1, rad: 0, tool: { radius: 1.8, rate: 0.26, yield: 1, good: ['dirt', 'grass'], damage: 22 } },
 
-  axe: { code: 'AX', name: 'STEEL AXE', stack: 1, rad: 0, tool: { radius: 1.5, rate: 0.42, yield: 1, weak: 0.1, good: [], chop: { reach: 5.0, power: 1, hits: 3 } }, icon: 'assets/images/items/axe.png' },
+  axe: { code: 'AX', name: 'STEEL AXE', stack: 1, rad: 0, tool: { radius: 1.5, rate: 0.42, yield: 1, weak: 0.1, good: [], chop: { reach: 5.0, power: 1, hits: 3 }, damage: 45 }, icon: 'assets/images/items/axe.png' },
 
-  hatchet: { code: 'HX', name: 'STEEL HATCHET', stack: 1, rad: 0, tool: { radius: 1.2, rate: 0.32, yield: 1, weak: 0.1, good: [] } },
-  hoe: { code: 'HO', name: 'STEEL HOE', stack: 1, rad: 0, tool: { radius: 1.4, rate: 0.3, yield: 1, weak: 0.15, good: ['dirt', 'grass'] } },
-  plasma_drill: { code: 'PD', name: 'PLASMA DRILL', stack: 1, rad: 0.2, tool: { radius: 3.2, rate: 0.09, yield: 2.5, stone: 2, weak: 0.2, good: ['stone', 'dirt', 'grass'], chop: { reach: 5, power: 0.8 } }, desc: 'A containment-blueprint mining head. Cuts a much wider bite than a hand drill.' },
+  hatchet: { code: 'HX', name: 'STEEL HATCHET', stack: 1, rad: 0, tool: { radius: 1.2, rate: 0.32, yield: 1, weak: 0.1, good: [], chop: { reach: 4.2, power: 0.8, hits: 4 }, damage: 30 } },
+  hoe: { code: 'HO', name: 'STEEL HOE', stack: 1, rad: 0, tool: { radius: 1.4, rate: 0.3, yield: 1, weak: 0.15, good: ['dirt', 'grass'], damage: 18 } },
+  plasma_drill: { code: 'PD', name: 'PLASMA DRILL', stack: 1, rad: 0.2, tool: { radius: 3.2, rate: 0.09, yield: 2.5, stone: 2, weak: 0.2, good: ['stone', 'basalt', 'dirt', 'grass'], chop: { reach: 5, power: 0.8 }, damage: 30 }, desc: 'A containment-blueprint mining head. Cuts a much wider bite than a hand drill.' },
 
 
   torch: { code: 'TO', name: 'TORCH', stack: 16, rad: 0, torch: true, model: 'assets/models/torch.gltf', light: { mount: 'wall', range: 9, power: 0.7, color: 0xff7a1a } },
   simple_lamp: { code: 'SL', name: 'SIMPLE LAMP', stack: 16, rad: 0, torch: true, light: { mount: 'wall', range: 12, power: 0.9, color: 0xffe0a0, steady: true } },
   lantern: { code: 'LN', name: 'LANTERN', stack: 16, rad: 0, torch: true, light: { mount: 'floor', range: 18, power: 2.0, color: 0xffb454 } },
   floodlight: { code: 'FD', name: 'FLOODLIGHT', stack: 8, rad: 0, torch: true, light: { mount: 'wall', range: 30, power: 2.8, color: 0xd8e8ff } },
-  flashlight: { code: 'FL', name: 'FLASHLIGHT', stack: 1, rad: 0, tool: { flashlight: true, radius: 0.1, rate: 0.1, yield: 0, good: [] }, light: { mount: 'held', range: 54, power: 2.8, color: 0xdfefff }, icon: 'assets/images/items/flashlight.png' },
+  flashlight: { code: 'FL', name: 'FLASHLIGHT', stack: 1, rad: 0, tool: { flashlight: true, radius: 0.1, rate: 0.1, yield: 0, good: [], damage: 5 }, light: { mount: 'held', range: 54, power: 2.8, color: 0xdfefff }, icon: 'assets/images/items/flashlight.png' },
   geiger_counter: I('GC', 'GEIGER COUNTER', { block: false, stack: 1, geiger: true, icon: 'assets/images/items/geiger_counter.png' }),
 
 
@@ -453,7 +457,7 @@ export const ITEM_DEFS = {
   wooden_powerpole: { code: 'WP', name: 'WOODEN POWERPOLE', stack: 16, rad: 0, block: false, workbench: 'cable', desc: 'Links nearby machines into one power grid.' },
   skyline_pylon: { code: 'SY', name: 'SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'skyline_pylon', desc: 'A tall mast. Workbenches near a pylon can be linked by the zipline wrench.' },
   short_skyline_pylon: { code: 'SS', name: 'SHORT SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'short_skyline_pylon', desc: 'A half-height mast for tighter spaces. Workbenches near a pylon can be linked by the zipline wrench.' },
-  zipline_wrench: { code: 'ZW', name: 'ZIPLINE WRENCH', stack: 1, rad: 0, block: false, icon: 'assets/images/items/zipline_wrench.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], wrench: true }, desc: 'Right-click a workbench to choose the item to take, then right-click another one to send it there.' },
+  zipline_wrench: { code: 'ZW', name: 'ZIPLINE WRENCH', stack: 1, rad: 0, block: false, icon: 'assets/images/items/zipline_wrench.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], wrench: true, damage: 12 }, desc: 'Right-click a workbench to choose the item to take, then right-click another one to send it there.' },
   excavator: { code: 'EX', name: 'EXCAVATOR', stack: 4, rad: 0, block: false, workbench: 'excavator', desc: 'Drills the ore seam under it and keeps what it finds.' },
   bucket_wheel_excavator: { code: 'BW', name: 'BUCKET WHEEL EXCAVATOR', stack: 1, rad: 0, block: false, workbench: 'bucket_wheel_excavator', desc: 'A colossal mobile mining machine. Rotate the house, lower the boom and run the wheel through the ground.' },
   bwe_controller: { code: 'BC', name: 'BWE CONTROLLER', stack: 4, rad: 0, block: false, desc: 'Right-click to link to the nearest bucket wheel excavator and take the controls.' },
@@ -469,6 +473,8 @@ export const ITEM_DEFS = {
   infinite_battery: { code: 'IB', name: 'INFINITE BATTERY', stack: 16, rad: 0, block: false, workbench: 'infinite_battery', desc: 'Sandbox power source. Outputs whatever PU/s you set in its panel.' },
   water_pump: { code: 'PU', name: 'WATER PUMP', stack: 16, rad: 0, block: false, workbench: 'water_pump', desc: 'Draws groundwater into the jerry can you are holding. Right-click to pump. Needs grid power.' },
   bed: { code: 'Bd', name: 'BED', stack: 16, rad: 0, block: false, workbench: 'bed', desc: 'Right-click to sleep until morning.' },
+  rammer: { code: 'Rm', name: 'RAMMER', stack: 1, rad: 0, block: false, workbench: 'rammer', desc: 'A heavy four-leg walker. Right-click to climb in. Very expensive, very heavy, very red.' },
+  tunnel_bore: { code: 'TB', name: 'TUNNEL BORE', stack: 1, rad: 0, block: false, workbench: 'tunnel_bore', desc: 'A slow tunnel boring machine. Load fuel and it chews forward through rock.' },
   test_bench: { code: 'T#', name: 'TEST BENCH', stack: 16, rad: 0, block: false, workbench: 'test_bench', desc: 'Drop in a car battery for a quick burst of power.' },
   research_lab: { code: 'RL', name: 'RESEARCH LAB', stack: 16, rad: 0, block: false, workbench: 'research_lab', desc: 'Studies hot samples and turns them into blueprints for the next tier.' },
   fusion_reactor: { code: 'FX', name: 'FUSION REACTOR', stack: 4, rad: 0, block: false, workbench: 'fusion_reactor', desc: 'Burns fusion pellets for enormous power. Even less forgiving of a cooling mismatch than fission.' },
@@ -555,12 +561,12 @@ export const MACHINE_DEFS = [
       { in: { lead_ingot: 1, carbon: 3 }, out: { ammo_12g: 6 }, time: 3 },
 
       { in: { copper_solenoid: 1, circuit_basic: 1, graphite: 2 }, out: { detonator: 1 }, time: 6 },
-      { in: { rdx: 2, detonator: 1, plastic: 2, timer_module: 1, card_reader: 1 }, out: { c4: 2 }, time: 12 },
+      { in: { rdx: 2, detonator: 1, plastic: 2 }, out: { c4: 2 }, time: 12 },
     ]
   },
 
   {
-    id: 'crusher', kind: 'processor', name: 'CRUSHER', model: MODEL('crusher'), layout: LAYOUT('crusher'), label: 'Use crusher', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 20 },
+    id: 'crusher', kind: 'processor', name: 'CRUSHER', model: MODEL('crusher'), layout: LAYOUT('crusher'), label: 'Use crusher', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 20 }, spin: 'cylinder', spinRate: 8,
     recipes: [
       { in: { uranium: 1 }, out: { crushed_uranium: 2 }, time: 3, rad: 0.4 },
       { in: { thorium: 1 }, out: { crushed_thorium: 2 }, time: 3, rad: 0.2 },
@@ -643,6 +649,9 @@ export const MACHINE_DEFS = [
     id: 'assembler', kind: 'processor', name: 'ASSEMBLER', model: MODEL('assembler'), layout: LAYOUT('assembler'), label: 'Use assembler', height: 1.4, dx: 2.8, dz: 1.8, energy: { use: 60 },
     recipes: [
       { in: { machine_chassis: 6, circuit_advanced: 4, electric_motor: 4, timer_module: 2, data_drive: 2, drill_bit: 8, steel_plate: 6 }, out: { excavator: 1 }, time: 45 },
+      { in: { machine_chassis: 4, steel_plate: 20, iron_plate: 10, electric_motor: 2, drill_bit: 6, circuit_board: 2, cable: 8 }, out: { tunnel_bore: 1 }, time: 30 },
+      { in: { electric_motor: 2, steel_plate: 4, iron_ingot: 2, circuit_board: 1 }, out: { v6_engine: 1 }, time: 20 },
+      { in: { machine_chassis: 8, steel_plate: 50, iron_plate: 40, v6_engine: 6, linear_actuator: 4, circuit_advanced: 6, data_drive: 4, optic_lens: 3, cable: 30, copper_solenoid: 12, blueprint_rammer: 1 }, out: { rammer: 1 }, time: 90 },
       {
         in: { machine_chassis: 32, steel_plate: 96, iron_plate: 128, circuit_advanced: 20, electric_motor: 20, copper_solenoid: 32, linear_actuator: 16, drill_bit: 40, cable: 48, heavy_shielding_plate: 8, advanced_shielding_plate: 4, blueprint_excavator: 1 },
         out: { bucket_wheel_excavator: 1 }, time: 180
@@ -669,7 +678,7 @@ export const MACHINE_DEFS = [
       { in: { machine_chassis: 2, circuit_board: 1, copper_plate: 4, data_disk: 2 }, out: { energy_storage: 1 }, time: 10 },
       { in: { iron_ingot: 5, wood: 2, stone: 10 }, out: { medium_container: 1 }, time: 8 },
       { in: { copper_plate: 2, iron_plate: 1 }, out: { cable: 8 }, time: 3 },
-      { in: { machine_chassis: 1, circuit_basic: 2, iron_plate: 4, optic_lens: 1, glass: 6 }, out: { solar_panel: 1 }, time: 10 },
+      { in: { machine_chassis: 1, circuit_basic: 2, iron_plate: 4, glass: 6 }, out: { solar_panel: 1 }, time: 10 },
       { in: { machine_chassis: 1, circuit_board: 1, lead_plate: 8, timer_module: 1 }, out: { decay_generator: 1 }, time: 14 },
       { in: { machine_chassis: 1, copper_solenoid: 2, carbon: 2, cooling_fan: 1 }, out: { crystallizer: 1 }, time: 8 },
       { in: { machine_chassis: 1, circuit_basic: 1, lead_plate: 4, cooling_fan: 1 }, out: { radiation_absorber: 1 }, time: 8 },
@@ -689,6 +698,7 @@ export const MACHINE_DEFS = [
       { in: { data_disk: 2, circuit_advanced: 1, polonium: 2, lead_plate: 4 }, out: { blueprint_scrubber: 1 }, time: 26, rad: 0.6 },
       { in: { data_drive: 2, circuit_advanced: 2, beryllium_ingot: 4, advanced_shielding_plate: 1 }, out: { blueprint_containment: 1 }, time: 30, rad: 0.2 },
       { in: { data_drive: 2, circuit_advanced: 3, polonium: 2, advanced_shielding_plate: 2 }, out: { blueprint_excavator: 1 }, time: 34, rad: 0.8 },
+      { in: { data_drive: 2, circuit_advanced: 2, steel_plate: 12, electric_motor: 4, linear_actuator: 2 }, out: { blueprint_rammer: 1 }, time: 28, rad: 0.1 },
     ]
   },
   {
@@ -773,6 +783,7 @@ export const MACHINE_DEFS = [
         in: { medicinal_powder: 6, jerry_can_black: 1 }, liquidIn: [{ id: 'water', amount: 4 }],
         out: { jerry_can_black: 1 }, liquidOut: { id: 'ethanol', amount: 8, container: 'jerry_can_black' }, time: 8
       },
+      { in: { carbon: 10 }, liquidIn: [{ id: 'gasoline', amount: 4 }], out: { heavy_fuel_oil: 1 }, time: 14 },
 
       { in: { carbon: 8 }, out: { plastic: 4 }, time: 8 },
 
@@ -794,6 +805,8 @@ export const MACHINE_DEFS = [
   { id: 'infinite_battery', kind: 'generator', name: 'INFINITE BATTERY', model: MODEL('infinite_battery'), layout: LAYOUT('infinite_battery'), label: 'Set infinite battery', height: 1.0, dx: 2.8, dz: 1.8, energy: { gen: 0 }, infinite: true },
   { id: 'water_pump', kind: 'pump', name: 'WATER PUMP', model: MODEL('water_pump'), layout: LAYOUT('water_pump'), label: 'Pump water', height: 1.5, dx: 2.8, dz: 1.8, energy: { use: 400 }, pump: { amount: 5, cost: 400 } },
   { id: 'bed', kind: 'bed', name: 'BED', model: MODEL('bed'), layout: LAYOUT('bed'), label: 'Sleep', height: 0.6, dx: 2.4, dz: 1.4, sleep: true },
+  { id: 'rammer', kind: 'vehicle', name: 'RAMMER', model: 'assets/models/vehicles/rammer.gltf', layout: LAYOUT('rammer'), label: 'Drive rammer', height: 2.8, dx: 3.2, dz: 3.2, drive: true },
+  { id: 'tunnel_bore', kind: 'bore', name: 'TUNNEL BORE', model: MODEL('tunnel_bore'), layout: LAYOUT('tunnel_bore'), label: 'Open tunnel bore', height: 2.0, dx: 2.8, dz: 2.8, outputs: 12, spin: 'drill', spinRate: 10, modelRotY: Math.PI / 2, bore: { speed: 0.075, step: 0.35, fuel: { carbon: 12, heavy_fuel_oil: 576, gasoline: 18 } } },
 
   { id: 'test_bench', kind: 'generator', name: 'TEST BENCH', model: MODEL('test_bench'), layout: LAYOUT('test_bench'), label: 'Open test bench', height: 1.2, dx: 2.8, dz: 1.8, energy: { gen: 150 }, battery: { life: 180 } },
 
@@ -1103,7 +1116,7 @@ export const CRAFT_RECIPES = [
   { out: { short_skyline_pylon: 1 }, needs: { steel_ingot: 1, copper_ingot: 1, wood: 2 } },
 ];
 
-// Machine benches craft over time; machine blocks are a real build, everything else is quick.
+
 const CRAFT_TIME_ITEM = 2;
 const CRAFT_TIME_BLOCK = 10;
 for (const r of CRAFT_RECIPES) {
@@ -1112,7 +1125,7 @@ for (const r of CRAFT_RECIPES) {
 
 
 const TABLE_OUTPUTS = new Set([
-  // items that opt in with `table: true` (the building pieces do)
+
   ...Object.entries(ITEM_DEFS).filter(([, d]) => d.table).map(([id]) => id),
 
   'iron_ingot', 'copper_ingot', 'tin_ingot', 'torch', 'simple_lamp', 'lantern', 'flashlight', 'graphite', 'carbon_mesh',
@@ -1215,9 +1228,25 @@ export function layoutFor(def) {
     return { version: 1, id: def.id, title, grid, theme, elements: el };
   }
 
+  if (def.kind === 'bore') {
+    grid.cols = 12; grid.rows = 9;
+    if (el[0]) el[0].w = grid.cols;
+    el.push({ id: 'fuelLabel', type: 'label', x: 0, y: 1, w: 10, h: 1, text: 'FUEL', size: 11 });
+    el.push({ id: 'modLabel', type: 'label', x: 10, y: 1, w: 2, h: 1, text: 'MODULE', size: 11 });
+    for (let i = 0; i < 5; i++) S(`fuel${i}`, i * 2, 2, 2, 2, `fuel${i}`, 'FUEL');
+    S('upgrade0', 10, 2, 2, 2, 'upgrade0', 'MOD');
+    el.push({ id: 'outLabel', type: 'label', x: 0, y: 4, w: 12, h: 1, text: 'OUTPUT', size: 11 });
+    const n = def.outputs || 12;
+    for (let i = 0; i < n; i++) S(`o${i}`, (i % 6) * 2, 5 + Math.floor(i / 6) * 1, 1, 1, `output${i}`, 'ORE');
+    el.push({ id: 'boreCtrl', type: 'bore', x: 0, y: 7, w: 12, h: 1 });
+    el.push({ id: 'status', type: 'label', x: 0, y: 8, w: 8, h: 1, text: 'NO FUEL', size: 12 });
+    el.push({ id: 'progress', type: 'progress', x: 8, y: 8, w: 4, h: 1, label: 'BORE' });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
   if (def.kind === 'bwe') {
-    // The BWE panel is built by WorkbenchUI: it needs a scrollable 64-slot
-    // hold plus the yaw / boom / wheel controls.
+
+
     grid.rows = 8;
     el.push({ id: 'bwe', type: 'bwe', x: 0, y: 1, w: 12, h: 7, label: title });
     return { version: 1, id: def.id, title, grid, theme, elements: el };
@@ -1257,6 +1286,14 @@ export function layoutFor(def) {
   }
 
 
+  if (def.drive) {
+    grid.cols = 12; grid.rows = 5;
+    if (el[0]) el[0].w = grid.cols;
+    for (let i = 0; i < 5; i++) S(`fuel${i}`, 1 + i * 2, 1, 2, 2, `fuel${i}`, 'FUEL');
+    el.push({ id: 'status', type: 'label', x: 0, y: 4, w: 12, h: 1, text: 'NO FUEL', size: 12 });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
   if (def.kind === 'scrubber') {
     S('fuel', 0, 1, 2, 2, 'fuel', 'FILTER');
     el.push({ id: 'info', type: 'label', x: 3, y: 1, w: 9, h: 2, text: 'INSERT A SCRUBBER FILTER', size: 12 });
@@ -1285,32 +1322,37 @@ export function layoutFor(def) {
 }
 
 
-// Radiation is tracked in rad (absorbed dose), where 1 rad = 0.01 Gy.
-// The meter is scaled to the human whole-body lethal dose: ~450 rad is LD50/60
-// (50% die within 60 days without treatment) and ~600 rad is almost always fatal.
+
+
+
 export const TUNING = {
   DAY_SECONDS: 900,
-  DAY_FRACTION: 2 / 3,   // fraction of the cycle that is daytime (rest is night)
+  DAY_FRACTION: 2 / 3,
   HUNGER_DRAIN: 0.07,
-  RAD_START_DAY: 3,      // ambient pressure begins here and ramps continuously
-  RAD_RAMP_DAY: 10,      // days per +1 tier of the ambient curve
+  RAD_START_DAY: 3,
+  RAD_RAMP_DAY: 10,
   AMBIENT_BASE: 0.02,
   AMBIENT_EXP: 1.7,
   WASTELAND_RAD: 0.35,
-  RAD_SOURCE_DIST: 240,   // distance of the fallout source from the world origin
-  RAD_OCCL_FLOOR: 0.2,    // terrain alone never shields more than 80% of a field
-  RAD_CALM_DELAY: 30,    // seconds at zero intake before the body starts shedding dose
-  RAD_DECAY: 0.05,       // rad/s shed while calm — deliberately very slow
-  ABSORB_FLOOR: 0.25,    // absorbers never remove more than 75% of a field
-  BUILD_WALL_W: 3,        // wall pieces are 3 m x 3 m panels
+  RAD_SOURCE_DIST: 240,
+  RAD_OCCL_FLOOR: 0.2,
+  RAD_CALM_DELAY: 30,
+  RAD_DECAY: 0.05,
+  NUKE_DAY_INTERVAL: 10,
+  NUKE_CHANCE: 0.5,
+  NUKE_RADIUS: 80,
+  NUKE_GAP: 180,
+  NUKE_RAD: 500,
+  ABSORB_FLOOR: 0.25,
+  BUILD_WALL_W: 3,
   BUILD_WALL_H: 3,
-  BUILD_WALL_T: 0.25,     // panel thickness in metres
+  BUILD_WALL_T: 0.25,
   RAD_ARS_DOSE: 100,
   RAD_LD50: 450,
   RAD_LETHAL_DOSE: 600,
-  SKYLINE_SPEED: 7,        // metres per second a cargo pod rides the wire
-  SKYLINE_RANGE: 12,       // how far a workbench may sit from its pylon
-  SKYLINE_TICK: 0.2,       // seconds between routing decisions
+  SKYLINE_SPEED: 7,
+  SKYLINE_RANGE: 12,
+  SKYLINE_TICK: 0.2,
   RAD_STAGES: [
     { at: 100, name: 'SLOWED', speed: 0.7, blur: 0.15, dark: 0.0 },
     { at: 250, name: 'BLURRED', speed: 0.5, blur: 0.45, dark: 0.15 },
@@ -1319,9 +1361,9 @@ export const TUNING = {
   ],
 };
 
-// The opening build order shown above the recipe filters. It walks the player
-// from bare hands to the first powered machines, then hides itself after
-// STARTER_GUIDE_SECONDS of real play time.
+
+
+
 export const STARTER_GUIDE_SECONDS = 30 * 60;
 export const STARTER_GUIDE = [
   'carbon', 'apple', 'pick',
@@ -1329,9 +1371,9 @@ export const STARTER_GUIDE = [
   'crusher', 'electric_furnace', 'armor_workbench',
 ];
 
-// The bottom-left NEXT STEP card walks the player through the full progression.
-// A step completes from real state: items in the bag (`need`), a placed machine
-// (`place`), or a running machine (`active`). Only the current step is shown.
+
+
+
 export const GUIDE_STEPS = [
   { id: 'carbon', title: 'GATHER 4 CARBON', hint: 'Punch grass or stone with your bare hands.', need: { carbon: 4 } },
   { id: 'fruit', title: 'PUNCH TREES FOR 4 FRUIT', hint: 'Shake a tree for apples, oranges or pears.', need: { fruit: 4 } },
@@ -1363,10 +1405,10 @@ export const GUIDE_STEPS = [
   { id: 'scrubber', title: 'BUILD AN ATMOSPHERIC SCRUBBER', hint: 'Assembler: 4 chassis, 4 advanced circuits, 12 lead plates, 4 cooling fans.', place: 'atmospheric_scrubber' },
 ];
 
-// Achievement columns. Each type owns one vertical column and every tier is
-// another cell below it, so a type with five tiers fills five rows. Tiers are
-// completed from counters in the world save (`stat`), a placed machine
-// (`built`), or a machine that has actually run (`started`).
+
+
+
+
 export const ACHIEVEMENT_TYPES = [
   {
     id: 'miner', name: 'MINER',
@@ -1491,8 +1533,8 @@ export const ACHIEVEMENT_TYPES = [
   },
 ];
 
-// Format a dose (rad) or dose rate (rad/s) with a real SI prefix, so a
-// background-level reading shows as nrad/s and a hot machine as mrad/s or rad/s.
+
+
 const RAD_UNITS = [
   [1e9, 'Grad'], [1e6, 'Mrad'], [1e3, 'krad'], [1, 'rad'],
   [1e-3, 'mrad'], [1e-6, 'µrad'], [1e-9, 'nrad'], [1e-12, 'prad'],

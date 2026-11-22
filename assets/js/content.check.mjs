@@ -6,8 +6,8 @@ import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'input']);
-const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'input']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
 
@@ -17,7 +17,7 @@ for (const [id, def] of Object.entries(ITEM_DEFS)) {
   ok.push([typeof def.tint === 'number', `ingot "${id}" has a tint color`]);
 }
 
-// Every sheet is the same texture, told apart by its tint.
+
 for (const [id, def] of Object.entries(ITEM_DEFS)) {
   if (!id.endsWith('_plate')) continue;
   ok.push([def.icon === 'assets/images/items/sheet.png', `plate "${id}" uses the shared sheet texture`]);
@@ -41,7 +41,7 @@ for (const r of TABLE_RECIPES) {
 ok.push([STARTER_GUIDE_SECONDS === 1800, `starter guide lasts 30 real minutes (${STARTER_GUIDE_SECONDS}s)`]);
 for (const id of STARTER_GUIDE) {
   ok.push([has(id), `starter guide item "${id}" exists`]);
-  // Tree fruit is picked by hand (hit a fruiting tree), not made at the table.
+
   ok.push([TABLE_RECIPES.some((r) => r.out[id]) || ['carbon', 'iron', 'copper', 'apple', 'orange', 'pear'].includes(id), `starter guide item "${id}" is obtainable at the table or by hand`]);
 }
 ok.push([STARTER_GUIDE.includes('hand_crank'), 'starter guide points at the hand crank']);
@@ -113,8 +113,8 @@ const gunRec = MACHINE_BY_ID.gun_workbench.recipes;
 ok.push([gunRec.some((r) => r.out?.detonator), 'gun workbench makes a detonator']);
 const c4Rec = gunRec.find((r) => r.out?.c4);
 ok.push([!!c4Rec, 'gun workbench makes c4']);
-ok.push([!!c4Rec?.in.card_reader && !!c4Rec?.in.detonator && !!c4Rec?.in.rdx,
-  'c4 needs a card reader, a detonator and rdx']);
+ok.push([!!c4Rec?.in.detonator && !!c4Rec?.in.rdx && !!c4Rec?.in.plastic,
+  'c4 needs a detonator, rdx and plastic']);
 
 
 const machineIn = new Set();
@@ -446,8 +446,8 @@ const sys = new MachineSystem({
 ok.push([sys.powerCap({ def: {} }) === 400, 'every machine keeps at least 400 PU internally']);
 ok.push([sys.powerCap({ def: { capacity: 2000 } }) === 2000, 'a storage machine keeps its own capacity']);
 
-// Shift-click deposit must merge or fill an empty slot and never swap a
-// different item out (which bounced the item back and did nothing).
+
+
 sys.openInst = { def: { kind: 'storage' }, state: { slots: { slot0: { id: 'stone', n: 5 } } } };
 sys.inv.hot = [{ id: 'stone', n: 10 }, { id: 'wood', n: 3 }];
 ok.push([sys.drop(0, 'slot0') && sys.openInst.state.slots.slot0.n === 15 && !sys.inv.hot[0], 'shift deposit merges into the same item']);
@@ -507,7 +507,7 @@ const runReactor = (rodIds) => {
   sys.tickReactor(m, 1, n);
   return { m, power: n.pool };
 };
-// LEU-235 wants 80 cooling: four graphite rods hit it exactly.
+
 const matched = runReactor(['control_rod', 'control_rod', 'control_rod', 'control_rod']);
 const over = runReactor(new Array(REACTOR_ROD_SLOTS).fill('heavy_water_rod'));
 const under = runReactor([]);
@@ -517,7 +517,7 @@ ok.push([under.m.state.heat > 0, 'an uncooled core heats up']);
 ok.push([under.m.state.status.startsWith('NO COOLANT'), 'an empty core reports no coolant']);
 ok.push([matched.m.state.coolMatch > 0.99, 'matched layout reports a full cooling match']);
 
-// Late-game research chain: blueprints gate fission, fusion and the endgame.
+
 const asm = MACHINE_BY_ID.assembler.recipes;
 const lab = MACHINE_BY_ID.research_lab;
 ok.push([!!lab, 'research_lab exists']);
@@ -561,8 +561,8 @@ ok.push([sys.scrubbers.length === 0 && dry.state.status === 'NO FILTER', 'a scru
 ok.push([!!ITEM_DEFS.plasma_drill?.tool, 'plasma drill is a tool']);
 ok.push([asm.some((r) => r.out?.plasma_drill), 'plasma drill is assembler-made']);
 
-// Radiation field shielding: absorbers are multiplicative with a floor, and
-// worn armor's flat radShield becomes a bounded fraction (never 100%).
+
+
 sys.absorbers.length = 0;
 ok.push([sys.absorbFactor(0, 0) === 1, 'no absorbers means no field cut']);
 sys.absorbers.push({ def: MACHINE_BY_ID.radiation_absorber, x: 0, z: 0 });
@@ -578,4 +578,4 @@ ok.push([protect > 0 && protect < 0.8, `worn armor protects ambient below the ca
 
 const bad = ok.filter(([p]) => !p);
 if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }
-console.log(`content OK — ${ok.length} assertions`);
+console.log(`content OK: ${ok.length} assertions`);

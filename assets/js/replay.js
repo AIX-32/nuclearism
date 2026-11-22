@@ -1,17 +1,17 @@
-// Replay data model: recording, sampling, packing.
-//
-// Pure: no DOM, no three.js, so `node assets/js/replay.check.mjs` can
-// exercise every rule. The game wires it to the camera, the density field
-// and the renderer; this file only knows what a replay *is*.
-//
-// A replay holds two flat float arrays:
-//   frames: t, x, y, z, yaw, pitch, clockT, heldIdx, eye, slideP  (stride)
-//   edits:  t, x, y, z, density                                   (REPLAY_EDIT_STRIDE)
-// plus a small table of held item ids, so the viewmodel can be reproduced.
-// eye/slideP keep the crouch/slide camera height and tilt (v2; v1 defaults).
+
+
+
+
+
+
+
+
+
+
+
 
 export const REPLAY_VERSION = 2;
-export const REPLAY_RATE = 30;            // recorded frames per second
+export const REPLAY_RATE = 30;
 export const REPLAY_MIN_INTERVAL = 1 / REPLAY_RATE;
 export const REPLAY_FRAME_STRIDE = 10;
 export const REPLAY_FRAME_STRIDE_V1 = 8;
@@ -54,20 +54,20 @@ function heldIndex(r, id) {
   return i;
 }
 
-// Records one camera sample. Samples closer together than the replay rate are
-// dropped, so a 144 fps game still records 30 fps of motion.
+
+
 export function pushFrame(r, t, x, y, z, yaw, pitch, clockT, heldId, eye = 1.62, slideP = 0) {
   const n = r.f.length;
   const stride = strideOf(r);
-  // The epsilon keeps a timer that ticks exactly on the interval from being
-  // dropped by floating point drift (which would halve the effective rate).
+
+
   if (n >= stride && t - r.f[n - stride] < REPLAY_MIN_INTERVAL - 1e-6) return false;
   r.f.push(t, x, y, z, yaw, pitch, clockT, heldIndex(r, heldId), eye, slideP);
   if (t > r.dur) r.dur = t;
   return true;
 }
 
-// Records one density edit (a mined or placed voxel).
+
 export function pushEdit(r, t, x, y, z, v) {
   r.e.push(t, x, y, z, v);
   if (t > r.dur) r.dur = t;
@@ -77,8 +77,8 @@ function lerp(a, b, k) {
   return a + (b - a) * k;
 }
 
-// Yaw is an angle: interpolate the short way round so a turn past +/-PI does
-// not spin the camera the long way.
+
+
 export function lerpAngle(a, b, k) {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;
@@ -86,7 +86,7 @@ export function lerpAngle(a, b, k) {
   return a + d * k;
 }
 
-// The camera state at time t. Frames are linearly interpolated.
+
 export function sampleAt(r, t) {
   const n = frameCount(r);
   if (!n) return null;
@@ -126,8 +126,8 @@ function frame(r, i) {
   };
 }
 
-// How many edits have happened at or before time t. Edits are pushed in
-// chronological order, so this is a binary search.
+
+
 export function editIndexAt(r, t) {
   const n = editCount(r);
   let lo = 0, hi = n;
@@ -147,7 +147,7 @@ export function heldId(r, idx) {
   return idx >= 0 && idx < r.held.length ? r.held[idx] : null;
 }
 
-/* ---------- packing ---------- */
+
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
@@ -190,8 +190,8 @@ function b64ToFloats(str) {
   return Array.from(f);
 }
 
-// A replay is stored packed: the float arrays become base64 so a ten minute
-// recording is a few hundred KB instead of a few MB of JSON numbers.
+
+
 export function packReplay(r) {
   return {
     v: r.v || REPLAY_VERSION,
@@ -219,7 +219,7 @@ export function unpackReplay(o) {
   return r;
 }
 
-// Rough stored size in bytes, for the replay list.
+
 export function replayBytes(packed) {
   if (!packed) return 0;
   return (packed.fb?.length || 0) + (packed.eb?.length || 0) + JSON.stringify(packed.held || []).length + 200;
