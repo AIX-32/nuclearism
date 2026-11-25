@@ -18,11 +18,15 @@ const listEl = document.getElementById('worldList');
 const playBtn = document.getElementById('worldPlayBtn');
 const editBtn = document.getElementById('worldEditBtn');
 const createName = document.getElementById('createName');
+const createSeed = document.getElementById('createSeed');
 const editName = document.getElementById('editName');
 const editColor = document.getElementById('editColor');
 const editColorClear = document.getElementById('editColorClear');
 const createMode = document.getElementById('createMode');
 const createTerrain = document.getElementById('createTerrain');
+const createStart = document.getElementById('createStart');
+const createFallout = document.getElementById('createFallout');
+const legacyModal = document.getElementById('legacyModal');
 
 const LOADING_TIPS = [
   'Radiation ramps up from day 3 - build shielding before the dose turns lethal at 600 rad.',
@@ -62,9 +66,54 @@ async function writeJSON(key, value) {
 
 let worlds = await readJSON(WORLDS_KEY, []);
 if (!Array.isArray(worlds)) worlds = [];
+
+const UNKNOWN_VERSION = 'unknown';
+let GAME_VERSION = null;
+try {
+  const res = await fetch('version.json');
+  if (res.ok) {
+    const data = await res.json();
+    if (typeof data?.version === 'string' && data.version) GAME_VERSION = data.version;
+  }
+} catch (e) { console.warn('[menu] could not read version.json', e); }
+const versionEl = document.getElementById('menuVersion');
+if (versionEl) versionEl.textContent = GAME_VERSION ? `Preview ${GAME_VERSION}` : '';
+const worldVersion = () => GAME_VERSION || UNKNOWN_VERSION;
+let versionBackfill = false;
+for (const w of worlds) if (!w.version) { w.version = UNKNOWN_VERSION; versionBackfill = true; }
+if (versionBackfill) await writeJSON(WORLDS_KEY, worlds);
+
 let selectedId = null;
 let newMode = 'survival';
-let newTerrain = 'legacy';
+let newTerrain = 'realistic';
+let newStart = 'dawn';
+let newFallout = 'normal';
+
+// A numeric seed is used as-is; any other text is hashed so the same word always gives the same world.
+function parseSeed(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  if (/^-?\d+$/.test(s)) return Number(s) | 0;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h | 0;
+}
+
+const START_OPTIONS = ['dawn', 'noon', 'dusk', 'night'];
+const FALLOUT_OPTIONS = ['calm', 'normal', 'severe'];
+function paintCycle(btn, key, value, label) {
+  btn.dataset[key] = value;
+  btn.textContent = `${label} · ${value.toUpperCase()}`;
+  return value;
+}
+function nextCycle(btn, key, options, label) {
+  const i = options.indexOf(btn.dataset[key]);
+  return paintCycle(btn, key, options[(i + 1) % options.length], label);
+}
+function selectTerrain(terrain) {
+  newTerrain = terrain;
+  for (const b of createTerrain.querySelectorAll('button')) b.classList.toggle('on', b.dataset.terrain === terrain);
+}
 
 let pano = null;
 
@@ -106,7 +155,7 @@ function startPanorama() {
   geometry.scale(-1, 1, 1);
 
 
-  const pool = ['panorama-1.png', 'panorama-2.png', 'panorama-3.png', 'panorama-4.png', 'panorama-5.png', 'panorama-6.png', 'panorama-7.png', 'panorama-8.png']
+  const pool = ['panorama-4.png','panorama-6.png', 'panorama-8.png',]
     .map((f) => `assets/images/menu/${f}`);
   const textures = pool.map((url) => {
     const t = new THREE.TextureLoader().load(url);
@@ -333,8 +382,28 @@ function newId() {
   return 'w_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+async function exportWorldFile(w) {
+  const raw = await idbGet(`idte.save.v2.${w.id}`);
+  if (!raw) { alert('No save data found for this world yet.'); return; }
+  const json = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  const name = (w.name || 'world').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'world';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = `${name}-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
 function beginWorld(w) {
-  window.__NUCLEARISM_WORLD__ = { id: w.id, name: w.name, mode: w.mode, terrain: w.terrain === 'realistic' ? 'realistic' : 'legacy' };
+  window.__NUCLEARISM_WORLD__ = {
+    id: w.id, name: w.name,
+    mode: w.mode,
+    terrain: w.terrain === 'realistic' ? 'realistic' : 'legacy',
+    seed: w.seed, start: w.start, fallout: w.fallout,
+  };
   window.__NUCLEARISM_LOAD_STATUS__ = '';
   window.__NUCLEARISM_PREGEN_PROGRESS__ = 0;
   window.__NUCLEARISM_READY_COMPLETE__ = false;
@@ -365,15 +434,21 @@ menu.addEventListener('click', async (e) => {
   else if (act === 'discord') window.open(DISCORD_URL, '_blank', 'noopener');
   else if (act === 'create') {
     createName.value = '';
+    createSeed.value = '';
     newMode = 'survival';
-    newTerrain = 'legacy';
-    for (const b of createMode.querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === 'survival');
-    for (const b of createTerrain.querySelectorAll('button')) b.classList.toggle('on', b.dataset.terrain === 'legacy');
+    newStart = 'dawn';
+    newFallout = 'normal';
+    for (const b of createMode.querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === newMode);
+    selectTerrain('realistic');
+    paintCycle(createStart, 'start', newStart, 'START TIME');
+    paintCycle(createFallout, 'fallout', newFallout, 'FALLOUT');
     show('create');
     createName.focus();
   } else if (act === 'doCreate') {
     const name = createName.value.trim() || 'NEW WORLD';
-    const w = { id: newId(), name, mode: newMode, terrain: newTerrain, created: Date.now() };
+    const seed = parseSeed(createSeed.value);
+    const w = { id: newId(), name, mode: newMode, terrain: newTerrain, start: newStart, fallout: newFallout, version: worldVersion(), created: Date.now() };
+    if (seed !== null) w.seed = seed;
     worlds.push(w);
     await writeJSON(WORLDS_KEY, worlds);
     selectedId = w.id;
@@ -396,6 +471,9 @@ menu.addEventListener('click', async (e) => {
     w.cover = (editColor && editColor.dataset.cleared !== '1') ? editColor.value : null;
     await writeJSON(WORLDS_KEY, worlds);
     show('worlds');
+  } else if (act === 'doExport') {
+    const w = worlds.find((x) => x.id === selectedId);
+    if (w) await exportWorldFile(w);
   } else if (act === 'doDelete') {
     const w = worlds.find((x) => x.id === selectedId);
     if (!w) return;
@@ -418,13 +496,32 @@ createMode.addEventListener('click', (e) => {
 createTerrain.addEventListener('click', (e) => {
   const terrain = e.target.closest('[data-terrain]')?.dataset.terrain;
   if (!terrain) return;
-  newTerrain = terrain;
-  for (const b of createTerrain.querySelectorAll('button')) b.classList.toggle('on', b.dataset.terrain === terrain);
+  selectTerrain(terrain);
+  if (terrain === 'legacy') legacyModal.hidden = false;
 });
 
-createName.addEventListener('keydown', (e) => {
-  if (e.code === 'Enter') menu.querySelector('[data-act="doCreate"]').click();
+document.getElementById('legacyKeepBtn').addEventListener('click', () => { legacyModal.hidden = true; });
+document.getElementById('legacySwitchBtn').addEventListener('click', () => {
+  legacyModal.hidden = true;
+  selectTerrain('realistic');
 });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !legacyModal.hidden) legacyModal.hidden = true;
+});
+
+createStart.addEventListener('click', () => {
+  newStart = nextCycle(createStart, 'start', START_OPTIONS, 'START TIME');
+});
+
+createFallout.addEventListener('click', () => {
+  newFallout = nextCycle(createFallout, 'fallout', FALLOUT_OPTIONS, 'FALLOUT');
+});
+
+for (const field of [createName, createSeed]) {
+  field.addEventListener('keydown', (e) => {
+    if (e.code === 'Enter') menu.querySelector('[data-act="doCreate"]').click();
+  });
+}
 editName.addEventListener('keydown', (e) => {
   if (e.code === 'Enter') menu.querySelector('[data-act="doEdit"]').click();
 });
@@ -456,6 +553,33 @@ if (promoItems.length) showPromo(0);
 promo?.addEventListener('mouseenter', stopPromo);
 promo?.addEventListener('mouseleave', startPromo);
 startPromo();
+
+const uploadWorldBtn = document.getElementById('uploadWorldBtn');
+const uploadWorldFile = document.getElementById('uploadWorldFile');
+uploadWorldBtn?.addEventListener('click', () => uploadWorldFile?.click());
+uploadWorldFile?.addEventListener('change', async () => {
+  const file = uploadWorldFile.files?.[0];
+  uploadWorldFile.value = '';
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !(data.seed !== undefined || data.edits !== undefined || data.player !== undefined)) {
+      throw new Error('Invalid save file');
+    }
+    const base = file.name.replace(/\.json$/i, '').replace(/[^a-z0-9._ -]+/gi, ' ').trim().slice(0, 24) || 'IMPORTED WORLD';
+    const terrain = data.terrain === 'realistic' ? 'realistic' : 'legacy';
+    const w = { id: newId(), name: base, mode: 'survival', terrain, version: worldVersion(), created: Date.now() };
+    worlds.push(w);
+    await writeJSON(WORLDS_KEY, worlds);
+    await idbSet(`idte.save.v2.${w.id}`, text);
+    selectedId = w.id;
+    show('worlds');
+  } catch (e) {
+    console.error('[menu] world import failed', e);
+    alert('Could not import world file.');
+  }
+});
 
 renderSettings(document.getElementById('menuSettings'));
 paintSplash();

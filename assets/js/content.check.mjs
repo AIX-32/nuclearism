@@ -1,12 +1,12 @@
 
 
-import { existsSync, readdirSync } from 'node:fs';
-import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS } from './content.js';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, ACHIEVEMENT_TYPES, BARREL_LOOT, SCRAP_RECYCLE_TABLE, rollWeighted } from './content.js';
 import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'input']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'batteryPie', 'input']);
 const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
@@ -437,6 +437,22 @@ ok.push([gridOut.has('test_bench'), 'test_bench grid-craftable']);
 ok.push([TABLE_RECIPES.some((r) => r.out.test_bench), 'test_bench in the pocket table']);
 ok.push([!!ITEM_DEFS.car_battery.battery, 'car battery is a battery']);
 ok.push([layoutFor(tb).elements.some((e) => e.type === 'slot' && e.role === 'fuel'), 'test_bench has a battery slot']);
+const bs = MACHINE_BY_ID.battery_stack;
+const bsRec = MACHINE_BY_ID.assembler.recipes.find((r) => r.out.battery_stack);
+ok.push([bs?.kind === 'storage' && bs.capacity > 0, 'battery stack stores grid power']);
+ok.push([ITEM_DEFS.battery_stack?.workbench === 'battery_stack', 'battery stack has a placeable block']);
+ok.push([bsRec && Object.keys(bsRec.in).length === 3 && bsRec.in.car_battery === 6 && bsRec.in.iron_plate === 5 && bsRec.in.cable === 4, 'battery stack costs 6 car batteries, 5 iron plates and 4 cable in the assembler']);
+const bsLayout = JSON.parse(readFileSync(new URL('../../assets/ui/battery_stack.json', import.meta.url), 'utf8'));
+ok.push([bsLayout.id === 'battery_stack' && !bsLayout.elements.some((e) => e.type === 'slot')
+  && bsLayout.elements.some((e) => e.id === 'status') && bsLayout.elements.some((e) => e.type === 'batteryPie')
+  && bsLayout.elements.every((e) => TYPES.has(e.type)), 'battery stack panel is a clean charge readout with a machine-drain square chart']);
+for (const id of ['battery_stack', 'bed']) {
+  ok.push([existsSync(new URL(`../../assets/models/workbenches/${id}.gltf`, import.meta.url)), `${id} has its own model`]);
+}
+const bedRec = CRAFT_RECIPES.find((r) => r.out.bed);
+ok.push([MACHINE_BY_ID.bed?.sleep === true, 'bed lets you sleep']);
+ok.push([bedRec && Object.keys(bedRec.needs).length === 2 && bedRec.needs.iron_ingot === 2 && bedRec.needs.herb === 5, 'bed costs 2 iron ingots and 5 herb']);
+ok.push([TABLE_RECIPES.some((r) => r.out.bed), 'bed stays in the pocket table']);
 
 
 const sys = new MachineSystem({
@@ -445,6 +461,12 @@ const sys = new MachineSystem({
 });
 ok.push([sys.powerCap({ def: {} }) === 400, 'every machine keeps at least 400 PU internally']);
 ok.push([sys.powerCap({ def: { capacity: 2000 } }) === 2000, 'a storage machine keeps its own capacity']);
+const drawM = { def: { energy: { use: 50 } }, state: { buffer: 0 }, netDraw: 0 };
+sys.chargePower(drawM, 1, { pool: 100 });
+ok.push([drawM.netDraw === 100 && drawM.state.buffer === 100, 'machines record what they drew from the grid']);
+const drainBat = { def: bs, state: { usage: {} } };
+sys.attributeDrain(drainBat, { members: [drainBat, { def: { id: 'electric_furnace' }, netDraw: 30 }, { def: { id: 'crusher' }, netDraw: 10 }] }, 40);
+ok.push([drainBat.state.usage.electric_furnace === 30 && drainBat.state.usage.crusher === 10 && Object.keys(drainBat.state.usage).length === 2, 'battery drain is split among the drawing machines']);
 
 
 
@@ -575,6 +597,36 @@ ok.push([sys.radProtect() === 0, 'no armor means no ambient protection']);
 sys.inv.armor = { head: { id: 'containment_helmet' } };
 const protect = sys.radProtect();
 ok.push([protect > 0 && protect < 0.8, `worn armor protects ambient below the cap (${protect.toFixed(2)})`]);
+
+const ACH_STATS = new Set(['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked', 'days', 'chopped', 'blasts', 'harvested']);
+const achIds = new Set();
+for (const type of ACHIEVEMENT_TYPES) {
+  ok.push([!achIds.has(type.id) && !!type.name, `achievement type "${type.id}" is unique and named`]);
+  achIds.add(type.id);
+  ok.push([type.tiers.length >= 4, `"${type.id}" has at least four tiers (${type.tiers.length})`]);
+  let prevNeed = -1;
+  for (const tier of type.tiers) {
+    ok.push([has(tier.icon), `"${type.id}" tier "${tier.name}" icon "${tier.icon}" is an item`]);
+    if (tier.stat) {
+      ok.push([ACH_STATS.has(tier.stat) && Number.isFinite(tier.need) && tier.need > prevNeed,
+        `"${type.id}" tier "${tier.name}" has a rising, tracked stat`]);
+      prevNeed = tier.need;
+    } else {
+      ok.push([!!(tier.built ? MACHINE_BY_ID[tier.built] : tier.started), `"${type.id}" tier "${tier.name}" has a real goal`]);
+    }
+  }
+}
+for (const id of ['lumberjack', 'demolition', 'forager']) {
+  ok.push([achIds.has(id), `new achievement category "${id}" exists`]);
+}
+
+for (const [name, table] of [['barrel loot', BARREL_LOOT], ['scrap recycle', SCRAP_RECYCLE_TABLE]]) {
+  ok.push([table.length >= 15, `${name} has a wide pool (${table.length} entries)`]);
+  for (const [id, w] of table) {
+    ok.push([has(id) && w > 0, `${name} entry "${id}" is a real item with positive weight`]);
+  }
+  for (let i = 0; i < 200; i++) ok.push([has(rollWeighted(table)), `${name} rolls a real item`]);
+}
 
 const bad = ok.filter(([p]) => !p);
 if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }

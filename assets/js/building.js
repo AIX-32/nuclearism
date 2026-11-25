@@ -155,38 +155,47 @@ export class BuildingSystem {
 
   load() {
     for (const [tier, def] of Object.entries(BUILD_TIERS)) {
-      const mat = new this.T.MeshLambertMaterial({ color: def.color });
-      if (this.patchMaterial) this.patchMaterial(mat);
-      this._materials = this._materials || new Map();
-      this._materials.set(tier, mat);
+      this.material(tier);
       try {
         new this.T.TextureLoader().load(def.texture, (tex) => {
           tex.wrapS = tex.wrapT = this.T.RepeatWrapping;
           tex.magFilter = this.T.NearestFilter;
           tex.minFilter = this.T.LinearMipmapLinearFilter;
           if (this.T.SRGBColorSpace) tex.colorSpace = this.T.SRGBColorSpace;
-          mat.map = tex;
-
-
-
-          mat.color.setHex(0xffffff);
-          mat.needsUpdate = true;
+          this._textures = this._textures || new Map();
+          this._textures.set(tier, tex);
+          for (const [key, m] of this._materials) {
+            if (key !== tier && !key.startsWith(`${tier}|`)) continue;
+            const shade = key === tier ? 1 : Number(key.split('|')[1]);
+            m.map = tex;
+            m.color.setHex(this._shadeColor(0xffffff, shade));
+            m.needsUpdate = true;
+          }
         }, undefined, () => {                                        });
       } catch (e) {                                       }
     }
     return this;
   }
 
-  material(tier) {
+  _shadeColor(hex, shade) {
+    if (shade === 1) return hex;
+    const c = (v) => Math.round(v * shade);
+    return (c((hex >> 16) & 255) << 16) | (c((hex >> 8) & 255) << 8) | c(hex & 255);
+  }
+
+  material(tier, shade = 1) {
     this._materials = this._materials || new Map();
-    if (!this._materials.has(tier)) {
-      const mat = new this.T.MeshLambertMaterial({ color: BUILD_TIERS[tier].color });
+    const key = shade === 1 ? tier : `${tier}|${shade}`;
+    if (!this._materials.has(key)) {
+      const mat = new this.T.MeshLambertMaterial({ color: this._shadeColor(BUILD_TIERS[tier].color, shade) });
+      const tex = this._textures?.get(tier);
+      if (tex) { mat.map = tex; mat.color.setHex(this._shadeColor(0xffffff, shade)); mat.needsUpdate = true; }
       if (this.patchMaterial) this.patchMaterial(mat);
-      this._materials.set(tier, mat);
+      this._materials.set(key, mat);
     } else if (this.patchMaterial) {
-      this.patchMaterial(this._materials.get(tier));
+      this.patchMaterial(this._materials.get(key));
     }
-    return this._materials.get(tier);
+    return this._materials.get(key);
   }
 
 
@@ -319,9 +328,9 @@ export class BuildingSystem {
 
   _allowedClip(kindName, otherKind) {
     const slab = kindName === 'floor' || kindName === 'roof' || kindName === 'triangle';
-    const wall = otherKind === 'wall' || otherKind === 'door';
+    const wall = otherKind === 'wall' || otherKind === 'door' || otherKind === 'bunker_door';
     const otherSlab = otherKind === 'floor' || otherKind === 'roof' || otherKind === 'triangle';
-    const isWall = kindName === 'wall' || kindName === 'door';
+    const isWall = kindName === 'wall' || kindName === 'door' || kindName === 'bunker_door';
     return (slab && wall) || (isWall && otherSlab);
   }
 
@@ -409,6 +418,21 @@ export class BuildingSystem {
     piece.open = !piece.open;
     this.rebuild();
     return true;
+  }
+
+  update(dt) {
+    let changed = false;
+    for (const p of this.pieces.values()) {
+      const kind = this.kind(p.kind);
+      if (!kind?.slideOffset) continue;
+      const target = p.open ? 1 : 0;
+      const cur = p.slide || 0;
+      if (cur === target) continue;
+      const step = dt / (kind.slideTime || 0.5);
+      p.slide = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
+      changed = true;
+    }
+    if (changed) this.rebuild();
   }
 
 
@@ -563,7 +587,7 @@ export class BuildingSystem {
       if (fp) fps.push({ rot: r, ...fp });
     }
     const vertical = fps[0]?.layers > 1;
-    const anchorVertical = hit.piece.kind === 'wall' || hit.piece.kind === 'door';
+    const anchorVertical = hit.piece.kind === 'wall' || hit.piece.kind === 'door' || hit.piece.kind === 'bunker_door';
     const topFace = hit.normal?.y > 0.45
       || (!hit.normal && hit.point.y >= af.y1 - 0.06 && dir.y < -0.15);
     const nearTop = anchorVertical && hit.point.y >= af.y1 - 0.4;
@@ -599,15 +623,16 @@ export class BuildingSystem {
       const [tier] = key.split('|');
       let mesh = this.meshes.get(key);
       const kind = this.kind(list[0].kind);
+      const shade = kind.materialShade || 1;
       if (!mesh) {
-        mesh = new this.T.InstancedMesh(this.geometryFor(kind), this.material(tier), Math.max(16, list.length * 2));
+        mesh = new this.T.InstancedMesh(this.geometryFor(kind), this.material(tier, shade), Math.max(16, list.length * 2));
         mesh.userData.key = key;
         mesh.frustumCulled = false;
         this.group.add(mesh);
         this.meshes.set(key, mesh);
       }
       if (mesh.instanceMatrix.count < list.length) {
-        const bigger = new this.T.InstancedMesh(this.geometryFor(kind), this.material(tier), list.length * 2);
+        const bigger = new this.T.InstancedMesh(this.geometryFor(kind), this.material(tier, shade), list.length * 2);
         bigger.userData.key = key;
         bigger.frustumCulled = false;
         this.group.remove(mesh);
@@ -616,6 +641,7 @@ export class BuildingSystem {
         this.meshes.set(key, mesh);
       }
       mesh.count = list.length;
+      mesh.visible = list.length > 0;
       this.meshPieces.set(key, list);
       const m = new this.T.Matrix4();
       const pos = new this.T.Vector3();
@@ -625,7 +651,8 @@ export class BuildingSystem {
       list.forEach((p, i) => {
         const c = kind.center(p.x, p.y, p.z, p.rot);
         const s = kind.scale(p.x, p.y, p.z, p.rot);
-        pos.set(c.x, c.y, c.z);
+        const off = kind.slideOffset ? kind.slideOffset(this, p) : null;
+        pos.set(c.x + (off?.x || 0), c.y + (off?.y || 0), c.z + (off?.z || 0));
         scl.set(s.x, s.y, s.z);
         e.set(0, kind.rotY ? kind.rotY(p.rot) : 0, 0);
         q.setFromEuler(e);
@@ -636,7 +663,7 @@ export class BuildingSystem {
       mesh.computeBoundingSphere();
     }
     for (const [key, mesh] of this.meshes) {
-      if (!groups.has(key)) { mesh.count = 0; this.meshPieces.set(key, []); }
+      if (!groups.has(key)) { mesh.count = 0; mesh.visible = false; this.meshPieces.set(key, []); }
     }
   }
 

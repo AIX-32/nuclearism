@@ -45,6 +45,15 @@ export function transmission(factorAt, px, py, pz, dx, dy, dz, o = RAD_OCCL) {
 }
 
 
+// Radiation falls into an open hole: a clear column to the sky cancels the
+// depth shield, while a roof or closed door leaves the normal burial curve.
+export function shaftBurial(depth, up, built = 1) {
+  if (depth <= 0.5) return 1;
+  const buried = Math.pow(0.45, Math.min(depth, 40));
+  return Math.max(buried, Math.min(1, up * built));
+}
+
+
 export function relativeBearing(dx, dz, yaw) {
   const fwd = -dx * Math.sin(yaw) - dz * Math.cos(yaw);
   const right = dx * Math.cos(yaw) - dz * Math.sin(yaw);

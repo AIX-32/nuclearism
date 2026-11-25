@@ -154,6 +154,11 @@ check(touched > 0, 'an edit re-reads the edited voxels');
 check(wrong === 0, 'an edit leaves the rest of the grid alone');
 check(edited.pending.length === 0, 'the pending edit list is cleared after the refresh');
 
+
+const updateJobs = bodyOf('updateJobs(dt) {');
+check(!/\.rebuild\(\)/.test(updateJobs), 'animated edits never rebuild chunks synchronously');
+check(updateJobs.includes('this.markDirty(c)'), 'animated edits queue chunks through the rebuild budget');
+
 let pass = 0;
 for (const [ok, msg] of results) {
   if (ok) pass++;

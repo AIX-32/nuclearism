@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "id": "battery_stack",
+  "title": "BATTERY STACK",
+  "grid": {
+    "cols": 4,
+    "rows": 8,
+    "cell": 64
+  },
+  "theme": {
+    "background": "#0b0d0c",
+    "panel": "#111111",
+    "line": "#ffffff",
+    "accent": "#ffffff",
+    "text": "#ffffff"
+  },
+  "elements": [
+    {
+      "id": "header",
+      "type": "label",
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 1,
+      "text": "BATTERY STACK",
+      "size": 19,
+      "role": ""
+    },
+    {
+      "id": "status",
+      "type": "label",
+      "x": 0,
+      "y": 1,
+      "w": 4,
+      "h": 1,
+      "text": "IDLE",
+      "size": 14,
+      "role": ""
+    },
+    {
+      "id": "drain",
+      "type": "batteryPie",
+      "x": 0,
+      "y": 2,
+      "w": 4,
+      "h": 5,
+      "role": ""
+    },
+    {
+      "id": "info",
+      "type": "label",
+      "x": 0,
+      "y": 7,
+      "w": 4,
+      "h": 1,
+      "text": "AUTO CHARGE / AUTO DISCHARGE",
+      "size": 11,
+      "role": ""
+    }
+  ]
+}

@@ -2,16 +2,17 @@
     import { WorkbenchUI } from './workbench-ui.js';
     import { CraftOptions } from './craft-options.js';
     import { DragDrop, inventoryAdapter } from './drag-drop.js';
-    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, TERRAIN_BLOCKS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES } from './content.js';
+    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, TERRAIN_BLOCKS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES, BARREL_LOOT, rollWeighted } from './content.js';
     import * as Liquid from './liquids.js';
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
     import { SkylineSystem } from './skyline.js';
     import { BuildingSystem, snapPlan } from './building.js';
     import { swingFrame } from './pieces/door.js';
+    import { mateOf } from './pieces/bunker_door.js';
     import { MapSystem } from './map.js';
     import { createFootsteps, surfToCategory } from './footsteps.js';
-    import { sourcePoint, transmission, relativeBearing, compass, RAD_OCCL } from './radiation.js';
+    import { sourcePoint, transmission, relativeBearing, compass, shaftBurial, RAD_OCCL } from './radiation.js';
     import { vegTint } from './veg-tint.js';
     import { getSetting, renderSettings, onSettingsChange } from './settings.js';
     import { createReplay, pushFrame, pushEdit, sampleAt, editIndexAt, editAt, heldId, packReplay, unpackReplay, replayBytes, frameCount, editCount } from './replay.js';
@@ -62,6 +63,8 @@
     const MENU_WORLD = window.__NUCLEARISM_WORLD__ || null;
     const WORLD_MODE = MENU_WORLD?.mode === 'sandbox' ? 'sandbox' : 'survival';
     const WORLD_TERRAIN = MENU_WORLD?.terrain === 'realistic' ? 'realistic' : 'legacy';
+    const WORLD_FALLOUT = MENU_WORLD?.fallout === 'calm' ? 0.5 : MENU_WORLD?.fallout === 'severe' ? 1.75 : 1;
+    const WORLD_START = MENU_WORLD?.start || 'dawn';
     const WORLD_NAME = MENU_WORLD?.name || 'WORLD';
     document.title = `NUCLEARISM: ${WORLD_NAME}`;
 
@@ -76,7 +79,7 @@
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
-    const ICON_CACHE_KEY = 'idte.icon.v23.';
+    const ICON_CACHE_KEY = 'idte.icon.v24.';
 
     async function readSaveData(key = SAVE_KEY) {
       try {
@@ -105,7 +108,7 @@
     );
 
 
-    let WORLD_SEED = (Math.random() * 100000) | 0;
+    let WORLD_SEED = Number.isFinite(MENU_WORLD?.seed) ? MENU_WORLD.seed | 0 : (Math.random() * 100000) | 0;
     let REALISTIC = null;
     let _realisticSeed = null;
 
@@ -224,7 +227,7 @@
     const B = {
       DEEP_OCEAN: 0, OCEAN: 1, SHALLOW: 2, BEACH: 3,
       PLAINS: 4, FOREST: 5, JUNGLE: 6, SAVANNA: 7, DESERT: 8,
-      TUNDRA: 11, SNOWY_PEAKS: 12, WASTELAND: 14,
+      TUNDRA: 11, SNOWY_PEAKS: 12, WASTELAND: 14, FLOWER_PLAINS: 15,
     };
 
 
@@ -244,6 +247,7 @@
       [B.TUNDRA]: { name: 'TUNDRA', base: 4.0, amp: 2.0, rough: 0.8, top: [0.74, 0.76, 0.73], surf: 'snow' },
       [B.SNOWY_PEAKS]: { name: 'SNOWY PEAKS', base: 22.0, amp: 16.0, rough: 3.0, top: [0.92, 0.94, 0.97], surf: 'snow' },
       [B.WASTELAND]: { name: 'WASTELAND', base: 4.0, amp: 3.0, rough: 1.0, top: [0.18, 0.17, 0.15], surf: 'ash' },
+      [B.FLOWER_PLAINS]: { name: 'FLOWER PLAINS', base: 3.2, amp: 2.0, rough: 0.8, top: [0.28, 0.56, 0.20], surf: 'grass' },
     };
 
 
@@ -251,6 +255,7 @@
       [B.TUNDRA, -0.80, 0.10],
       [B.SNOWY_PEAKS, -0.45, -0.55],
       [B.PLAINS, 0.00, -0.10],
+      [B.FLOWER_PLAINS, 0.08, 0.18],
       [B.FOREST, 0.15, 0.50],
       [B.JUNGLE, 0.75, 0.70],
       [B.SAVANNA, 0.50, -0.15],
@@ -1587,6 +1592,7 @@
           this.mesh.geometry = geo;
         } else {
           this.mesh = new THREE.Mesh(geo, this.world.material);
+          this.mesh.name = 'chunk';
           this.mesh.frustumCulled = true;
           this.world.scene.add(this.mesh);
         }
@@ -1730,6 +1736,7 @@
           this.waterMesh.geometry = geo;
         } else {
           this.waterMesh = new THREE.Mesh(geo, world.waterMaterial);
+          this.waterMesh.name = 'water';
           this.waterMesh.renderOrder = 2;
           world.scene.add(this.waterMesh);
         }
@@ -2878,20 +2885,13 @@
         const cx0 = Math.floor((ux0 - 1) / CHUNK_SIZE), cx1 = Math.floor((ux1 + 1) / CHUNK_SIZE);
         const cy0 = Math.floor((uy0 - 1) / CHUNK_SIZE), cy1 = Math.floor((uy1 + 1) / CHUNK_SIZE);
         const cz0 = Math.floor((uz0 - 1) / CHUNK_SIZE), cz1 = Math.floor((uz1 + 1) / CHUNK_SIZE);
+        // Animated edits go through the budgeted queue like every other edit; rebuilding
+        // the whole mining box here used to stall a frame by tens of milliseconds.
         for (let cx = cx0; cx <= cx1; cx++)
           for (let cy = cy0; cy <= cy1; cy++)
             for (let cz = cz0; cz <= cz1; cz++) {
               const c = this.getChunk(cx, cy, cz);
-              if (!c) continue;
-              if (c.queued) {
-                c.queued = false;
-                const di = this.dirty.indexOf(c);
-                if (di >= 0) {
-                  this.dirty[di] = this.dirty[this.dirty.length - 1];
-                  this.dirty.pop();
-                }
-              }
-              c.rebuild();
+              if (c) this.markDirty(c);
             }
       }
 
@@ -3004,6 +3004,7 @@
             skyline: skylineSystem ? skylineSystem.serialize() : [],
             buildings: buildingSystem ? buildingSystem.serialize() : [],
             map: mapSystem ? mapSystem.serialize() : null,
+            openedBarrels: [...openedBarrels],
             torches: torches.map(t => [
               Math.round(t.pos.x * 100) / 100, Math.round(t.pos.y * 100) / 100, Math.round(t.pos.z * 100) / 100,
               Math.round((t.pos.x - t.ax) * 100) / 100, Math.round((t.pos.y - t.ay) * 100) / 100, Math.round((t.pos.z - t.az) * 100) / 100,
@@ -3114,6 +3115,9 @@
         }
         if (Number.isFinite(data.lastNukeCheckDay)) lastNukeCheckDay = Math.max(0, data.lastNukeCheckDay | 0);
         if (Number.isFinite(data.nukeRadMult)) nukeRadMult = Math.max(1, data.nukeRadMult);
+        if (Array.isArray(data.openedBarrels)) {
+          for (const k of data.openedBarrels) if (typeof k === 'string') openedBarrels.add(k);
+        }
         if (Array.isArray(data.torches)) {
           for (const t of data.torches) {
             if (Array.isArray(t) && t.length >= 6 && t.slice(0, 6).every(Number.isFinite)) {
@@ -3726,13 +3730,11 @@
     }
 
     function entityGroundY(x, z, hintY) {
+      // shortcut: voxel-height snap instead of smooth surfaceY, cheaper for many entities; standY still corrects small steps
       const fromY = hintY + 6;
-      const sy = world.surfaceY(x, z, fromY);
-
-      if (!Number.isFinite(sy) || sy >= fromY - 0.001 || sy < hintY - 40) {
-        return world.getSurfaceHeight(x, z, Math.max(fromY, 90));
-      }
-      return sy;
+      const gy = world.getSurfaceHeight(x, z, Math.max(fromY, 90));
+      if (!Number.isFinite(gy) || gy < hintY - 40) return world.getSurfaceHeight(x, z, 90);
+      return gy;
     }
 
     function entityStandY(x, z, hintY, r, h) {
@@ -4020,6 +4022,9 @@
       scale: 0.01,
       speedWalk: 1.8,
       speedRun: 4.3,
+      wasteSpeed: 1.4,
+      wasteDamage: 20,
+      wasteHitCd: 0.9,
       attackRange: 2.2,
       hp: 120,
       despawn: 96,
@@ -4123,10 +4128,10 @@
           this.speed = 0;
           this.play('attack', 0.12);
         } else if (d < 18) {
-          this.speed = WRAPPER.speedRun;
+          this.speed = this.speedRun || WRAPPER.speedRun;
           this.play('run', 0.2);
         } else {
-          this.speed = WRAPPER.speedWalk;
+          this.speed = this.speedWalk || WRAPPER.speedWalk;
           this.play('walk', 0.3);
         }
 
@@ -4445,8 +4450,13 @@
         this.walkAmt += (targetAmt - this.walkAmt) * Math.min(1, dtStep * 10);
         if (this.walkAmt > 0.01) this.walkPhase += dtStep * (7 + this.speed * 2) * this.walkAmt;
         this.applyWalk(this.walkPhase, this.walkAmt);
-        const gy = entityStandY(this.pos.x, this.pos.z, this.pos.y, this.radius, this.height);
-        if (gy != null) this.pos.y = gy;
+        // shortcut: idle chickens resnap ground every 2s, terrain edits under one can take 2s to settle
+        this.groundSnapT = (this.groundSnapT || 0) - dtStep;
+        if (moving || this.walkAmt > 0.02 || this.groundSnapT <= 0) {
+          const gy = entityStandY(this.pos.x, this.pos.z, this.pos.y, this.radius, this.height);
+          if (gy != null) this.pos.y = gy;
+          this.groundSnapT = 2;
+        }
 
         if (!Number.isFinite(this.pos.x) || !Number.isFinite(this.pos.y) || !Number.isFinite(this.pos.z)) {
           console.warn('[chicken] invalid position', this.pos.x, this.pos.y, this.pos.z);
@@ -5213,7 +5223,9 @@
 
 
 
-    const clock = { day: 1, t: 0 };
+    const dayFrac0 = TUNING.DAY_FRACTION ?? 0.5;
+    const START_TIMES = { dawn: 0, noon: 0.25, dusk: dayFrac0, night: dayFrac0 + (1 - dayFrac0) / 2 };
+    const clock = { day: 1, t: (START_TIMES[WORLD_START] ?? 0) * TUNING.DAY_SECONDS };
     let nuclearStrikes = [];
     let lastNukeCheckDay = 0;
     let nukeRadMult = 1;
@@ -5237,6 +5249,7 @@
       return {
         mined: 0, placed: 0, crafted: 0, machines: 0, kills: 0,
         dosePeak: 0, research: 0, fuel: 0, walked: 0,
+        chopped: 0, blasts: 0, harvested: 0,
         built: Object.create(null), started: Object.create(null),
       };
     }
@@ -5264,7 +5277,7 @@
 
     function ambientRad() {
       const tiers = Math.max(0, clock.day - TUNING.RAD_START_DAY + 1) / TUNING.RAD_RAMP_DAY;
-      return tiers <= 0 ? 0 : TUNING.AMBIENT_BASE * Math.pow(tiers, TUNING.AMBIENT_EXP);
+      return tiers <= 0 ? 0 : TUNING.AMBIENT_BASE * Math.pow(tiers, TUNING.AMBIENT_EXP) * WORLD_FALLOUT;
     }
 
 
@@ -5480,7 +5493,12 @@
 
       const surfY = world.surfaceY(px, pz, Math.ceil(terrainTrend(px + WORLD_SEED, pz + WORLD_SEED)) + 30);
       const depth = Math.max(0, surfY - py);
-      const burial = depth <= 0.5 ? 1 : Math.pow(0.45, Math.min(depth, 40));
+      const upRange = depth <= 0.5 ? 0 : Math.min(depth + 1, 48);
+      const up = upRange
+        ? transmission(radFactor, px, py, pz, 0, 1, 0, { samples: Math.ceil(upRange), range: upRange, solid: RAD_OCCL.solid })
+        : 1;
+      const built = upRange && buildingSystem ? buildingSystem.shadow(px, py, pz, 0, 1, 0, upRange) : 1;
+      const burial = shaftBurial(depth, up, built);
       const ambient = ambientRad() * radTransmission(dx, 0, dz) * burial;
 
       let machine = 0, best = ambient, bx = dx, bz = dz, bdist = d;
@@ -5584,14 +5602,21 @@
       }
       paintGainCard(now);
     }
+    let _gainCardKey = '';
     function paintGainCard(now = performance.now()) {
       if (!gainCard) return;
       gainEvents = gainEvents.filter((e) => now - e.t < 2200);
-      if (!gainEvents.length) { gainCard.classList.remove('show'); gainCard.innerHTML = ''; return; }
+      if (!gainEvents.length) {
+        if (_gainCardKey) { gainCard.classList.remove('show'); gainCard.innerHTML = ''; _gainCardKey = ''; }
+        return;
+      }
       const e = gainEvents[gainEvents.length - 1];
+      const key = e.t + ':' + e.kind + ':' + e.id + ':' + e.n;
+      if (key === _gainCardKey) return;
       const name = ITEMS[e.id]?.name || e.id;
       gainCard.innerHTML = `<span class="gk">${e.kind}</span><span class="gi">+${e.n} ${name}</span>`;
       gainCard.classList.add('show');
+      _gainCardKey = key;
     }
     function hasGardeningGloves() {
       const g = inv.armor.hands;
@@ -6262,6 +6287,8 @@
       ground: { cell: 2.0, size: 1.0, fill: { [B.FOREST]: 0.62, [B.JUNGLE]: 0.60, [B.PLAINS]: 0.72, [B.SAVANNA]: 0.55, [B.TUNDRA]: 0.30, [B.SNOWY_PEAKS]: 0.10, [B.WASTELAND]: 0.30, [B.BEACH]: 0.05 } },
       cover: { cell: 3.0, size: 1.2, fill: { [B.FOREST]: 0.55, [B.JUNGLE]: 0.60, [B.PLAINS]: 0.38, [B.SAVANNA]: 0.26, [B.TUNDRA]: 0.30, [B.SNOWY_PEAKS]: 0.14, [B.WASTELAND]: 0.08 } },
       floor: { cell: 2.0, size: 1.0, fill: { [B.FOREST]: 0.50, [B.PLAINS]: 0.32, [B.JUNGLE]: 0.46, [B.SAVANNA]: 0.30, [B.TUNDRA]: 0.24 } },
+      // 1.2 m still reads as a flower field; 0.72 m made ~14k cells a 48 m radius.
+      flowers: { cell: 1.2, size: 1.0, fill: { [B.FLOWER_PLAINS]: 1.0, [B.PLAINS]: 0.35, [B.FOREST]: 0.28 } },
       aquatic: { cell: 3.0, size: 1.0, fill: { [B.SHALLOW]: 0.50, [B.BEACH]: 0.40, [B.OCEAN]: 0.06 } },
     };
 
@@ -6302,13 +6329,28 @@
       { n: 'Azalea_Litter_1', layer: 'floor', dist: 22, scale: [0.90, 1.30], sink: 0.00, slope: 0.40, trunk: false, align: 'surface', parentOnly: true, weights: { [B.FOREST]: 2, [B.JUNGLE]: 2 } },
       { n: 'Flag_Iris', layer: 'aquatic', dist: 40, scale: [0.90, 1.20], sink: 0.05, slope: 0.20, trunk: false, align: 'surface', water: 'margin', weights: { [B.SHALLOW]: 3, [B.BEACH]: 1.5 } },
       { n: 'Duckweed', layer: 'aquatic', dist: 46, scale: [0.90, 1.40], sink: 0.00, slope: 0.00, trunk: false, align: 'surface', water: 'surface', weights: { [B.SHALLOW]: 1.5, [B.BEACH]: 1, [B.OCEAN]: 0.5 } },
+
+      { n: 'flower_field', layer: 'flowers', atlas: [
+        'assets/images/vegetation/flowers/avens_pink.png',
+        'assets/images/vegetation/flowers/babysbreath_white.png',
+        'assets/images/vegetation/flowers/bellflower_blue.png',
+        'assets/images/vegetation/flowers/bellflower_purple.png',
+        'assets/images/vegetation/flowers/chamomile_white.png',
+        'assets/images/vegetation/flowers/deadnettle_pink.png',
+        'assets/images/vegetation/flowers/geranium_pink.png',
+        'assets/images/vegetation/flowers/kalanchoe_red.png',
+        'assets/images/vegetation/flowers/ragwort_yellow.png',
+        'assets/images/vegetation/flowers/smartweed_pink.png',
+        'assets/images/vegetation/flowers/foxtail_green.png',
+        'assets/images/vegetation/flowers/wheatgrass_green.png',
+      ], dist: 48, distKeep: true, capOverride: 6000, scale: [0.40, 0.95], sink: 0.03, slope: 0.55, trunk: false, align: 'upright', pickup: { itemId: 'flower', count: 1 }, weights: { [B.FLOWER_PLAINS]: 1, [B.PLAINS]: 1, [B.FOREST]: 1 } },
     ];
 
 
 
 
     for (const sp of VEG_SPECIES) {
-      sp.dist = sp.layer === 'canopy' ? 100 : Math.min(sp.dist, 52);
+      if (!sp.distKeep) sp.dist = sp.layer === 'canopy' ? 100 : Math.min(sp.dist, 52);
     }
 
     function _vegHash(gx, gz, salt) {
@@ -6320,6 +6362,30 @@
       let t = r * sum;
       for (const c of cand) { t -= c.w; if (t <= 0) return c.s; }
       return cand[cand.length - 1].s;
+    }
+
+    function flowerPatchIndex(x, z, n) {
+      if (n < 2) return 0;
+      const sx = x + WORLD_SEED, sz = z + WORLD_SEED;
+      const wx = sx + (fbm3(sx * 0.011, 73.1, sz * 0.011, 2) - 0.5) * 28;
+      const wz = sz + (fbm3(sx * 0.011, 91.7, sz * 0.011, 2) - 0.5) * 28;
+      const v = fbm3(wx * 0.018, 12.3, wz * 0.018, 3);
+      const w2 = fbm3(wx * 0.034, 54.7, wz * 0.034, 2);
+      let best = 0, bestD = 1e9, second = 0, secondD = 1e9;
+      for (let i = 0; i < n; i++) {
+        const center = (i + 0.5) / n;
+        const dv = Math.abs(v - center);
+        const dw = Math.abs(w2 - hash3(i * 97, 41, 17)) * 0.35;
+        const d = dv + dw;
+        if (d < bestD) { secondD = bestD; second = best; bestD = d; best = i; }
+        else if (d < secondD) { secondD = d; second = i; }
+      }
+      const gap = secondD - bestD;
+      if (gap < 0.035) {
+        const mix = fbm3(sx * 0.09 + 7.3, 33.5, sz * 0.09 - 4.1, 2);
+        if (mix > 0.5 + gap / 0.07) best = second;
+      }
+      return best;
     }
 
 
@@ -6348,6 +6414,11 @@
       let fill = VEG_LAYERS[layer].fill[b];
       if (!fill) return null;
       if (layer === 'canopy' && WORLD_TERRAIN === 'realistic') fill = Math.min(1, canopyFill(x, z, b, fill));
+      // wildflowers leak out of the flower plains into small, rare patches in plains/forest
+      if (layer === 'flowers' && b !== B.FLOWER_PLAINS) {
+        const sx = x + WORLD_SEED, sz = z + WORLD_SEED;
+        fill *= smoothstep01(0.66, 0.74, fbm3(sx * 0.02, 63.7, sz * 0.02, 2));
+      }
       if (_vegHash(gx, gz, 3) >= fill) return null;
       const cand = [];
       for (const sp of VEG_SPECIES) {
@@ -6356,12 +6427,19 @@
         if (w) cand.push({ s: sp, w });
       }
       if (!cand.length) return null;
-      const sp = _pickWeighted(cand, _vegHash(gx, gz, 4));
+      let sp, flowerType = -1;
+      if (layer === 'flowers') {
+        sp = cand[0].s;
+        const spot = _vegHash(gx, gz, 77);
+        flowerType = spot < 0.035 ? 10 : spot < 0.07 ? 11 : flowerPatchIndex(x, z, 10);
+      } else {
+        sp = _pickWeighted(cand, _vegHash(gx, gz, 4));
+      }
       return {
         sp, x, z, b,
         scale: (sp.scale[0] + (sp.scale[1] - sp.scale[0]) * _vegHash(gx, gz, 5)) * VEG_LAYERS[layer].size,
         yaw: _vegHash(gx, gz, 6) * Math.PI * 2,
-        gx, gz,
+        gx, gz, flowerType,
       };
     }
 
@@ -6412,7 +6490,7 @@
         if (WORLD_TERRAIN === 'realistic' && y > 112) return null;
 
         if (caveCarveAt(pl.x + WORLD_SEED, y + 0.4, pl.z + WORLD_SEED) > 0.02) return null;
-        if ((sp.layer === 'canopy' || sp.layer === 'ground' || sp.layer === 'cover' || sp.layer === 'floor') && groundDepth(pl.x, y, pl.z) >= 1.2) return null;
+        if ((sp.layer === 'canopy' || sp.layer === 'ground' || sp.layer === 'cover' || sp.layer === 'floor' || sp.layer === 'flowers') && groundDepth(pl.x, y, pl.z) >= 1.2) return null;
         if (sp.water === 'margin') {
           if (!wet || y > SEA_LEVEL + 0.4) return null;
         } else if (wet) {
@@ -6445,16 +6523,78 @@
 
 
 
-    async function loadCardModel(sp) {
-      const tex = await new THREE.TextureLoader().loadAsync(sp.tex);
+    function dilateAlpha(tex) {
+      const img = tex.image;
+      if (!img || !img.width) return;
+      const w = img.width, h = img.height;
+      const pad = document.createElement('canvas');
+      pad.width = w; pad.height = h;
+      const g = pad.getContext('2d');
+      const r = 8;
+      for (let dy = -r; dy <= r; dy += 2) for (let dx = -r; dx <= r; dx += 2) g.drawImage(img, dx, dy);
+      g.drawImage(img, 0, 0);
+      tex.image = pad;
+      tex.needsUpdate = true;
+    }
+
+    async function loadAtlasTexture(paths) {
+      const imgs = await Promise.all(paths.map((p) => new Promise((res, rej) => {
+        const img = new Image(); img.crossOrigin = 'anonymous';
+        img.onload = () => res(img); img.onerror = rej; img.src = p;
+      })));
+      const cols = 4, rows = Math.ceil(imgs.length / cols);
+      const cellW = Math.max(...imgs.map((i) => i.width));
+      const cellH = Math.max(...imgs.map((i) => i.height));
+      const c = document.createElement('canvas');
+      c.width = cellW * cols; c.height = cellH * rows;
+      const g = c.getContext('2d');
+      const rects = [];
+      imgs.forEach((img, i) => {
+        const col = i % cols, row = Math.floor(i / cols);
+        const x = col * cellW, y = row * cellH;
+        const dw = cellW, dh = cellH;
+        const sw = img.width, sh = img.height;
+        const s = Math.min(dw / sw, dh / sh);
+        const rw = sw * s, rh = sh * s;
+        const ox = x + (dw - rw) * 0.5, oy = y + (dh - rh);
+        g.drawImage(img, ox, oy, rw, rh);
+        rects.push([ox / c.width, 1 - (oy + rh) / c.height, rw / c.width, rh / c.height]);
+      });
+      let outC = c;
+      if (c.width > 2048) {
+        const s = 2048 / c.width;
+        outC = document.createElement('canvas');
+        outC.width = 2048; outC.height = Math.round(c.height * s);
+        outC.getContext('2d').drawImage(c, 0, 0, outC.width, outC.height);
+      }
+      const tex = new THREE.CanvasTexture(outC);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 4;
-      const w = tex.image.width / tex.image.height;
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipMapLinearFilter;
+      return { tex, rects, aspect: cellW / cellH };
+    }
+
+    async function loadCardModel(sp) {
+      let tex, atlasRects = null, atlasAspect = 1;
+      if (sp.atlas) {
+        const a = await loadAtlasTexture(sp.atlas);
+        tex = a.tex; atlasRects = a.rects; atlasAspect = a.aspect;
+        dilateAlpha(tex);
+      } else {
+        tex = await new THREE.TextureLoader().loadAsync(sp.tex);
+        if (sp.layer === 'flowers') dilateAlpha(tex);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+      }
+      const w = sp.atlas ? atlasAspect : (tex.image.width / tex.image.height);
       const pos = [], nor = [], uv = [], idx = [];
-      const planes = [
-        [[-w / 2, 0, 0], [w / 2, 0, 0], [w / 2, 1, 0], [-w / 2, 1, 0]],
-        [[0, 0, -w / 2], [0, 0, w / 2], [0, 1, w / 2], [0, 1, -w / 2]],
-      ];
+      const planes = sp.atlas
+        ? [[[-w / 2, 0, 0], [w / 2, 0, 0], [w / 2, 1, 0], [-w / 2, 1, 0]]]
+        : [
+          [[-w / 2, 0, 0], [w / 2, 0, 0], [w / 2, 1, 0], [-w / 2, 1, 0]],
+          [[0, 0, -w / 2], [0, 0, w / 2], [0, 1, w / 2], [0, 1, -w / 2]],
+        ];
       const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
       for (const p of planes) {
         const b = pos.length / 3;
@@ -6470,15 +6610,82 @@
       geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3));
       geo.setIndex(idx);
       const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.FrontSide, vertexColors: true });
+      if (sp.atlas) {
+        mat.onBeforeCompile = (shader) => {
+          shader.vertexShader = 'attribute vec4 aFlowerUv;\nvarying vec4 vFlowerUv;\n' + shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+            vec3 iPos = instanceMatrix[3].xyz;
+            float iScale = length(instanceMatrix[0].xyz);
+            float fd = length((modelViewMatrix * vec4(iPos, 1.0)).xyz);
+            float fs = 1.0 + smoothstep(16.0, 46.0, fd) * 0.8;
+            vec2 toCam = normalize(cameraPosition.xz - iPos.xz + vec2(0.0001));
+            vec3 right = vec3(toCam.y, 0.0, -toCam.x);
+            vec3 up = vec3(0.0, 1.0, 0.0);
+            transformed = iPos + right * (transformed.x * iScale * fs) + up * (transformed.y * iScale * (1.0 + smoothstep(16.0, 46.0, fd) * 0.3));
+            objectNormal = vec3(0.0, 1.0, 0.0);`
+          ).replace(
+            '#include <project_vertex>',
+            `vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            vViewPosition = - mvPosition.xyz;`
+          ).replace(
+            '#include <worldpos_vertex>',
+            'vec4 worldPosition = vec4( transformed, 1.0 );'
+          ).replace(
+            '#include <defaultnormal_vertex>',
+            'vec3 transformedNormal = normalMatrix * objectNormal;'
+          ).replace(
+            '#include <uv_vertex>',
+            '#include <uv_vertex>\nvFlowerUv = aFlowerUv;'
+          );
+          shader.fragmentShader = 'varying vec4 vFlowerUv;\n' + shader.fragmentShader.replace(
+            '#include <map_fragment>',
+            `#ifdef USE_MAP
+              vec2 fUv = vFlowerUv.xy + vMapUv * vFlowerUv.zw;
+              vec4 sampledDiffuseColor = texture2D( map, fUv );
+              #ifdef DECODE_VIDEO_TEXTURE
+                sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
+              #endif
+              diffuseColor *= sampledDiffuseColor;
+            #endif`
+          );
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <alphatest_fragment>',
+            `#ifdef USE_ALPHATEST
+              float d = length(vViewPosition);
+              float at = mix(alphaTest, alphaTest * 0.25, smoothstep(18.0, 55.0, d));
+              if ( diffuseColor.a < at ) discard;
+            #endif`
+          );
+        };
+        mat.customProgramCacheKey = () => 'flower-atlas-billboard';
+      } else if (sp.layer === 'flowers') {
+        mat.onBeforeCompile = (shader) => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <alphatest_fragment>',
+            `#ifdef USE_ALPHATEST
+              float d = length(vViewPosition);
+              float at = mix(alphaTest, alphaTest * 0.25, smoothstep(18.0, 55.0, d));
+              if ( diffuseColor.a < at ) discard;
+            #endif`
+          );
+        };
+        mat.customProgramCacheKey = () => 'flower-card';
+      }
 
       const cell = VEG_LAYERS[sp.layer].cell;
-      const cap = Math.min(900, Math.ceil(Math.PI * sp.dist * sp.dist / (cell * cell)) + 16);
+      const cap = sp.capOverride || Math.min(900, Math.ceil(Math.PI * sp.dist * sp.dist / (cell * cell)) + 16);
       const group = new THREE.Group();
       group.name = 'veg:' + sp.n;
       const mesh = new THREE.InstancedMesh(geo, mat, cap);
       mesh.count = 0;
-      mesh.frustumCulled = false;
+      mesh.visible = false;
+      mesh.frustumCulled = !atlasRects;
       mesh.matrixAutoUpdate = false;
+      if (atlasRects) {
+        mesh.geometry.setAttribute('aFlowerUv', new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4));
+      }
       group.add(mesh);
       scene.add(group);
 
@@ -6486,13 +6693,30 @@
       sp.cap = cap;
       sp.trunkR = 0;
       sp.placements = new Map();
+      sp.atlasRects = atlasRects;
       sp.ready = true;
       _vegGX = NaN;
       return sp;
     }
 
+    // The bottom band includes flared roots and low branches; a max over it makes the collider
+    // far wider than the bark. Sample only the lowest slice and take a high percentile of it.
+    function vegTrunkRadius(parts, cx, cz, mny, mxy) {
+      const barkTop = mny + (mxy - mny) * 0.06;
+      const radii = [];
+      for (const p of parts) {
+        const a = p.geo.attributes.position.array;
+        for (let i = 0; i < a.length; i += 3) {
+          if (a[i + 1] <= barkTop) radii.push(Math.hypot(a[i] - cx, a[i + 2] - cz));
+        }
+      }
+      if (!radii.length) return 0;
+      radii.sort((a, b) => a - b);
+      return radii[Math.floor((radii.length - 1) * 0.75)];
+    }
+
     async function loadVegModel(sp) {
-      if (sp.tex) return loadCardModel(sp);
+      if (sp.tex || sp.atlas) return loadCardModel(sp);
       const isFbx = sp.file === 'scene.fbx';
       const file = sp.file || 'scene.gltf';
       const root = await new Promise((resolve, reject) => {
@@ -6554,12 +6778,12 @@
       }
 
 
-      let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxz = -Infinity;
+      let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
       for (const p of parts) {
         const a = p.geo.attributes.position.array;
         for (let i = 0; i < a.length; i += 3) {
           if (a[i] < mnx) mnx = a[i]; if (a[i] > mxx) mxx = a[i];
-          if (a[i + 1] < mny) mny = a[i + 1];
+          if (a[i + 1] < mny) mny = a[i + 1]; if (a[i + 1] > mxy) mxy = a[i + 1];
           if (a[i + 2] < mnz) mnz = a[i + 2]; if (a[i + 2] > mxz) mxz = a[i + 2];
         }
       }
@@ -6574,22 +6798,17 @@
       if (cn > 0) { cx /= cn; cz /= cn; } else { cx = (mnx + mxx) / 2; cz = (mnz + mxz) / 2; }
 
 
-      let trunkR = 0;
-      for (const p of parts) {
-        const a = p.geo.attributes.position.array;
-        for (let i = 0; i < a.length; i += 3) {
-          if (a[i + 1] <= band) trunkR = Math.max(trunkR, Math.hypot(a[i] - cx, a[i + 2] - cz));
-        }
-      }
+      const trunkR = vegTrunkRadius(parts, cx, cz, mny, mxy);
       for (const p of parts) p.geo.translate(-cx, -mny, -cz);
 
       const cell = VEG_LAYERS[sp.layer].cell;
-      const cap = Math.min(900, Math.ceil(Math.PI * sp.dist * sp.dist / (cell * cell)) + 16);
+      const cap = sp.capOverride || Math.min(900, Math.ceil(Math.PI * sp.dist * sp.dist / (cell * cell)) + 16);
       const group = new THREE.Group();
       group.name = 'veg:' + sp.n;
       const built = parts.map((p) => {
         const mesh = new THREE.InstancedMesh(p.geo, p.mat, cap);
         mesh.count = 0;
+        mesh.visible = false;
         mesh.frustumCulled = false;
         mesh.matrixAutoUpdate = false;
         group.add(mesh);
@@ -6896,6 +7115,111 @@
       }
     }
 
+    // Wasteland barrels: deterministic per-cell salvage, streamed like industrial sites.
+    const BARREL_CELL = 24;
+    const BARREL_CHANCE = 0.75;
+    const _barrelCells = new Map();
+    const _barrelActive = new Map();
+    const openedBarrels = new Set();
+    let _barrelSeed = null, _barrelGX = NaN, _barrelGZ = NaN;
+
+    function barrelHash(cx, cz, n) {
+      return hash3(cx * 151 + WORLD_SEED + n * 911, n * 41 + 7, cz * 211 + WORLD_SEED + n * 677);
+    }
+
+    function barrelCell(cx, cz) {
+      if (_barrelSeed !== WORLD_SEED) { _barrelSeed = WORLD_SEED; _barrelCells.clear(); }
+      const k = (cx + 32768) * 65536 + (cz + 32768);
+      if (_barrelCells.has(k)) return _barrelCells.get(k);
+      let list = [];
+      if (barrelHash(cx, cz, 0) < BARREL_CHANCE) {
+        const count = 1 + Math.floor(barrelHash(cx, cz, 1) * 4);
+        for (let i = 0; i < count; i++) {
+          list.push({
+            key: `${cx},${cz}:${i}`,
+            x: (cx + 0.12 + barrelHash(cx, cz, 2 + i * 3) * 0.76) * BARREL_CELL,
+            z: (cz + 0.12 + barrelHash(cx, cz, 3 + i * 3) * 0.76) * BARREL_CELL,
+            yaw: barrelHash(cx, cz, 4 + i * 3) * Math.PI * 2,
+          });
+        }
+      }
+      _barrelCells.set(k, list);
+      return list;
+    }
+
+    function barrelDespawn(rec) {
+      scene.remove(rec.mesh);
+      const ai = machineActivators.indexOf(rec.activator);
+      if (ai >= 0) machineActivators.splice(ai, 1);
+      const root = rec.mesh.userData.outlineRoot;
+      if (root && root.parent) root.parent.remove(root);
+      const oi = outlineTargets.indexOf(root);
+      if (oi >= 0) outlineTargets.splice(oi, 1);
+      rec.mesh.geometry.dispose();
+      rec.mesh.material.dispose();
+    }
+
+    function barrelCreate(b, y) {
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.42, 1.05, 10),
+        new THREE.MeshLambertMaterial({ color: 0x7a5b3c, emissive: 0x140d05 })
+      );
+      mesh.position.set(b.x, y + 0.53, b.z);
+      mesh.rotation.y = b.yaw;
+      scene.add(mesh);
+      const rec = { key: b.key, y, mesh, activator: null };
+      rec.activator = registerMachine({
+        x: b.x, y: y + 0.6, z: b.z, radius: 1.3, label: 'PRY OPEN BARREL', mesh,
+        onActivate: () => {
+          const held = inv.hot[inv.sel];
+          if (!held || !ITEMS[held.id]?.tool?.crowbar) { notice('NEED CROWBAR'); return; }
+          openedBarrels.add(b.key);
+          const n = 2 + Math.floor(Math.random() * 3);
+          for (let i = 0; i < n; i++) {
+            const id = Math.random() < TUNING.BARREL_SCRAP_CHANCE ? 'scrap' : rollWeighted(BARREL_LOOT);
+            const left = give(id, 1);
+            if (left > 0) {
+              const a = b.yaw + (i / n) * Math.PI * 2;
+              spawnDrop(id, left, { x: b.x + Math.cos(a) * 1.2, y: y + 0.4, z: b.z + Math.sin(a) * 1.2 });
+            }
+          }
+          notice(`BARREL OPENED · ${n} ITEMS`);
+          barrelDespawn(rec);
+          _barrelActive.delete(b.key);
+        },
+      });
+      return rec;
+    }
+
+    function barrelUpdate(px, pz) {
+      if (!Number.isFinite(px) || !Number.isFinite(pz)) return;
+      const gx = Math.floor(px / 8), gz = Math.floor(pz / 8);
+      if (gx === _barrelGX && gz === _barrelGZ) return;
+      _barrelGX = gx; _barrelGZ = gz;
+      const reach = Math.min(viewRadius, DETAIL_CHUNK_RADIUS) * 16 + 24;
+      const rc = Math.ceil(reach / BARREL_CELL);
+      const ccx = Math.floor(px / BARREL_CELL), ccz = Math.floor(pz / BARREL_CELL);
+      const keep = new Set();
+      for (let dz = -rc; dz <= rc; dz++) {
+        for (let dx = -rc; dx <= rc; dx++) {
+          for (const b of barrelCell(ccx + dx, ccz + dz)) {
+            if (Math.hypot(b.x - px, b.z - pz) > reach) continue;
+            if (openedBarrels.has(b.key) || biomeAt(b.x, b.z) !== B.WASTELAND) continue;
+            const fromY = Math.ceil(terrainTrend(b.x + WORLD_SEED, b.z + WORLD_SEED)) + 12;
+            const y = world.surfaceY(b.x, b.z, fromY);
+            if (!Number.isFinite(y) || y <= -8) continue;
+            keep.add(b.key);
+            if (!_barrelActive.has(b.key)) _barrelActive.set(b.key, barrelCreate(b, y));
+          }
+        }
+      }
+      for (const [key, rec] of _barrelActive) {
+        if (keep.has(key)) continue;
+        barrelDespawn(rec);
+        _barrelActive.delete(key);
+      }
+    }
+
     const IND_MASK_KEY = 'idte.ind.masks.v1';
     let _indMaskData = await idbGet(IND_MASK_KEY);
     if (typeof _indMaskData === 'string') { try { _indMaskData = JSON.parse(_indMaskData); } catch { _indMaskData = {}; } }
@@ -6950,7 +7274,7 @@
       if (pb) { pb.disabled = true; pb.textContent = 'LOADING 0%'; }
     }
 
-    const _vegActive = { canopy: new Map(), ground: new Map(), cover: new Map(), floor: new Map(), aquatic: new Map() };
+    const _vegActive = { canopy: new Map(), ground: new Map(), cover: new Map(), floor: new Map(), flowers: new Map(), aquatic: new Map() };
     const _vegHarvested = new Set();
     const trunkColliders = [];
     let _vegGX = NaN, _vegGZ = NaN;
@@ -7003,7 +7327,7 @@
       if ((_vegCheckFrame++ & 3) === 0) {
         const phase = (_vegCheckFrame >>> 2) % VEG_CHECK_STEP;
         let i = 0;
-        for (const layer of ['canopy', 'ground', 'cover', 'floor', 'aquatic']) {
+        for (const layer of ['canopy', 'ground', 'cover', 'floor', 'flowers', 'aquatic']) {
           const active = _vegActive[layer];
           for (const [key, pl] of active) {
             if (!pl || pl.sp.trunk || pl.falling) continue;
@@ -7033,15 +7357,29 @@
         _m.compose(_v, pl.q, _sc);
         for (const part of sp.parts) {
           part.mesh.setMatrixAt(i, _m);
-
-          if (sp.tex) part.mesh.setColorAt(i, VEG_BIOME_TINT.get(pl.b) || _vegWhite);
+          const tint = VEG_BIOME_TINT.get(pl.b);
+          if (tint) { part.mesh.setColorAt(i, tint); part.__tintDirty = true; }
+          if (sp.atlasRects) {
+            const uv = part.mesh.geometry.getAttribute('aFlowerUv');
+            const r = sp.atlasRects[Math.max(0, pl.flowerType | 0)] || sp.atlasRects[0];
+            uv.setXYZW(i, r[0], r[1], r[2], r[3]);
+          }
         }
         i++;
       }
       for (const part of sp.parts) {
         part.mesh.count = i;
+        part.mesh.visible = i > 0;
         part.mesh.instanceMatrix.needsUpdate = true;
-        if (part.mesh.instanceColor) part.mesh.instanceColor.needsUpdate = true;
+        if (part.__tintDirty && part.mesh.instanceColor) { part.mesh.instanceColor.needsUpdate = true; part.__tintDirty = false; }
+        const uv = part.mesh.geometry.getAttribute('aFlowerUv');
+        if (uv) uv.needsUpdate = true;
+        if (sp.atlasRects) {
+          const c = part.mesh.boundingSphere || new THREE.Sphere();
+          c.center.set(player.pos.x, player.pos.y, player.pos.z);
+          c.radius = sp.dist + 12;
+          part.mesh.boundingSphere = c;
+        }
       }
       sp.visible = i;
     }
@@ -7061,7 +7399,7 @@
     function _vegBeginStream(px, pz) {
       _vegStreamTask = {
         px, pz, li: 0,
-        layers: ['canopy', 'ground', 'cover', 'floor', 'aquatic'],
+        layers: ['canopy', 'ground', 'cover', 'floor', 'flowers', 'aquatic'],
         layer: null, L: null, maxD: 0, r: 0, ccx: 0, ccz: 0, active: null, keep: null, dz: 0, dx: 0, phase: 0,
       };
     }
@@ -7137,7 +7475,12 @@
             } else if (!active.has(key)) {
               const pl = vegCell(layer, cx, cz);
               if (pl && pl.sp.ready) {
-                const rp = dd <= pl.sp.dist ? vegResolve(pl) : null;
+                let skip = false;
+                if (pl.sp.layer === 'flowers' && dd > 18) {
+                  const keep = 1 - smoothstep01(18, pl.sp.dist, dd) * 0.72;
+                  if (_vegHash(cx, cz, 71) > keep) skip = true;
+                }
+                const rp = (!skip && dd <= pl.sp.dist) ? vegResolve(pl) : null;
                 if (!rp) { if (dd <= pl.sp.dist) active.set(key, null); }
                 else {
                   active.set(key, rp);
@@ -7193,7 +7536,10 @@
           _vegBeginStream(px, pz);
         }
       }
-      if (_vegStreamTask) vegStreamStep(1.0);
+      if (_vegStreamTask) {
+        const l = _vegStreamTask.layer;
+        vegStreamStep(l === 'flowers' || l === 'flower_spots' ? 4.0 : 2.0);
+      }
 
 
       const ti = performance.now();
@@ -7448,6 +7794,7 @@
     function chopTree(t, power = 1) {
       const cutY = THREE.MathUtils.clamp(t.cutLocalY, 0.06, t.topY - 0.04);
       if (!(cutY > 0.02) || cutY >= t.topY) return;
+      achBump('chopped');
 
       const topGrp = clipPiece(t.parts, cutY, true);
       const stumpGrp = clipPiece(t.parts, cutY, false);
@@ -7906,16 +8253,15 @@
       for (const root of outlineTargets) root.visible = false;
     }
 
+    const _pickupGeo = new THREE.SphereGeometry(0.28, 10, 10);
+    const _pickupMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false });
     function makePickupMesh(itemId) {
-      const mesh = new THREE.Mesh(
-
-        new THREE.SphereGeometry(0.28, 10, 10),
-        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })
-      );
-
-      mesh.visible = true;
+      const mesh = new THREE.Mesh(_pickupGeo, _pickupMat);
+      // Hit target only: it has no visible surface, so keep it out of the render list.
+      // Raycaster ignores `visible`, so the interact prompt still works.
+      mesh.visible = false;
       mesh.userData.itemId = itemId;
-      addOutlineToMesh(mesh, 1.5, 0xffffff);
+      // No outline: the root was never parented to the scene, so it could never draw.
       return mesh;
     }
 
@@ -7933,6 +8279,7 @@
 
           if (!bagRoomFor(itemId, count)) { notice('INVENTORY FULL'); return; }
           give(itemId, count);
+          achBump('harvested');
 
           if (pickup.__vegLayer && pickup.__vegCellKey) {
             const layerMap = _vegActive[pickup.__vegLayer];
@@ -7995,12 +8342,20 @@
       interactRay.far = REACH;
 
       const roots = [];
+      const eye = camera.position;
       for (const pickup of worldPickups) {
         if (pickup.__vegLayer && !hasGardeningGloves()) continue;
+        const dx = pickup.x - eye.x, dy = pickup.y - eye.y, dz = pickup.z - eye.z;
+        const r = REACH + (pickup.radius || 0.9);
+        if (dx * dx + dy * dy + dz * dz > r * r) continue;
         if (pickup.mesh) roots.push(pickup.mesh);
       }
       for (const machine of machineActivators) {
-        if (machine.mesh) roots.push(machine.mesh);
+        if (!machine.mesh) continue;
+        const dx = machine.x - eye.x, dy = machine.y - eye.y, dz = machine.z - eye.z;
+        const r = REACH + (machine.radius || 1.4);
+        if (dx * dx + dy * dy + dz * dz > r * r) continue;
+        roots.push(machine.mesh);
       }
       if (!roots.length) return null;
 
@@ -8021,8 +8376,9 @@
       return null;
     }
 
+    let _interactResolveAt = 0, _interactResolved = null;
     function refreshInteractPrompt() {
-      if (sleep || drive) { hideAllOutlines(); activeInteractTarget = null; pendingInteractTarget = null; pendingInteractSince = 0; hideTip(); return; }
+      if (sleep || drive) { hideAllOutlines(); activeInteractTarget = null; pendingInteractTarget = null; pendingInteractSince = 0; _interactResolved = null; hideTip(); return; }
       if (mineConfirm && (performance.now() - mineConfirm.t) > MINE_CONFIRM_MS) clearMineConfirm();
       if (player.vel.lengthSq() > 0.1) {
         if (activeInteractTarget || pendingInteractTarget) {
@@ -8044,7 +8400,9 @@
         }
         return;
       }
-      const target = resolveInteractTarget();
+      const _now = performance.now();
+      if (_now - _interactResolveAt > 80) { _interactResolved = resolveInteractTarget(); _interactResolveAt = _now; }
+      const target = _interactResolved;
       if (!target) {
         if (activeInteractTarget || pendingInteractTarget) {
           hideAllOutlines();
@@ -8183,16 +8541,13 @@
         (saved?.player?.[2] ?? 0.5) + WORLD_SEED,
       );
     }
-    if (saved && saved.player && saved.seed !== undefined) {
+    if (saved && saved.player && saved.player.slice(0, 3).every(Number.isFinite)) {
       player.pos.set(saved.player[0], saved.player[1], saved.player[2]);
       player.yaw = saved.player[3] || 0;
       player.pitch = saved.player[4] || 0;
-      if (!validSpawnPos(player.pos.x, player.pos.y, player.pos.z)) {
-        spawnOnGround(saved.player[0], saved.player[2]);
-      } else {
-        for (let i = 0; i < 14 && world.field.sample(player.pos.x, player.pos.y + 0.5, player.pos.z) > 0; i++) {
-          player.pos.y += 1;
-        }
+      // A saved player may stand in any biome or on any pad; only lift them out of solid ground.
+      for (let i = 0; i < 14 && world.field.sample(player.pos.x, player.pos.y + 0.5, player.pos.z) > 0; i++) {
+        player.pos.y += 1;
       }
       player.vel.set(0, 0, 0);
     } else {
@@ -8224,7 +8579,7 @@
       machines: () => (machineSystem ? machineSystem.instances : []),
       walls: () => (buildingSystem ? buildingSystem.pieces.values() : []),
       notice: (msg) => notice(msg),
-      save: () => { if (!wipeSave) void world.save(player); },
+      save: () => queueSave('map'),
       onShow: () => {
         unlockPointer();
         setOverlay(false);
@@ -8292,7 +8647,7 @@
     buildingSystem.load();
     if (saved && saved.buildings) buildingSystem.restore(saved.buildings);
 
-    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get nuclearStrikes() { return nuclearStrikes; }, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, get buildingSystem() { return buildingSystem; }, get player() { return player; }, get camera() { return camera; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED), spawnNuclearStrike };
+    window.NUCLEARISM = { ITEMS, inv, vitals, hurt, addWound, clock, get nuclearStrikes() { return nuclearStrikes; }, get machineSystem() { return machineSystem; }, get pipeSystem() { return pipeSystem; }, get mapSystem() { return mapSystem; }, get buildingSystem() { return buildingSystem; }, get player() { return player; }, get camera() { return camera; }, get scene() { return scene; }, get renderer() { return renderer; }, get world() { return world; }, give, giveStack, Liquid, LIQUIDS: LIQUID_DEFS, caveAt: (x, y, z) => caveCarveAt(x + WORLD_SEED, y, z + WORLD_SEED), spawnNuclearStrike, biomeAt, B, get veg() { const f = VEG_SPECIES.find(s => s.n === 'flower_field'); return { ready: VEG_SPECIES.filter(s => s.ready).length, total: VEG_SPECIES.length, flowerReady: !!f?.ready, flowerVisible: f?.visible || 0, flowerPlacements: f?.placements?.size || 0, flowerCap: f?.cap || 0 }; } };
 
 
 
@@ -8500,7 +8855,7 @@
       if (prayCount) prayCount.value = '1';
       prayMatches = [];
       if (praySug) { praySug.classList.add('hidden'); praySug.innerHTML = ''; }
-      world.save(player).catch(() => { });
+      queueSave('pray');
     }
 
     function doPray() {
@@ -8528,7 +8883,7 @@
       paintVitals();
       syncBars();
       paintPray();
-      world.save(player).catch(() => { });
+      queueSave('pray');
     }
 
     prayBtn?.addEventListener('click', doPray);
@@ -8606,7 +8961,7 @@
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([payload.json], { type: 'application/json' }));
-        a.download = `${name}-${payload.key}-${stamp}.json`;
+        a.download = `${name}-${stamp}.json`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -9154,7 +9509,7 @@
         advanced = true;
       }
       paintGuide(advanced);
-      if (advanced && !wipeSave) void world.save(player);
+      if (advanced) queueSave('guide');
     }
 
     function migrateGuideFromMachines() {
@@ -9171,7 +9526,7 @@
     function loadAchievements(data) {
       if (!data || typeof data !== 'object') return;
       const next = freshAchievements();
-      for (const key of ['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked']) {
+      for (const key of ['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked', 'chopped', 'blasts', 'harvested']) {
         if (Number.isFinite(data[key])) next[key] = Math.max(0, data[key]);
       }
       if (data.built && typeof data.built === 'object') {
@@ -9339,7 +9694,7 @@
       const unlocked = countUnlockedAchievements();
       if (unlocked !== achUnlocked) {
         achUnlocked = unlocked;
-        if (!wipeSave) void world.save(player);
+        queueSave('achievement');
       }
       if (achieveOpen) paintAchievements();
     }
@@ -9359,7 +9714,7 @@
       achievePanelEl.classList.add('hidden');
       achieveTipEl.classList.add('hidden');
       achieveOpen = false;
-      if (!wipeSave) void world.save(player);
+      queueSave('achievements');
       setOverlay(true);
     }
 
@@ -9549,7 +9904,9 @@
       }
     }
 
+    let _doseFrame = 0, _doseRateFrame = -1, _doseRateVal = 0;
     function syncBars() {
+      _doseRateFrame = -1;
       paintSlots(hotbarEl, inv.hot, true);
       if (invOpen) {
         paintSlots(invMainEl, inv.main, false);
@@ -9990,6 +10347,7 @@
 
 
     function doseRate() {
+      if (_doseRateFrame === _doseFrame) return _doseRateVal;
       let carried = 0;
       for (const s of allSlots()) if (s && ITEMS[s.id]) carried += (ITEMS[s.id].rad || 0);
       let protect = 0;
@@ -10018,7 +10376,9 @@
       r += field;
 
       if (radIntakeTimer > 0) r *= radIntakeMult;
-      return Math.max(0, r);
+      _doseRateFrame = _doseFrame;
+      _doseRateVal = Math.max(0, r);
+      return _doseRateVal;
     }
 
     function paintRad() {
@@ -10680,6 +11040,31 @@
       return { x, y: standYAt(x, z), z };
     }
 
+    function nearestBiomeOf(id) {
+      const sx = player.pos.x, sz = player.pos.z;
+      const STEP = 16;
+      for (let r = 0; r <= 300; r++) {
+        let best = null, bd = Infinity;
+        for (let dz = -r; dz <= r; dz++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (r > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+            const x = sx + dx * STEP, z = sz + dz * STEP;
+            if (biomeAt(x, z) !== id) continue;
+            let same = 0;
+            for (const [ox, oz] of [[8,0],[-8,0],[0,8],[0,-8]]) if (biomeAt(x + ox, z + oz) === id) same++;
+            if (same < 2) continue;
+            const d = dx * dx + dz * dz;
+            if (d < bd) { bd = d; best = { x, z }; }
+          }
+        }
+        if (best) {
+          const y = standYAt(best.x, best.z);
+          if (y != null) return { x: best.x, y, z: best.z };
+        }
+      }
+      return null;
+    }
+
     const TP_TARGETS = [
       { id: 'cave', label: 'SINKHOLE CAVE', aliases: ['caves', 'sinkhole', 'sinkholes', 'hole'], find: () => nearestCaveOf('cave') },
       { id: 'cavern', label: 'BIG CAVERN', aliases: ['caverns', 'big', 'bigcave'], find: () => nearestCaveOf('cavern') },
@@ -10690,6 +11075,7 @@
       { id: 'tank', label: 'LIQUID TANK', aliases: ['tanks', 'liquid_tank'], find: () => nearestIndustrialOf('liquid_tank') },
       { id: 'industrial', label: 'ANY INDUSTRIAL SITE', aliases: ['factory', 'site'], find: () => nearestIndustrialOf('any') },
       { id: 'machine', label: 'NEAREST MACHINE', aliases: ['machines', 'workbench'], find: nearestMachineTarget },
+      { id: 'flowers', label: 'FLOWER PLAINS', aliases: ['flower', 'flower_plains', 'flowerplains'], find: () => nearestBiomeOf(B.FLOWER_PLAINS) },
     ];
 
     function nearestTargets(q) {
@@ -11206,17 +11592,26 @@
 
 
 
+    function isDoorPiece(p) { return !!p && (p.kind === 'door' || p.kind === 'bunker_door'); }
+
+    function doorBoxes(p) {
+      if (!p.open) return p.cells.map(([, b]) => b);
+      if (p.kind === 'door') return [{ minX: p.x, maxX: p.x + 1, minY: p.y, maxY: p.y + 3, minZ: p.z, maxZ: p.z + 1 }];
+      const kind = buildingSystem.kind(p.kind);
+      const off = kind?.slideOffset ? kind.slideOffset(buildingSystem, p, 1) : { x: 0, y: 0, z: 0 };
+      return p.cells.map(([, b]) => ({
+        minX: b.minX + off.x, maxX: b.maxX + off.x,
+        minY: b.minY + off.y, maxY: b.maxY + off.y,
+        minZ: b.minZ + off.z, maxZ: b.maxZ + off.z,
+      }));
+    }
+
     function doorHit(origin, dir) {
       if (!buildingSystem) return null;
       let best = null, bestT = REACH;
       for (const p of buildingSystem.pieces.values()) {
-        if (p.kind !== 'door') continue;
-        const boxes = p.open
-          ? [[{
-            minX: p.x, maxX: p.x + 1, minY: p.y, maxY: p.y + 3, minZ: p.z, maxZ: p.z + 1,
-          }]]
-          : p.cells.map(([, b]) => b);
-        for (const b of boxes) {
+        if (!isDoorPiece(p)) continue;
+        for (const b of doorBoxes(p)) {
           const t = rayBoxT(origin, dir, b);
           if (t !== null && t < bestT) { bestT = t; best = p; }
         }
@@ -11232,7 +11627,7 @@
       if (!hit) return null;
 
       const pick = buildingSystem.pick(origin, dir, REACH);
-      if (pick && pick.piece.kind !== 'door' && pick.distance < hit.t - 0.02) return null;
+      if (pick && !isDoorPiece(pick.piece) && pick.distance < hit.t - 0.02) return null;
       const { hit: terr } = mineAim();
       if (terr && origin.distanceTo(terr) < hit.t - 0.02) return null;
       return hit.piece;
@@ -11248,14 +11643,27 @@
     }
 
     function toggleDoor(piece) {
-      if (!piece || piece.kind !== 'door' || !buildingSystem) return false;
-      if (piece.open && buildingSystem.overlapsBody('door', piece.x, piece.y, piece.z, piece.rot, {
-        x: player.pos.x, y: player.pos.y, z: player.pos.z,
-        radius: player.radius, height: player.height,
-      })) { notice('DOOR BLOCKED'); return false; }
-      if (!buildingSystem.toggle(piece)) return false;
+      if (!isDoorPiece(piece) || !buildingSystem) return false;
+      const group = piece.kind === 'bunker_door'
+        ? [piece, mateOf(buildingSystem, piece)].filter(Boolean)
+        : [piece];
+      const open = !piece.open;
+      if (!open) {
+        const body = {
+          x: player.pos.x, y: player.pos.y, z: player.pos.z,
+          radius: player.radius, height: player.height,
+        };
+        for (const p of group) {
+          if (p.open && buildingSystem.overlapsBody(p.kind, p.x, p.y, p.z, p.rot, body)) {
+            notice('DOOR BLOCKED'); return false;
+          }
+        }
+      }
+      for (const p of group) if (p.open !== open) buildingSystem.toggle(p);
       triggerSwing(0.25);
-      notice(piece.open ? 'DOOR OPEN' : 'DOOR CLOSED');
+      notice(piece.kind === 'bunker_door'
+        ? (open ? 'BUNKER DOORS OPEN' : 'BUNKER DOORS CLOSED')
+        : (open ? 'DOOR OPEN' : 'DOOR CLOSED'));
       return true;
     }
 
@@ -11267,7 +11675,9 @@
     }
 
 
-    function updateDoorSwings() {}
+    function updateDoorSwings(dt) {
+      buildingSystem?.update(dt || 0);
+    }
 
     function pickItemToHand(id) {
       if (!id || !ITEMS[id]) return false;
@@ -11343,7 +11753,7 @@
 
           let wallTop = null;
           for (const p of buildingSystem.pieces.values()) {
-            if (!['wall', 'door'].includes(p.kind)) continue;
+            if (!['wall', 'door', 'bunker_door'].includes(p.kind)) continue;
             const fp = buildingSystem.pieceFootprint(p);
             if (!fp) continue;
             if (fp.x1 < lx - 0.5 || fp.x0 > lx + 3.5 || fp.z1 < lz - 0.5 || fp.z0 > lz + 3.5) continue;
@@ -11992,6 +12402,7 @@
       const i = c4Charges.indexOf(c);
       if (i < 0) return;
       c4Charges.splice(i, 1);
+      achBump('blasts');
       scene.remove(c.grp);
 
 
@@ -12348,6 +12759,7 @@
 
     function structureCollidesBody(x, y, z, r, h,
       machines = machineSystem?.instances || [], industries = industrialColliders) {
+      if (!machines.length && !industries.length) return false;
       const head = y + h;
       for (const m of machines) {
         if (head <= m.y + 1e-4 || y >= m.top - 1e-4) continue;
@@ -12688,6 +13100,11 @@
       if (!Number.isFinite(y)) return null;
       if (world.waterAt(x, y + 0.8, z) > 0) return null;
       const w = new Wrapper(world, x, z, wrapperTemplate);
+      if (biomeAt(x, z) === B.WASTELAND) {
+        w.waste = true;
+        w.speedWalk *= WRAPPER.wasteSpeed;
+        w.speedRun *= WRAPPER.wasteSpeed;
+      }
       wrappers.push(w);
       return w;
     }
@@ -13322,7 +13739,7 @@
 
 
       const vf = Math.max(1, vegPerf.frames);
-      const vegMs = (vegPerf.stream + vegPerf.inst + vegPerf.trunks + vegPerf.collide + vegPerf.anim) / vf;
+      const vegMs = vegPerf.anim / vf;
       const sections = {
         veg: vegMs, move: perf.move / vf, jobs: perf.jobs / vf, drops: perf.drops / vf,
         world: perf.world / vf, water: perf.water / vf, dirty: perf.dirty / vf, wdirty: perf.wdirty / vf,
@@ -13331,7 +13748,8 @@
       const frameMs = Object.values(sections).reduce((s, v) => s + v, 0);
       const frameBreak = Object.entries(sections).sort((a, b) => b[1] - a[1])
         .slice(0, 6).map(([n, ms], i) => (i === 0 ? '<b>' : '') + n + ' ' + ms.toFixed(2) + (i === 0 ? '</b>' : '')).join(' · ');
-      const vegBreak = [['stream', vegPerf.stream], ['inst', vegPerf.inst], ['trunk', vegPerf.trunks], ['hit', vegPerf.collide], ['anim', vegPerf.anim]]
+      const vegOther = Math.max(0, vegPerf.anim - vegPerf.stream - vegPerf.inst - vegPerf.trunks - vegPerf.collide);
+      const vegBreak = [['stream', vegPerf.stream], ['inst', vegPerf.inst], ['trunk', vegPerf.trunks], ['hit', vegPerf.collide], ['anim', vegOther]]
         .map(([n, ms]) => [n, ms / vf]).sort((a, b) => b[1] - a[1])
         .map(([n, ms], i) => (i === 0 ? '<b>' : '') + n + ' ' + ms.toFixed(2) + (i === 0 ? '</b>' : '')).join(' · ');
 
@@ -13873,6 +14291,7 @@
     }
 
     function frame(now) {
+      _doseFrame++;
       scheduleNextFrame();
       const _fStart = performance.now();
 
@@ -13902,6 +14321,36 @@
         };
 
 
+
+        window.__gen = {
+          terrain: () => WORLD_TERRAIN,
+          seed: () => WORLD_SEED,
+          setSeed(n) {
+            WORLD_SEED = n | 0;
+            _trendCache.clear(); _biomeCache.clear(); _colDensityCache.clear();
+            _caveSites.clear(); _caveCols.clear(); _indSites.clear(); _groundYCache.clear();
+            _caveSeed = null; _indSeed = null; _realisticSeed = null; REALISTIC = null;
+            world.field.baseCache.clear();
+          },
+          recenter(x, z) { if (WORLD_TERRAIN === 'realistic') realisticTerrain().recenter(x, z); },
+          hash3, noise3, fbm3, climateAt, biomeWeights, biomeAt, terrainTrend,
+          columnDensity, caveCarveAt, terrainDensity,
+          caveSite: (cx, cz) => caveSite(cx, cz),
+          caveSitesAt: (sx, sz) => caveSitesAt(sx, sz),
+          industrialSite: (cx, cz) => {
+            const s = industrialSite(cx, cz);
+            return s ? { x: s.x, z: s.z, y0: s.y0, padX: s.padX, padZ: s.padZ } : null;
+          },
+          industrialPad: (x, z) => {
+            const p = industrialPadAt(x, z);
+            return p ? { x: p.site.x, z: p.site.z, y0: p.site.y0, padX: p.site.padX, padZ: p.site.padZ, w: p.w } : null;
+          },
+          fieldGet: (x, y, z) => world.field.get(x, y, z),
+          fieldSample: (x, y, z) => world.field.sample(x, y, z),
+          fieldEdit: (x, y, z, v) => world.field.set(x, y, z, v),
+          fieldClearEdits: () => { world.field.edits.clear(); world.field.baseCache.clear(); },
+          mineSphere: (x, y, z, r) => world.field.mineSphere(x, y, z, r),
+        };
 
         window.__waterSelfTest = () => {
           const w = world, ws = w.water;
@@ -13937,7 +14386,7 @@
         window.__vegSelfTest = () => {
           const fails = [];
           let checked = 0;
-          for (const layer of ['canopy', 'ground', 'cover', 'floor', 'aquatic']) {
+          for (const layer of ['canopy', 'ground', 'cover', 'floor', 'flowers', 'aquatic']) {
             for (const pl of _vegActive[layer].values()) {
               if (!pl) continue;
               checked++;
@@ -13969,15 +14418,17 @@
 
       const exporting = !!replayExport;
       const exportSim = exporting && replayExport.needsSim;
+      const rawDt = (now - last) / 1000;
       const dt = exporting
         ? (exportSim ? replayExport.step : 0)
-        : Math.min(0.05, (now - last) / 1000);
+        : Math.min(0.05, rawDt);
       if (exporting && exportSim) replayExport.needsSim = false;
       last = now;
       tickTreeShake(dt);
       const paused = !locked && !replayPlay && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
       if (!paused && !sleep) playTime += dt;
-      fpsSmooth += ((1 / Math.max(dt, 1e-4)) - fpsSmooth) * 0.08;
+      // The sim clamps dt to avoid tunneling; the FPS readout must not, or a stall reads as 20fps.
+      fpsSmooth += ((1 / Math.max(exporting ? dt : rawDt, 1e-4)) - fpsSmooth) * 0.08;
       if (sleep) { updateSleep(dt); mining = false; player.vel.set(0, 0, 0); }
 
       if (!paused && !sleep) {
@@ -14104,6 +14555,7 @@
       vegPerf.anim += performance.now() - _pVeg;
       updateChop(dt);
       industrialUpdate(player.pos.x, player.pos.z);
+      barrelUpdate(player.pos.x, player.pos.z);
       } else {
         world.updateJobs(0);
       }
@@ -14173,10 +14625,10 @@
 
         w.hitCd = Math.max(0, (w.hitCd || 0) - dt);
         if (!w.dying && !w.hitCd && w.pos.distanceTo(player.pos) < 1.9) {
-          w.hitCd = 1.5;
+          w.hitCd = w.waste ? WRAPPER.wasteHitCd : 1.5;
           playWrapperSound('attack', w.pos);
-          hurt(11, 'bleeding');
-          if (Math.random() < 0.35) addWound('pain');
+          hurt(w.waste ? WRAPPER.wasteDamage : 11, 'bleeding');
+          if (Math.random() < (w.waste ? 0.55 : 0.35)) addWound('pain');
         }
 
         if (w.dead || w.pos.distanceTo(player.pos) > WRAPPER.despawn) {
@@ -14501,7 +14953,26 @@
       return ok;
     };
 
-    setInterval(() => { void saveNow('interval'); }, 12000);
+    // Serializing a save costs tens of ms. Coalesce the automatic ones and run
+    // them in spare idle time so they never sit inside a frame callback.
+    let _saveQueued = false;
+    function queueSave(reason) {
+      if (_saveQueued || wipeSave || replayPlay) return;
+      _saveQueued = true;
+      const run = (deadline) => {
+        if (deadline && typeof deadline.timeRemaining === 'function' &&
+            deadline.timeRemaining() < 8 && !deadline.didTimeout) {
+          requestIdleCallback(run, { timeout: 1000 });
+          return;
+        }
+        _saveQueued = false;
+        void saveNow(reason);
+      };
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1000 });
+      else setTimeout(run, 0);
+    }
+
+    setInterval(() => { queueSave('interval'); }, 12000);
 
     addEventListener('beforeunload', () => { void saveNow('beforeunload'); });
     addEventListener('pagehide', () => { void saveNow('pagehide'); });

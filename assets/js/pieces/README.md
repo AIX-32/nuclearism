@@ -63,6 +63,9 @@ it craftable at the pocket table.
   **inside** those cells.
 - A piece never overlaps another piece: the runtime refuses a placement whose
   cells are already taken.
+- Optional `slideOffset(sys, piece, amount)` + `slideTime` animate a dynamic
+  piece's mesh: `BuildingSystem.update(dt)` eases `piece.slide` toward `open`
+  and rebuilds the instanced meshes while it moves.
 - Solid cells block the player (`playerCollides()`), attenuating cells take
   part in the radiation shadow (`shadowCells()`).
 - The mesh is one box per piece, so `scale()` is the box size in metres and

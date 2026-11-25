@@ -208,6 +208,17 @@ export class WorkbenchUI {
         continue;
       }
 
+      if (el.type === 'batteryPie') {
+        const node = document.createElement('div');
+        node.className = 'workbench-battery-pie';
+        node.dataset.id = el.id;
+        node.style.gridColumn = `${el.x + 1} / span ${el.w}`;
+        node.style.gridRow = `${el.y + 1} / span ${el.h}`;
+        this.workArea.appendChild(node);
+        this.buildBatteryPie(node);
+        continue;
+      }
+
       if (el.type === 'power') continue;
 
       if (el.type === 'recipes') continue;
@@ -477,6 +488,45 @@ export class WorkbenchUI {
     }
   }
 
+  buildBatteryPie(node) {
+    node.innerHTML = '<header>POWER DRAIN</header><div class="pie-grid"></div><div class="pie-legend"></div>';
+    const grid = node.querySelector('.pie-grid');
+    for (let i = 0; i < 64; i++) grid.appendChild(document.createElement('i'));
+    this.renderBatteryPieDynamic();
+  }
+
+  renderBatteryPieDynamic() {
+    const node = this.workArea?.querySelector('.workbench-battery-pie');
+    if (!node) return;
+    const usage = this.bridge.batteryUsage?.() || {};
+    const colors = ['#ffffff', '#ffd070', '#7fd0ff', '#ff9f8f', '#9fe0a0', '#c7a7ff', '#ff9fd0', '#9fd0c0'];
+    const entries = Object.entries(usage).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    const cells = [...node.querySelectorAll('.pie-grid i')];
+    let idx = 0, acc = 0;
+    for (let e = 0; e < entries.length && idx < cells.length; e++) {
+      acc += entries[e][1] / total;
+      const until = Math.round(acc * cells.length);
+      while (idx < until && idx < cells.length) cells[idx++].style.background = colors[e % colors.length];
+    }
+    while (idx < cells.length) cells[idx++].style.background = 'rgba(255,255,255,.08)';
+    const legend = node.querySelector('.pie-legend');
+    legend.replaceChildren(...entries.slice(0, 4).map(([id, v], i) => {
+      const row = document.createElement('span');
+      const swatch = document.createElement('i');
+      swatch.style.background = colors[i % colors.length];
+      row.appendChild(swatch);
+      row.appendChild(document.createTextNode(`${id.replace(/_/g, ' ').toUpperCase()} ${Math.round(v / total * 100)}%`));
+      return row;
+    }));
+    if (!entries.length) {
+      const empty = document.createElement('span');
+      empty.className = 'pie-empty';
+      empty.textContent = 'NO POWER DRAWN YET';
+      legend.appendChild(empty);
+    }
+  }
+
   recipeIconEntry(recipe) {
     if (!recipe) return null;
     const out = recipe.out && Object.entries(recipe.out).find(([id, n]) => Number(n) > 0);
@@ -713,6 +763,7 @@ export class WorkbenchUI {
     this.renderMachineWorkflow();
     this.renderBweDynamic();
     this.renderBoreDynamic();
+    this.renderBatteryPieDynamic();
     if (!this.craftRail.hidden) this.renderCraftRail();
     const anyProgress = this.bridge.progressValue?.() ?? 0;
     this.setActive(anyProgress > 0 && anyProgress < 1);

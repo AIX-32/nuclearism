@@ -1,6 +1,6 @@
 
 import assert from 'node:assert/strict';
-import { RAD_OCCL, sourcePoint, transmission, relativeBearing, compass } from './radiation.js';
+import { RAD_OCCL, sourcePoint, transmission, shaftBurial, relativeBearing, compass } from './radiation.js';
 
 
 const a = sourcePoint(1234);
@@ -28,8 +28,15 @@ assert.equal(behind, 1, 'only the direction of the source is shadowed');
 const buried = transmission(() => RAD_OCCL.solid, 0, 0, 0, 1, 0, 0);
 assert.ok(buried > 0 && buried < 0.2, 'solid rock shields most of the field');
 
-
 const near = (x, y) => Math.abs(x - y) < 1e-6;
+assert.equal(shaftBurial(0, 1, 1), 1, 'an open-air player gets the full field');
+assert.ok(near(shaftBurial(10, 1e-12, 1), Math.pow(0.45, 10)), 'a sealed hole keeps the depth shield');
+assert.equal(shaftBurial(10, 1, 1), 1, 'an open shaft sweeps the field down to the player');
+assert.ok(near(shaftBurial(10, 1, 1e-8), Math.pow(0.45, 10)), 'a roof or closed door over the hole keeps the depth shield');
+assert.ok(near(shaftBurial(10, 1, 0.55), 0.55), 'a weak cover gives a weak shield');
+assert.ok(shaftBurial(50, 1, 1) === 1 && shaftBurial(10, 1.5, 2) === 1, 'exposure is clamped to the full field');
+
+
 assert.ok(near(relativeBearing(0, -1, 0), 0), 'source straight ahead reads 0');
 assert.ok(near(relativeBearing(1, 0, 0), 90), 'source to the east reads +90');
 assert.ok(near(relativeBearing(0, 1, 0), 180), 'source behind reads 180');

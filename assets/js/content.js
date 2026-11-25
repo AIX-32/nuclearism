@@ -4,6 +4,7 @@ import { KIND as FLOOR, ITEMS as FLOOR_ITEMS, RECIPES as FLOOR_RECIPES } from '.
 import { KIND as ROOF, ITEMS as ROOF_ITEMS, RECIPES as ROOF_RECIPES } from './pieces/roof.js';
 import { KIND as DOOR, ITEMS as DOOR_ITEMS, RECIPES as DOOR_RECIPES } from './pieces/door.js';
 import { KIND as TRIANGLE, ITEMS as TRIANGLE_ITEMS, RECIPES as TRIANGLE_RECIPES } from './pieces/triangle.js';
+import { ITEMS as BUNKER_DOOR_ITEMS, RECIPES as BUNKER_DOOR_RECIPES } from './pieces/bunker_door.js';
 
 export { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES };
 
@@ -62,6 +63,7 @@ export const ITEM_DEFS = {
   ...ROOF_ITEMS,
   ...DOOR_ITEMS,
   ...TRIANGLE_ITEMS,
+  ...BUNKER_DOOR_ITEMS,
   stone: { code: 'ST', name: 'STONE', stack: 99, rad: 0, block: true, icon: 'assets/images/items/stone.png' },
   basalt: { code: 'BA', name: 'BASALT', stack: 99, rad: 0, block: true },
   dirt: { code: 'DI', name: 'DIRT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/dirt.png' },
@@ -161,6 +163,7 @@ export const ITEM_DEFS = {
   zirconium_plate: PLATE('zirconium', 'Z▭'),
 
 
+  scrap: I('SC', 'SCRAP', { block: false, stack: 99, desc: 'Twisted salvage from wasteland barrels. A recycler can pull something useful out of it.' }),
   plastic: I('PL', 'PLASTIC', { block: false, icon: 'assets/images/items/plastic.png' }),
   car_battery: I('BA', 'CAR BATTERY', { block: false, battery: true }),
   graphite: I('GR', 'GRAPHITE', { block: false, icon: 'assets/images/items/graphite.png' }),
@@ -345,6 +348,7 @@ export const ITEM_DEFS = {
 
   pipe: I('PI', 'PIPE', { block: false, stack: 64, pipeGrid: true, model: 'assets/models/pipes/long.glb' }),
   hammer: { code: 'HM', name: 'HAMMER', stack: 1, rad: 0, icon: 'assets/images/items/hammer.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], build: true, damage: 20 }, desc: 'Upgrades a wall to the next tier and pulls it back down again.' },
+  crowbar: { code: 'CW', name: 'CROWBAR', stack: 1, rad: 0, tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], damage: 24, crowbar: true }, desc: 'Pries open the sealed barrels scattered across the wasteland.' },
   fuel_generator: I('GG', 'GAS GENERATOR', { block: false, stack: 4, workbench: 'fuel_generator', desc: 'Burns gasoline or ethanol to make power. Fill it from a jerry can.' }),
 
 
@@ -434,6 +438,7 @@ export const ITEM_DEFS = {
   c4: I('C4', 'C4 CHARGE', { block: false, stack: 8, c4: true, desc: 'Place on the ground. Arms and detonates in 5 seconds.' }),
 
 
+  recycler: { code: 'RE', name: 'RECYCLER', stack: 16, rad: 0, block: false, workbench: 'recycler', desc: 'Turns wasteland scrap into random recovered parts.' },
   manufactory: { code: 'MF', name: 'MANUFACTORY', stack: 16, rad: 0, block: false, workbench: 'manufactory', desc: 'A powered crafting bench. Each craft pulls power from the grid.' },
   crusher: { code: 'CR', name: 'CRUSHER', stack: 16, rad: 0, block: false, workbench: 'crusher', desc: 'Turns raw ore into dust so it can be smelted.' },
   electric_furnace: { code: 'EF', name: 'ELECTRIC FURNACE', stack: 16, rad: 0, block: false, workbench: 'electric_furnace', desc: 'Smelts crushed ore into ingots.' },
@@ -450,6 +455,7 @@ export const ITEM_DEFS = {
   fission_reactor: { code: 'RX', name: 'FISSION REACTOR', stack: 4, rad: 0, block: false, workbench: 'fission_reactor', desc: 'Burns fuel rods for real power. Keep it cool or it blows.' },
   solar_panel: { code: 'SP', name: 'SOLAR PANEL', stack: 16, rad: 0, block: false, workbench: 'solar_panel', desc: 'Makes a little power in daylight. No fuel needed.' },
   energy_storage: { code: 'ES', name: 'ENERGY STORAGE', stack: 16, rad: 0, block: false, workbench: 'energy_storage', desc: 'Holds a large charge for when generation dips.' },
+  battery_stack: { code: 'BS', name: 'BATTERY STACK', stack: 16, rad: 0, block: false, workbench: 'battery_stack', desc: 'Six car batteries wired into one pack. Charges from the grid and pours power back when machines run dry.' },
   cable: { code: 'CB', name: 'POWER CABLE', stack: 64, rad: 0, block: false, icon: 'assets/images/items/cable.png' },
   copper_director: { code: 'CD', name: 'COPPER DIRECTOR', stack: 32, rad: 0, block: false, workbench: 'copper_director', desc: 'A cheap starter connector for linking nearby machines without a full power pole.' },
   simple_container: { code: 'SCN', name: 'SIMPLE CONTAINER', stack: 1, rad: 0, block: false, workbench: 'simple_container', model: 'assets/models/items/simple_container.gltf', desc: 'A basic storage vessel made from stone and wood.' },
@@ -537,6 +543,29 @@ export function regionOre(x, z, savanna = false) {
 
 const MODEL = (id) => `assets/models/workbenches/${id}.gltf`;
 const LAYOUT = (id) => `assets/ui/${id}.json`;
+
+// Weighted [id, weight] tables. Scrap is rolled separately by the barrels, so it is not in here.
+export const BARREL_LOOT = [
+  ['iron_plate', 14], ['copper_plate', 12], ['steel_plate', 10], ['lead_plate', 9],
+  ['iron_ingot', 12], ['copper_ingot', 12], ['tin_ingot', 9], ['steel_ingot', 8], ['lead_ingot', 7],
+  ['carbon', 10], ['graphite', 8], ['carbon_mesh', 6], ['copper_solenoid', 5], ['plastic', 6],
+  ['pipe', 7], ['cable', 6], ['glass', 5], ['drill_bit', 4], ['gun_parts', 3],
+  ['fuel_rod_casing', 3], ['reactor_casing', 2], ['machine_chassis', 2],
+  ['circuit_basic', 2], ['circuit_mid', 1], ['electric_motor', 1.5], ['linear_actuator', 1],
+];
+export const SCRAP_RECYCLE_TABLE = [
+  ['iron_ingot', 20], ['copper_ingot', 18], ['tin_ingot', 14], ['lead_ingot', 10], ['steel_ingot', 8],
+  ['iron_plate', 10], ['copper_plate', 9], ['steel_plate', 6], ['lead_plate', 5],
+  ['carbon', 12], ['graphite', 6], ['carbon_mesh', 4], ['copper_solenoid', 3],
+  ['circuit_basic', 1.5], ['electric_motor', 1.5], ['linear_actuator', 1], ['machine_chassis', 0.8],
+];
+export function rollWeighted(table) {
+  let total = 0;
+  for (const [, w] of table) total += w;
+  let r = Math.random() * total;
+  for (const [id, w] of table) { r -= w; if (r <= 0) return id; }
+  return table[table.length - 1][0];
+}
 
 export const MACHINE_DEFS = [
 
@@ -676,6 +705,7 @@ export const MACHINE_DEFS = [
       { in: { machine_chassis: 2, circuit_board: 2, lead_plate: 8, data_drive: 1 }, out: { fuel_reprocessor: 1 }, time: 18 },
       { in: { machine_chassis: 1, copper_solenoid: 2, circuit_basic: 2, card_reader: 1 }, out: { chemical_reactor: 1 }, time: 12 },
       { in: { machine_chassis: 2, circuit_board: 1, copper_plate: 4, data_disk: 2 }, out: { energy_storage: 1 }, time: 10 },
+      { in: { car_battery: 6, iron_plate: 5, cable: 4 }, out: { battery_stack: 1 }, time: 30 },
       { in: { iron_ingot: 5, wood: 2, stone: 10 }, out: { medium_container: 1 }, time: 8 },
       { in: { copper_plate: 2, iron_plate: 1 }, out: { cable: 8 }, time: 3 },
       { in: { machine_chassis: 1, circuit_basic: 2, iron_plate: 4, glass: 6 }, out: { solar_panel: 1 }, time: 10 },
@@ -829,6 +859,7 @@ export const MACHINE_DEFS = [
     energy: { use: 450 }, ambientCut: 0.15, filter: { item: 'filter_cartridge', seconds: 120 }
   },
   { id: 'energy_storage', kind: 'storage', name: 'ENERGY STORAGE', model: MODEL('energy_storage'), layout: LAYOUT('energy_storage'), label: 'Open energy storage', height: 1.3, dx: 2.8, dz: 1.8, capacity: 20000 },
+  { id: 'battery_stack', kind: 'storage', name: 'BATTERY STACK', model: MODEL('battery_stack'), layout: LAYOUT('battery_stack'), label: 'Open battery stack', height: 1.3, dx: 2.8, dz: 1.8, capacity: 12000 },
   { id: 'simple_container', kind: 'storage', name: 'SIMPLE CONTAINER', model: 'assets/models/items/simple_container.gltf', label: 'Open simple container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 14 },
   { id: 'medium_container', kind: 'storage', name: 'MEDIUM CONTAINER', model: 'assets/models/items/medium_container.gltf', label: 'Open medium container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 28 },
   { id: 'cable', kind: 'cable', name: 'WOODEN POWERPOLE', model: MODEL('cable'), layout: LAYOUT('cable'), label: 'Wooden powerpole', height: 3.2, reach: 1.6, dx: 2.8, dz: 1.8 },
@@ -921,6 +952,13 @@ export const MACHINE_DEFS = [
       { in: { rice: 1 }, out: { rice_bowl: 1 }, time: 10 },
     ]
   },
+  {
+    id: 'recycler', kind: 'processor', name: 'RECYCLER', model: MODEL('recycler'), layout: LAYOUT('recycler'), label: 'Use recycler',
+    height: 1.2, dx: 2.0, dz: 1.6, outputs: 4, randomOut: SCRAP_RECYCLE_TABLE,
+    recipes: [
+      { in: { scrap: 2 }, out: { iron_ingot: 1 }, time: 5 },
+    ]
+  },
 ];
 
 export const MACHINE_BY_ID = Object.fromEntries(MACHINE_DEFS.map((m) => [m.id, m]));
@@ -959,6 +997,7 @@ export const CRAFT_RECIPES = [
   ...ROOF_RECIPES,
   ...DOOR_RECIPES,
   ...TRIANGLE_RECIPES,
+  ...BUNKER_DOOR_RECIPES,
 
 
 
@@ -1058,6 +1097,7 @@ export const CRAFT_RECIPES = [
   { out: { fuel_generator: 1 }, needs: { machine_chassis: 1, copper_solenoid: 1, circuit_basic: 1, iron_plate: 4 } },
   { out: { pick: 1 }, needs: { iron_ingot: 3, carbon: 1 } },
   { out: { shovel: 1 }, needs: { iron_ingot: 1, carbon: 1 } },
+  { out: { crowbar: 1 }, needs: { iron_ingot: 2, wood: 1 } },
 
   { out: { axe: 1 }, needs: { steel_ingot: 3, wood: 2 } },
   { out: { hatchet: 1 }, needs: { steel_ingot: 2, wood: 2 } },
@@ -1107,11 +1147,12 @@ export const CRAFT_RECIPES = [
 
   { out: { test_bench: 1 }, needs: { iron_ingot: 2, car_battery: 1, copper_plate: 2 } },
   { out: { water_pump: 1 }, needs: { iron_ingot: 4, copper_ingot: 2, wood: 2 } },
-  { out: { bed: 1 }, needs: { wood: 4, herb: 2 } },
+  { out: { bed: 1 }, needs: { iron_ingot: 2, herb: 5 } },
   { out: { greenhouse: 1 }, needs: { glass: 4, wood: 4, iron_ingot: 2, dirt: 5 } },
   { out: { oven: 1 }, needs: { iron_ingot: 4, copper_ingot: 2, stone: 4 } },
   { out: { hammer: 1 }, needs: { iron_ingot: 1, wood: 2 } },
   { out: { zipline_wrench: 1 }, needs: { iron_ingot: 1, copper_ingot: 1 } },
+  { out: { recycler: 1 }, needs: { iron_ingot: 6, copper_ingot: 3, graphite: 2 } },
   { out: { skyline_pylon: 1 }, needs: { steel_ingot: 2, copper_ingot: 2, wood: 4 } },
   { out: { short_skyline_pylon: 1 }, needs: { steel_ingot: 1, copper_ingot: 1, wood: 2 } },
 ];
@@ -1129,7 +1170,7 @@ const TABLE_OUTPUTS = new Set([
   ...Object.entries(ITEM_DEFS).filter(([, d]) => d.table).map(([id]) => id),
 
   'iron_ingot', 'copper_ingot', 'tin_ingot', 'torch', 'simple_lamp', 'lantern', 'flashlight', 'graphite', 'carbon_mesh',
-  'zipline_wrench',
+  'zipline_wrench', 'crowbar', 'recycler',
   'cigarette_pack', 'lighter', 'jerry_can_black', 'plastic', 'flour', 'cup_noodles', 'chicken_leg',
 
   'sugar', 'noodles', 'broth', 'soda_can',
@@ -1334,6 +1375,7 @@ export const TUNING = {
   AMBIENT_BASE: 0.02,
   AMBIENT_EXP: 1.7,
   WASTELAND_RAD: 0.35,
+  BARREL_SCRAP_CHANCE: 0.62,
   RAD_SOURCE_DIST: 240,
   RAD_OCCL_FLOOR: 0.2,
   RAD_CALM_DELAY: 30,
@@ -1529,6 +1571,33 @@ export const ACHIEVEMENT_TYPES = [
       { name: 'LONG WALK', icon: 'herb', req: 'Walk 2,500 blocks.', stat: 'walked', need: 2500 },
       { name: 'TRAILBLAZER', icon: 'stone', req: 'Walk 10,000 blocks.', stat: 'walked', need: 10000 },
       { name: 'WASTELAND NOMAD', icon: 'glass', req: 'Walk 50,000 blocks.', stat: 'walked', need: 50000 },
+    ],
+  },
+  {
+    id: 'lumberjack', name: 'LUMBERJACK',
+    tiers: [
+      { name: 'FIRST FELL', icon: 'hatchet', req: 'Chop 1 tree.', stat: 'chopped', need: 1 },
+      { name: 'TIMBER', icon: 'axe', req: 'Chop 10 trees.', stat: 'chopped', need: 10 },
+      { name: 'WOODYARD', icon: 'wood', req: 'Chop 50 trees.', stat: 'chopped', need: 50 },
+      { name: 'CLEAR CUT', icon: 'greenhouse', req: 'Chop 200 trees.', stat: 'chopped', need: 200 },
+    ],
+  },
+  {
+    id: 'demolition', name: 'DEMOLITION',
+    tiers: [
+      { name: 'BIG BANG', icon: 'c4', req: 'Detonate 1 C4 charge.', stat: 'blasts', need: 1 },
+      { name: 'BLASTING CAP', icon: 'detonator', req: 'Detonate 5 C4 charges.', stat: 'blasts', need: 5 },
+      { name: 'EXPLOSIVE EXPERT', icon: 'rdx', req: 'Detonate 20 C4 charges.', stat: 'blasts', need: 20 },
+      { name: 'SCORCHED EARTH', icon: 'uranium', req: 'Detonate 50 C4 charges.', stat: 'blasts', need: 50 },
+    ],
+  },
+  {
+    id: 'forager', name: 'FORAGER',
+    tiers: [
+      { name: 'FRESH PICK', icon: 'herb', req: 'Gather 10 plants.', stat: 'harvested', need: 10 },
+      { name: 'BASKETFUL', icon: 'flower', req: 'Gather 50 plants.', stat: 'harvested', need: 50 },
+      { name: 'FIELD WORKER', icon: 'wheat_seed', req: 'Gather 200 plants.', stat: 'harvested', need: 200 },
+      { name: 'MASTER GATHERER', icon: 'greenhouse', req: 'Gather 500 plants.', stat: 'harvested', need: 500 },
     ],
   },
 ];

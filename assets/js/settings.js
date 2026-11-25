@@ -13,10 +13,9 @@ export const SETTING_DEFS = [
       { v: 2, label: '32 m' }, { v: 3, label: '48 m' }, { v: 4, label: '64 m' }, { v: 6, label: '96 m' },
       { v: 16, label: '256 m' }, { v: 64, label: '1 km' }, { v: 2000, label: '32 km' }, { v: 10000, label: '160 km' },
     ],
-    hint: 'EDITABLE TERRAIN STOPS AT 96 M · BEYOND THAT IT IS VISUAL ONLY',
   },
   {
-    id: 'resolution', group: 'DISPLAY', label: 'RESOLUTION', type: 'choice', def: 3,
+    id: 'resolution', group: 'DISPLAY', label: 'RESOLUTION', type: 'choice', def: 1.5,
     choices: [{ v: 1, label: '100%' }, { v: 1.5, label: '67%' }, { v: 2, label: '50%' }, { v: 3, label: '33%' }],
   },
   {
@@ -32,7 +31,6 @@ export const SETTING_DEFS = [
   { id: 'music', group: 'AUDIO', label: 'MUSIC', type: 'toggle', def: true },
   {
     id: 'replay', group: 'REPLAY', label: 'REPLAY RECORDER', type: 'toggle', def: false,
-    hint: 'ADDS A REPLAY BUTTON TO THE PAUSE MENU · RECORDS YOUR VIEW AND EXPORTS VIDEO',
   },
   {
     id: 'musicLicense', group: 'LICENSES', label: 'AMBIENT MUSIC', type: 'note',
@@ -104,33 +102,43 @@ export function onSettingsChange(fn) {
   return () => listeners.delete(fn);
 }
 
+const CAT_ICONS = { DISPLAY: '▣', CONTROLS: '✛', AUDIO: '♪', REPLAY: '▶', LICENSES: '§' };
+
 function buildRow(def) {
   const row = document.createElement('div');
   row.className = 'set-row';
   row.dataset.setting = def.id;
+
+  if (def.type === 'note') {
+    const note = document.createElement('details');
+    note.className = 'set-note';
+    const summary = document.createElement('summary');
+    summary.textContent = def.label;
+    const body = document.createElement('p');
+    body.textContent = def.text || '';
+    note.append(summary, body);
+    row.appendChild(note);
+    return row;
+  }
 
   const label = document.createElement('span');
   label.className = 'set-label';
   label.textContent = def.label;
   row.appendChild(label);
 
-  if (def.type === 'note') {
-    const note = document.createElement('span');
-    note.className = 'set-note';
-    note.textContent = def.text || '';
-    row.appendChild(note);
-    return row;
-  }
-
   const ctl = document.createElement('span');
-  ctl.className = 'set-ctl opts';
+  ctl.className = 'set-ctl';
   if (def.type === 'toggle') {
     const b = document.createElement('button');
-    b.className = 'set-toggle';
+    b.className = 'set-switch';
     b.dataset.toggle = def.id;
-    b.textContent = 'ON';
+    b.setAttribute('role', 'switch');
+    const state = document.createElement('span');
+    state.className = 'set-switch-state';
+    b.appendChild(state);
     ctl.appendChild(b);
   } else if (def.type === 'choice') {
+    ctl.classList.add('set-seg');
     for (const c of def.choices) {
       const b = document.createElement('button');
       b.dataset.val = String(c.v);
@@ -138,7 +146,6 @@ function buildRow(def) {
       ctl.appendChild(b);
     }
   } else {
-    ctl.classList.remove('opts');
     ctl.classList.add('set-range');
     const input = document.createElement('input');
     input.type = 'range';
@@ -152,13 +159,6 @@ function buildRow(def) {
     ctl.appendChild(out);
   }
   row.appendChild(ctl);
-
-  if (def.hint) {
-    const hint = document.createElement('span');
-    hint.className = 'set-hint';
-    hint.textContent = def.hint;
-    row.appendChild(hint);
-  }
   return row;
 }
 
@@ -168,17 +168,23 @@ function paintView(container) {
     if (!def || def.type === 'note') continue;
     const v = values[def.id];
     if (def.type === 'toggle') {
-      const b = row.querySelector('button[data-toggle]');
+      const b = row.querySelector('.set-switch');
       if (!b) continue;
-      b.textContent = v ? 'ON' : 'OFF';
       b.classList.toggle('on', !!v);
+      b.setAttribute('aria-checked', String(!!v));
+      const state = b.querySelector('.set-switch-state');
+      if (state) state.textContent = v ? 'ON' : 'OFF';
     } else if (def.type === 'choice') {
       for (const b of row.querySelectorAll('button[data-val]')) {
         b.classList.toggle('on', parseFloat(b.dataset.val) === v);
       }
     } else {
       const input = row.querySelector('input[type=range]');
-      if (input && input.value !== String(v)) input.value = String(v);
+      if (input) {
+        if (input.value !== String(v)) input.value = String(v);
+        const pct = def.max === def.min ? 0 : ((v - def.min) / (def.max - def.min)) * 100;
+        input.style.setProperty('--fill', `${pct}%`);
+      }
       const out = row.querySelector('.set-val');
       if (out) out.textContent = def.fmt(v);
     }
@@ -189,7 +195,23 @@ function paint() {
   for (const v of views) paintView(v);
 }
 
+function setCategory(container, cat) {
+  for (const b of container.querySelectorAll('.set-cat')) {
+    const on = b.dataset.cat === cat;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  for (const panel of container.querySelectorAll('.set-panel')) {
+    panel.classList.toggle('hidden', panel.dataset.cat !== cat);
+  }
+}
+
 function onClick(e) {
+  const cat = e.target.closest?.('.set-cat');
+  if (cat && e.currentTarget.contains(cat)) {
+    setCategory(e.currentTarget, cat.dataset.cat);
+    return;
+  }
   const row = e.target.closest?.('.set-row');
   if (!row) return;
   const btn = e.target.closest?.('button');
@@ -221,17 +243,35 @@ export function renderSettings(container) {
     container.addEventListener('change', onChange);
   }
   container.innerHTML = '';
-  let group = null;
-  for (const def of SETTING_DEFS) {
-    if (def.group !== group) {
-      group = def.group;
-      const h = document.createElement('div');
-      h.className = 'set-group';
-      h.textContent = group;
-      container.appendChild(h);
-    }
-    container.appendChild(buildRow(def));
+  const cats = [...new Set(SETTING_DEFS.map((d) => d.group))];
+  const shell = document.createElement('div');
+  shell.className = 'set-shell';
+  const side = document.createElement('div');
+  side.className = 'set-side';
+  for (const cat of cats) {
+    const b = document.createElement('button');
+    b.className = 'set-cat';
+    b.dataset.cat = cat;
+    const icon = document.createElement('span');
+    icon.className = 'set-cat-ico';
+    icon.textContent = CAT_ICONS[cat] || '▪';
+    const name = document.createElement('span');
+    name.textContent = cat;
+    b.append(icon, name);
+    side.appendChild(b);
   }
+  const content = document.createElement('div');
+  content.className = 'set-content';
+  for (const cat of cats) {
+    const panel = document.createElement('div');
+    panel.className = 'set-panel hidden';
+    panel.dataset.cat = cat;
+    for (const def of SETTING_DEFS) if (def.group === cat) panel.appendChild(buildRow(def));
+    content.appendChild(panel);
+  }
+  shell.append(side, content);
+  container.appendChild(shell);
+  setCategory(container, cats[0]);
   paintView(container);
 }
 

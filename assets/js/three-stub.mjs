@@ -55,7 +55,7 @@ export function stubThree() {
     setMatrixAt(i, m) { this.matrices[i] = m; }
     computeBoundingSphere() { }
   }
-  class MeshLambertMaterial { constructor() { this.color = { setHex() { } }; this.map = null; } }
+  class MeshLambertMaterial { constructor(opts = {}) { this.color = { value: opts.color ?? 0xffffff, setHex(v) { this.value = v; } }; this.map = null; } }
   class LineBasicMaterial { constructor() { this.color = { value: 0, setHex(v) { this.value = v; } }; this.opacity = 1; } }
   class EdgesGeometry { constructor(geometry) { this.source = geometry; } }
   class LineSegments {

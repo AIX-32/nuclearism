@@ -12,7 +12,7 @@
 
 
 
-import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate, TUNING } from './content.js';
+import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate, TUNING, rollWeighted } from './content.js';
 import { inventoryAdapter } from './drag-drop.js';
 import { accepts, drain, fill } from './liquids.js';
 
@@ -435,7 +435,7 @@ export class MachineSystem {
       uid: this.uidSeq++, def: tpl.def, x, y, z, rot, mesh, layout: tpl.layout,
       top: y + tpl.def.height * MACHINE_SCALE, hx, hz,
       spinNode: spinNodes[0] || null, spinNodes, bwe, boreMask: tpl.bore || null,
-      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0 },
+      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0, usage: {} },
       mixer: null, action: null, net: null,
     };
     if (tpl.animations.length) {
@@ -512,6 +512,7 @@ export class MachineSystem {
     const want = Math.min(cap - cur, net.pool, this.chargeRate(m) * dt);
     net.pool -= want;
     m.state.buffer = cur + want;
+    m.netDraw = want;
   }
 
   drawPower(m, cost) {
@@ -519,6 +520,18 @@ export class MachineSystem {
     if (b < cost) return false;
     m.state.buffer = b - cost;
     return true;
+  }
+
+  attributeDrain(m, net, give) {
+    const users = net.members.filter((o) => (o.netDraw || 0) > 0);
+    let total = 0;
+    for (const u of users) total += u.netDraw;
+    if (!total || give <= 0) return;
+    const usage = m.state.usage || (m.state.usage = {});
+    for (const u of users) {
+      const id = u.def.id;
+      usage[id] = (usage[id] || 0) + give * (u.netDraw / total);
+    }
   }
 
 
@@ -568,6 +581,10 @@ export class MachineSystem {
         return { pitch: m.state.pitch || 0, status: m.state.status };
       },
       boreControl: (action) => this.controlBore(this.openInst, action),
+      batteryUsage: () => {
+        const m = this.openInst;
+        return m && m.def.capacity ? (m.state.usage || {}) : null;
+      },
       onActive: (active) => {
         const m = this.openInst; if (!m || !m.action) return;
         if (active) { m.action.reset(); m.action.play(); m.action.paused = false; }
@@ -1211,6 +1228,7 @@ export class MachineSystem {
     this.scrubbers.length = 0;
     for (const b of this.bursts) { this.emitList.push({ x: b.x, y: b.y, z: b.z, rad: b.rad }); b.life -= dt; }
     this.bursts = this.bursts.filter((b) => b.life > 0);
+    for (const m of this.instances) m.netDraw = 0;
 
     if (this.cableDirty) { this.rebuildCables(); this.cableDirty = false; }
 
@@ -1300,6 +1318,7 @@ export class MachineSystem {
           const give = Math.min(cur, -left);
           m.state.buffer = cur - give;
           left += give;
+          this.attributeDrain(m, net, give);
         }
       }
     }
@@ -1460,12 +1479,14 @@ export class MachineSystem {
       this.cleaners.push(m);
     }
     if (job.t >= dur) {
-      if (!this.outputsHaveRoom(m, r)) {
+      const out = m.def.randomOut ? { [rollWeighted(m.def.randomOut)]: 1 } : r.out;
+      const result = { ...r, out };
+      if (!this.outputsHaveRoom(m, result)) {
         st.status = 'OUTPUT FULL';
         return;
       }
-      this.giveOutputs(m, r);
-      for (const [id, n] of Object.entries(r.out || {})) if (n > 0) this.ctx.onCraft?.(id, n);
+      this.giveOutputs(m, result);
+      for (const [id, n] of Object.entries(out || {})) if (n > 0) this.ctx.onCraft?.(id, n);
       st.job = null;
       st.progress = 0;
       st.status = st.queue?.length ? `CRAFTED · ${st.queue.length} QUEUED` : 'CRAFTED';
@@ -1724,14 +1745,12 @@ export class MachineSystem {
     }
     if (removed.length) {
       world.markEdited(x0, x1, y0, y1, z0, z1);
-      let stepsDone = 0;
-      while (st.boreProg >= step) { st.boreProg -= step; stepsDone++; }
-      if (stepsDone && this.ctx.mineDrops && this.ctx.groundBand) {
-        const events = Math.min(12 * stepsDone, Math.max(1, Math.round(removed.length * 0.12)));
-        for (let i = 0; i < events; i++) {
-          const [x, y, z] = removed[Math.floor(Math.random() * removed.length)];
+      while (st.boreProg >= step) st.boreProg -= step;
+      if (this.ctx.mineDrops && this.ctx.groundBand) {
+        for (const [x, y, z] of removed) {
           const band = this.ctx.groundBand(x, y, z);
-          for (const [id, n] of this.ctx.mineDrops(band, y, x, z)) {
+          // mineDrops puts the base block first; only the ore after it is collected
+          for (const [id, n] of this.ctx.mineDrops(band, y, x, z).slice(1)) {
             if (n > 0) this.addOutput(m, id, n);
           }
         }
@@ -1994,6 +2013,7 @@ export class MachineSystem {
           .filter((q) => q.i >= 0),
         bwe: m.bwe ? { yaw: +(m.bwe.yawCur ?? m.bwe.yaw).toFixed(3), boom: +(m.bwe.boomCur ?? m.bwe.boom).toFixed(3), wheel: !!m.bwe.wheelOn } : null,
         bore: m.def.bore ? { fb: +(m.state.fuelBuf || 0).toFixed(3), bp: +(m.state.boreProg || 0).toFixed(3), pitch: +(m.state.pitch || 0).toFixed(3) } : null,
+        usage: m.def.capacity ? m.state.usage || {} : null,
       },
     }));
   }
@@ -2011,6 +2031,7 @@ export class MachineSystem {
       inst.state.burnT = e.s.burnT || 0;
       inst.state.buffer = e.s.buffer || 0;
        inst.state.genRate = e.s.genRate || 0;
+      if (inst.def.capacity && e.s.usage) inst.state.usage = e.s.usage;
       if (inst.bwe && e.s.bwe) {
         const yaw = +e.s.bwe.yaw || 0;
         const boom = +e.s.bwe.boom || 0;

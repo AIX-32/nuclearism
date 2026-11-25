@@ -474,8 +474,10 @@ export class MapSystem {
   toggle() { this.open ? this.hide() : this.show(); }
 
   setMinimapVisible(v) {
-    this.minimapVisible = !!v;
-    if (this.miniWrap) this.miniWrap.style.display = v ? 'block' : 'none';
+    const on = !!v;
+    if (this.minimapVisible === on) return;
+    this.minimapVisible = on;
+    if (this.miniWrap) this.miniWrap.style.display = on ? 'block' : 'none';
   }
 
   _resize() {
