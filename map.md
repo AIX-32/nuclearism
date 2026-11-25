@@ -12,9 +12,10 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 ## Main files
 
 ### Content, machines and workbench interfaces
-- `assets/js/content.js` is the data catalogue: `ITEM_DEFS` (items), `LIQUID_DEFS` (liquid types), `MACHINE_DEFS` (machines), `MACHINE_BY_ID`, `CRAFT_RECIPES`, `TABLE_RECIPES` / `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor(def)` fallback layouts, `STARTER_GUIDE` / `GUIDE_STEPS` (opening build order), `ACHIEVEMENT_TYPES` (achievement categories/tiers), and `TUNING`.
+- `assets/js/content.js` is the data catalogue: `ITEM_DEFS` (items), `LIQUID_DEFS` (liquid types), `MACHINE_DEFS` (machines), `MACHINE_BY_ID`, `COOKED_DISHES` (outputs of the cooking machines, derived from their recipes), `CRAFT_RECIPES`, `TABLE_RECIPES` / `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor(def)` fallback layouts, `STARTER_GUIDE` / `GUIDE_STEPS` (opening build order), `ACHIEVEMENT_TYPES` (achievement categories/tiers), and `TUNING`.
 - `assets/js/liquids.js` is the global liquid/container system: pure helpers over `stack.liquid` (`fill`, `drain`, `transfer`, `accepts`, `sanitize`, `volume`). Acid liquids require an acid-proof container.
 - `assets/js/radiation.js` is the directional radiation model: `sourcePoint()` (the world's fallout spot), `transmission()` (near-field shadow march), `relativeBearing()` / `compass()` (HUD direction). `radiation.check.mjs` self-checks it.
+- `assets/js/radio.js` is the held-radio logic: `nextStrikeDay()`, `secondsUntilStrike()`, `radioTrack()` and the two clip paths (`assets/audio/radio/websdr.wav`, `assets/audio/radio/static.mp3`); `radio.check.mjs` self-checks the clip files, the item/recipe and the T−3 min switch.
 - `assets/js/pieces/bunker_door.js` is the two-leaf bunker blast door: a full wall-width (3 m × 3 m × 0.25 m) leaf that only sits on floor BBs. Two inline leaves pair up; right-clicking either slides both apart, and an open pair stops shielding radiation or blocking the player. `KIND.materialShade` gives them the same tier texture at a darker shade so they read as doors; `bunker_door.check.mjs` checks the geometry, pairing, slide direction, material shade and the runtime shadow.
 - `assets/js/building.js` is the base building system: `BuildingSystem` (wall panels, placement, upgrades, collision, radiation shadow, snapping) plus the pure helpers `shadowCells()` / `snapPlan()` / `meshKey()`. `building.check.mjs` self-checks the geometry, the attenuation law and the snapping; `building.mesh.check.mjs` and `building.snap.check.mjs` cover the meshes and the placements (both run on the tiny three.js stand in `assets/js/three-stub.mjs`); `building.intent.check.mjs` extracts game.js's own target/preview/place/mine bodies and runs them in node, so the placement *intent* is checked against the real code, not a copy of it.
 - `assets/js/machines.js` is the machine runtime: placement, power networks and auto-linking cables, reactors and meltdowns, the excavator, bucket wheel excavator, radiation emission, save/restore.
@@ -24,6 +25,7 @@ The goal of the codebase is to let you survive an increasingly hostile world by 
 - `assets/ui/furnace.json` is an example layout; `ble.html` is the grid editor for authoring them.
 - `assets/js/content.check.mjs` validates the catalogue (`node assets/js/content.check.mjs`, 6,000+ assertions: recipes, machine/block pairing, fuel depletion, layout bounds, craft times, radiation curve, progression deadlock guards).
 - `assets/js/package.json` is just `{"type":"module"}` so node can import the ES modules for the checker above.
+- `tools/missing_assets.py` is `python3 tools/missing_assets.py`: reads the real catalogue through node and lists workbenches whose model file is missing and items whose icon has no backing texture (broken PNG path or no model/PNG at all, so they render a generated tile); `--self-check` exercises the icon-resolution branches. `tools/missing_assets_gui.py` is the tkinter front end (same `load()` / `find_missing()` scan) with per-row checkboxes — ticks persist in `~/.config/nuclearism/missing_assets_ticks.json` and survive Refresh and restarts; the desktop launcher is `~/Desktop/Nuclearism Missing Assets.desktop`.
 - `assets/js/footsteps.js` is the footstep audio player: preloaded clip pools, `surfToCategory()`, `createFootsteps()`.
 - `assets/js/game.js` also holds the first-person **held-tool viewmodel** (§9d) and **tree chopping** (§10c).
 - `assets/js/terrain-realistic.js` is the optional **Realistic** heightfield (`createRealisticTerrain(seed)`): the Ported Pinwheel Vista mountain graph, a baked droplet-erosion field that recentres on the player, slope/altitude surface masks and map colours. Self-contained, no Unity or graph-editor code; `terrain-realistic.check.mjs` verifies it (`node assets/js/terrain-realistic.check.mjs`).
@@ -39,6 +41,8 @@ The game never breaks on a missing asset — each has a code-generated substitut
 - item models `assets/models/items/<itemId>.glb` (source art; icons rendered offline)
 - item icons: **any item with a model gets a rendered icon automatically** — `itemModelIcon()` in content.js resolves `<id>.glb`, workbench items use their machine's model; `ITEM_MODEL_ICON_EXCLUDE` (a blacklist, currently empty) opts an item back to its flat/generated icon. Missing files fall back to `assets/images/items/<itemId>.png`, else a generated tile. The same path is reused for the **in-hand prop** viewmodel.
   - **Gotcha:** the `<id>.png` fallback is *not* auto-discovered. If an item has no `.glb`, you must set `icon: 'assets/images/items/<id>.png'` in its `ITEM_DEFS` entry or it renders the generated code tile. (The ore icons — uranium, copper, tin, lithium, boron, beryllium — and `shotgun_shell` needed this.)
+  - Flat PNGs are now wired via `icon:` for the four hazmat armor pieces (`hazmat_helmet` / `hazmat_chestplate` / `hazmat_leggings` / `hazmat_boots`), `noodles`, `boron_carbide`, `cadmium`, `hafnium`, `fuel_rod_casing`, `control_rod`, `reactor_casing`, `scrap`, `silica`, `basalt` and `radio`. The leggings art came from a source file named `jazmat pants.png`. No `ICON_CACHE_KEY` bump: these load as plain PNGs, not cached model renders.
+  - Shared textures: all seven rod items use `control_rod.png`; the five numbered isotopes (`u235` / `u238` / `u233` / `pu239` / `th232`) share `matter.png` (source `diffrent matter types.png`); `fusion_fuel` uses `fusion_fuel.png` (source `fuel pallet.png`). Each `depleted_*` reuses its live fuel's icon with `tint: 0x777777`, so a spent fuel is the same picture darkened.
   - like ingots, items can share a base icon with a per-item `tint`; crop seeds use `assets/images/items/seed.png` tinted by their outcome
   - **plates/sheets share one texture**: every `*_plate` item (lead, copper, iron, steel, boron, zirconium and the three shielding plates) uses `assets/images/items/sheet.png` and is told apart by its `tint` — no per-plate PNG, no per-plate GLB
 - machine panel layouts `assets/ui/<machineId>.json` → missing = `layoutFor(def)`
@@ -46,7 +50,7 @@ The game never breaks on a missing asset — each has a code-generated substitut
 - footstep clips `assets/audio/footsteps/<family>-N.ogg` (concrete/dirt/grass/gravel/metal/stairs/stone/wood) → missing = silent step
 - ambient music `assets/audio/music/*.ogg` (handpicked Abstraction CC0 day tracks) → missing/broken track = skipped; MUSIC toggle and VOLUME apply
 - wall panel textures `assets/textures/buildings/<tier>.jpg` (wood/brick/concrete/shielded) → missing = flat tier colour
-- the building pieces ship their own icon models: `assets/models/items/{wall,floor,roof,door,triangle}_<tier>.glb`, generated by `node tools/gen_building_models.mjs` (the piece shape with the tier texture embedded). The icon renderer picks them up with no code change; bump `ICON_CACHE_KEY` in game.js after regenerating them
+- the original building pieces ship their own icon models: `assets/models/items/{wall,floor,roof,door,triangle}_<tier>.glb`, generated by `node tools/gen_building_models.mjs` (the piece shape with the tier texture embedded). The icon renderer picks them up with no code change; bump `ICON_CACHE_KEY` in game.js after regenerating them. Newer kinds (`stair`, `bunker_door`) have no icon model, so they fall back to the generated code tile until art is dropped in
 
 Real art can be dropped in later without touching code.
 
@@ -170,11 +174,15 @@ What this does:
 - the `flowers` layer draws the flower biome's atlas of 12 flower/grass cards (`flower_field`): full density in `FLOWER_PLAINS`, plus rare, noise-gated patches that spill into `PLAINS` (0.35 fill) and `FOREST` (0.28) so wildflowers show up elsewhere without carpeting them; `flowerPatchIndex()` keeps neighbouring cards in the same colour family
 - rendering is instanced and streamed in species-sized rings; trees keep real trunks for chopping and collision, and litter only appears under suitable parent trees
 - trunk colliders use `vegTrunkRadius()` (game.js): the 75th percentile of the lowest 6% of the model's vertices, so flared roots and low branches do not make the trunk unapproachably thick; `node assets/js/veg-trunk.check.mjs` checks it against the real extracted function
-- ground plants with `pickup` register crosshair pickups (`herb`, `flower`) gated by gardening gloves; harvested cells are remembered in `_vegHarvested` so they do not respawn
+- ground plants with `pickup` register crosshair pickups (`herb`, `flower`) gated by gardening gloves; harvested cells are remembered in `_vegHarvested` so they do not respawn. The invisible hit meshes are raycast directly and are deliberately not added to the scene, so thousands of them do not get walked every render
 - mining dirt while wearing gardening gloves has a luck-based chance to drop a random crop seed (herb, flower, wheat, potato, carrot, tomato, corn, cabbage, onion, peas, spinach, cucumber, eggplant, bell pepper, rice) for the greenhouse
 - hitting a tree can shake loose fruit (`TREE_FRUITS` = apple/orange/pear, `TREE_FRUIT_CHANCE` = 10%)
 - **savanna plants wear the colour of the ground they grow on**: the textured plants get a per-instance tint (`instanceColor` on the card mesh) taken from the mean pixel of the biome's dry grass texture (`assets/images/dry.jpg`), converted to linear space and scaled so its strongest channel is 1 — a hue shift towards the dry grass, not a dimming (`assets/js/veg-tint.js`, `node assets/js/veg-tint.check.mjs`). Model vegetation (trees, ferns) keeps its own art
-- streaming is budgeted: at most 6 species' instance buffers are refreshed per frame
+- streaming is budgeted: at most 2 species' instance buffers are refreshed per frame, and the cell scan gets 1.5 ms (3 ms for flowers) per frame
+- a stream is never restarted mid-scan: crossing a 16 m grid line only records a pending position, used once the running stream finishes; the old 8 m restart discarded completed layers and re-walked the same cells every frame
+- resolving a plant uses `vegSurfaceY()`: the cached analytic `groundYAt()` height refined in a 3.5 m band, falling back to the full `surfaceY()` march only for edited/invalid columns; `vegPickupIndex()` replaces the per-cell linear `worldPickups.find` during both resolution and culling (`node assets/js/veg-stream.check.mjs`)
+- card meshes are **not frustum-culled**: three.js caches an `InstancedMesh`'s bounding sphere on its first render, so a stream that moves the instances would otherwise hide a whole layer once that sphere fell behind the player (the atlas flowers already disabled culling; model species always had it off)
+- streaming a cell out of range only removes its pickup; it is **not** a harvest — the plant regrows when you walk back, and a cell is remembered in `_vegHarvested` only when the player actually collects it (`node assets/js/veg-harvest.check.mjs`)
 
 ### 4. Density field and chunk mesh generation
 Relevant classes:
@@ -245,12 +253,14 @@ What this does:
 - handles movement and camera behavior
 - ensures player spawn points are valid on solid ground (nothing is underwater any more)
 - keeps the player standing on solid ground
+- jumping costs 1 hunger, charged at most once per Space hold (`jumpUsed` in game.js): re-grounding against a wall while holding Space can no longer drain hunger every frame; `node assets/js/jump.check.mjs` checks it
+- walking down terrain follows the surface at a bounded rate (`GROUND_FOLLOW_SPEED` in game.js) instead of snapping up to 0.7 m in one frame: short downslope steps still glue the body to the ground, but a bigger drop is left to gravity so the player falls smoothly instead of teleporting down with the terrain; `node assets/js/ground-follow.check.mjs` checks it
 
 ### 9. Mining / placing / world edits
 Relevant parts:
 - mine(), place(), mineAnimated()
 - density field edits and markRegionDirty()
-- `mineAim()` (terrain ray, `REACH` = 7 m), `raycastTerrain()`
+- `mineAim()` (terrain ray, `REACH` = 7 m), `raycastTerrain()`, `terrainBlockLift()`
 - `resolveInteractTarget()` / `useInteractable()` / `refreshInteractPrompt()` — opening machines and pickups
 - `raySphereHit()` — ray/sphere test behind the interact prompt
 
@@ -259,6 +269,7 @@ What this does:
 - lets the player place items or terrain blocks
 - marks affected regions dirty so chunk geometry rebuilds
 - right-click opens whichever machine/pickup the crosshair hits, up to the same `REACH` as mining (7 m)
+- placing a dirt/stone/sand block lifts the player onto the finished fill surface over the same 0.28 s the block grows (`terrainBlockLift()` computes the density-based top, `updateGroundLift()` eases the body up), so filling ground under your feet pushes you up smoothly instead of burying/clipping you; the lift cancels on jump/respawn and a block with no headroom above it is refused with `NO ROOM TO PLACE HERE`
 - while a workbench item is held, `updatePlacePreview()` shows a translucent, flashing ghost of the machine at the target spot (red where placement is blocked)
 
 ### 10. Rendering and frame loop
@@ -287,9 +298,9 @@ What this does:
 - `TABLE_OUTPUTS` is the whitelist of recipes the pocket table can make
 - maps spent fuel to its depleted form for the reactor
 - content tiers: firearms (fast AR, SMG, shotgun shells), electronics chips (craftable in the bag, consumed by the assembler tier), consumables (juice, iodine, NEUROZAM-9, cigarette packs, oven dishes), liquids, wood tools and the water pump
-- **farming and cooking**: the `greenhouse` (unpowered processor) grows seeds into crops (herb, flower, wheat, potato, carrot, tomato, corn, cabbage, onion, peas, spinach, cucumber, eggplant, bell pepper, rice; 2 min for herb/flower, 12 min for the rest, 1 seed → 2 produce); seeds are a lucky drop from mining dirt with gardening gloves. The `oven` (powered processor) cooks dishes such as chicken soup, roasted bowl of veg, ratatouille, herbed flatbread, stuffed bell peppers and rice bowl. Seed items use the shared base icon `assets/images/items/seed.png` with an outcome-based `tint` (ingot-style)
+- **farming and cooking**: the `greenhouse` (unpowered processor) grows seeds into crops (herb, flower, wheat, potato, carrot, tomato, corn, cabbage, onion, peas, spinach, cucumber, eggplant, bell pepper, rice; 2 min for herb/flower, 12 min for the rest, 1 seed → 2 produce); seeds are a lucky drop from mining dirt with gardening gloves. The manufactory reverses the greenhouse: any of those crops crafts into 2 of its own seed, derived in `CRAFT_RECIPES` from each seed item's `seed` field (manufactory-only, not in the pocket table). The `oven` (powered processor) cooks dishes such as chicken soup, roasted bowl of veg, ratatouille, herbed flatbread, stuffed bell peppers and rice bowl. Seed items use the shared base icon `assets/images/items/seed.png` with an outcome-based `tint` (ingot-style)
 - **water sources**: industrial `liquid_tank` parts (unlimited, fill a held can) and the powered `water_pump` machine (`kind: 'pump'`, right-click a held can to pump 5 L for 30 PU)
-- **bed** (`kind: 'bed'`, `sleep: true`): a pocket-table craft of **2 iron ingots + 5 herb**; right-click to sleep until morning. The bed and the battery stack both ship self-contained models at `assets/models/workbenches/{bed,battery_stack}.gltf` (buffers and textures embedded), so they also supply the item icons; `ICON_CACHE_KEY` was bumped to re-render them
+- **bed** (`kind: 'bed'`, `sleep: true`): a pocket-table craft of **2 iron ingots + 5 herb**; right-click to sleep until morning. The black sleep screen shows a CSS-only `zzz` whose letters grow in turn (Zzz → zZz → zzZ, looping). The bed and the battery stack both ship self-contained models at `assets/models/workbenches/{bed,battery_stack}.gltf` (buffers and textures embedded), so they also supply the item icons; `ICON_CACHE_KEY` was bumped to re-render them
 - late-game tiers: **research blueprints** gate the reactor/fusion/scrubber/containment tier, **fusion fuel** burns in a second reactor, and the **atmospheric scrubber** is a powered ambient-dose sink
 
 Changing gameplay content means editing this file, not game.js.
@@ -333,7 +344,7 @@ What this does:
 Relevant parts:
 - `assets/js/building.js` — `BuildingSystem` (pieces, cells, meshes, collision, shadow march, snapping) plus the pure helpers `shadowCells()`, `snapPlan()` and `meshKey()`
 - `assets/js/build-tiers.js` — `BUILD_TIERS` (wood / brick / concrete / shielded concrete), `BUILD_TIER_ORDER`, `BUILD_UPGRADES` (the material cost of upgrading one tier)
-- `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds, and each kind has its own `pieces/<name>.check.mjs`
+- `assets/js/pieces/` — **one module per piece kind** (`wall.js`, `floor.js`, `roof.js`, `door.js`, `triangle.js`, `stair.js`); each exports `KIND` (the geometry), `ITEMS` (the item defs) and `RECIPES`. `pieces/README.md` is the contract, `pieces/registry.js` maps kind names to kinds, and each kind has its own `pieces/<name>.check.mjs`
 - `assets/js/pieces/registry.js` — `KINDS`, the name → kind table the runtime uses
 - `assets/js/pieces/placement.js` — the shared placement maths: `baseAt()` (the highest cell base under the columns a shape really occupies), `anySupport()` (any bottom cell with real face contact holds a vertical or partial piece) and `edgeSupport()` (a full straight edge, not one arbitrary block, holds a 3 × 3 slab). Cell occupancy alone is not support: a thin panel may sit on the other side of its cell, and a short slab may not reach its top.
 - content.js spreads the piece `ITEMS` into `ITEM_DEFS` and the piece `RECIPES` into `CRAFT_RECIPES`, so **a kind module never edits content.js**; an item with `table: true` joins the pocket table automatically
@@ -365,9 +376,10 @@ Each kind is one module in `assets/js/pieces/`, and each is its own shape, suppo
 | `roof` | `roof.js` | 3 m × 3 m **barn roof** (flat soffit, eaves, flat ridge strip) | custom geometry `geom: 'roof_gable'` + `rotY(rot)` (ridge along X or Z); a whole row or column of the panel must rest on something below, so it may overhang but never float (`edgeSupport`). `base()` takes the highest thing under its whole 3 × 3 footprint, so a roof that hangs over a wall rests on that wall |
 | `door` | `door.js` | 1 m wide × 3 m tall × 0.25 m thick | `dynamicSolid: true`: solid while shut, passable while open, and it only shields radiation while shut. Own geometry key `door` so the swing can be animated on its own mesh |
 | `triangle` | `triangle.js` | **half** of a 3 m × 3 m square, 0.25 m thick | a real triangular prism (`geom: 'triangle'`), the right angle walks through the four corners as `rot` goes 0..3 (`rot: 4`, `rotY(rot)`). Cell boxes come from the same local frame as the mesh, so they cannot drift apart |
+| `stair` | `stair.js` | 3 m wide × 3 m run × 2 m rise, ten 0.2 m treads | custom closed stepped mesh (`geom: 'stair'`) over three XZ cells, four rotations; one box per tread per X column per Y layer, each inside its cell. The 0.2 m riser is under the 0.6 m `tryStepUp` cap and equals one 60 fps `GROUND_FOLLOW_SPEED` step, so it climbs and descends smoothly; the top tread reaches the next cell exactly so a floor can rest on it. `baseAt`/`anySupport` for placement |
 | `bunker_door` | `bunker_door.js` | 3 m wide × 3 m tall × 0.25 m thick leaf (same width as a wall/door) | same tier texture at `materialShade` 0.68 so it reads as a door; solid like a wall while shut, passable and shielding nothing when open. `support()` requires a floor BB below; `mateOf()` finds the other leaf beside it (same y/rot, one leaf width along the run axis). Right-click toggles both; `slideOffset()` eases them one leaf width apart in opposite directions |
 
-Item ids: `wall_*`, `floor_*`, `roof_*`, `door_*`, `triangle_*` × the four tiers. The wood one of each is `table: true` (pocket table); the rest are manufactory crafts.
+Item ids: `wall_*`, `floor_*`, `roof_*`, `door_*`, `triangle_*`, `stair_*` × the four tiers. The wood one of each is `table: true` (pocket table); the rest are manufactory crafts.
 
 **Doors** (game.js): `doorHit()` / `doorUnderCrosshair()` ray-test the door's own cells (a shut door is hit by its panel, an open one by the whole doorway so it can always be shut again); `handFreeForDoor()` refuses when a tool or consumable is in hand, so the hammer (which upgrades and demolishes) never opens a door; `toggleDoor()` flips `piece.open` and `updateDoorSwings(dt)` rewrites the door mesh's instance matrices every frame, turning the panel about its hinge (`swingFrame()` in `door.js` gives the hinge edge) and updating its bounding sphere so the raycast still finds it. The crosshair prompt reads `DOOR · RIGHT CLICK / OPEN / CLOSE DOOR`.
 
@@ -395,7 +407,7 @@ The piece you aim at is the **anchor**, and the new piece is laid flush against 
 ### 12d-c. Adding a new piece kind
 
 1. write `assets/js/pieces/<name>.js` exporting `KIND`, `ITEMS` and `RECIPES` (the contract is `assets/js/pieces/README.md`)
-2. add it to `assets/js/pieces/registry.js` (one import, one entry)
+2. add it to `assets/js/pieces/registry.js` (one import, one entry) — **append** it: saves store kinds as indices into `KINDS`, so inserting a kind in the middle reinterprets old pieces (a bunker door at index 5 came back as a stair); `bunker_door.check.mjs` guards the legacy index
 3. write `assets/js/pieces/<name>.check.mjs` — pure geometry assertions, `node` only
 4. never touch `building.js` or `content.js`: the runtime is kind-agnostic
 
@@ -423,12 +435,14 @@ Relevant parts in game.js / content.js / map.js:
 - `nuclearStrikes` / `lastNukeCheckDay`, `maybeNuclearStrike()`, `findNukeSite()`, `spawnNuclearStrike()`, `carveNukeCrater()`
 - `spawnNukeFx()` / `updateNukeFx()` — PSX-style blast/mushroom cloud (low-poly, flat/basic/lambert, fog off, frustum-culled off, 180 s life); camera far is extended while FX is active so the cloud can be seen outside visible chunks
 - `MapSystem.noteStrike()` plus `strikes` layer/markers in `map.js`
+- `assets/js/radio.js` (`secondsUntilStrike()` / `radioTrack()`), game.js `scheduleNextNuke()` / `nextNukeDay` / `nextNukeWillHit` / `updateRadio()`, the `radio` item in content.js and the clips in `assets/audio/radio/`
 
 What this does:
 - every 10th day there is a 50% chance of a nuclear strike; `lastNukeCheckDay` prevents re-rolls and persists in the save
 - the site is chosen away from player bases: no machine or building piece within `r + NUKE_GAP` (208 m) of the crater center, and candidates are sampled far from the player; if no safe site is found, no strike happens
 - the strike carves a large crater into the density field, saves a persistent strike record, adds a map strike marker, and plays a blast/mushroom-cloud effect
 - each crater is a permanent directional radiation emitter in `radField()` (`NUKE_RAD` × that strike's `radMult`), shadowed by terrain/buildings through `radTransmission()`; every strike multiplies `nukeRadMult` by 1.5 for the next one, so a nearby base needs stronger walls facing later craters
+- the 10-day roll is now **pre-rolled** at the start of each window (`scheduleNextNuke()` sets `nextNukeDay` and `nextNukeWillHit`, both saved) so the future is knowable: the craftable, hold-only `radio` plays `websdr.wav` on loop while a strike is scheduled, then switches to `static.mp3` at T−3 min; with no strike pending it plays static the whole time, and it is silent when not held (or while asleep). Both clips loop at 60% of VOLUME. `scheduleNextNuke()` also backfills old saves whose scheduled day has already passed.
 
 ### 13. Mining, ore bands and hand tools
 Relevant parts:
@@ -537,12 +551,13 @@ What this does:
 ### 13g-c. Tunnel bore (slow self-moving TBM)
 Relevant parts:
 - `MACHINE_DEFS.tunnel_bore` (`kind: 'bore'`, `outputs: 12`, `bore: { speed, step, fuel }`)
-- machines.js `tickBore()` / `boreMaskFromModel()`; layout `layoutFor()` `kind: 'bore'`; `node assets/js/bore.check.mjs` checks the drop loop against the real source
+- machines.js `tickBore()` / `controlBore()` / `boreMaskFromModel()`; layout `layoutFor()` `kind: 'bore'`; `workbench-ui.js` `buildBore()` / `renderBoreDynamic()`; `node assets/js/bore.check.mjs` checks the drop loop against the real source
 
 What this does:
 - a placeable lower-mid-game boring machine: load fuel (carbon, heavy fuel oil or gasoline) into its 5 fuel slots and it slowly chews forward in the direction it faces, carving a tunnel and moving itself by `step` metres
 - the carve mask is sampled from the loaded model's silhouette at template load, so the tunnel cross section matches the model shape; until `assets/models/workbenches/tunnel_bore.gltf` is added it falls back to the placeholder box shape
 - **every** carved voxel rolls `mineDrops()` (not a random 12% sample); only the ore part is kept — the base block (stone/basalt/dirt) is discarded — and ores land in 12 output slots; a full output, no fuel, or a machine/building in the way stops it
+- two checkbox-style buttons in the bore panel (button look, `[ ]` / `[x]` state, `aria-pressed`), persisted on the machine and save: **PICK UP ANYTHING** (on by default; off = carve without storing ore, so a full hold no longer stops it) and **USE CARBON AS FUEL** (off by default; mined carbon adds to the fuel buffer instead of the hold, even while pick-up is off)
 
 ### 13h. Test bench (portable battery power)
 Relevant parts:
@@ -576,6 +591,7 @@ What this does:
 - the Wrapper reuses the Walker's ground-following movement and adds a skinned model, animation mixer, yaw-facing and a distance state machine (walk > 18 m, run < 18 m, attack < 2.2 m, occasional distant scream); the model is authored Z-up at ~175 units, so it is scaled 0.01 and stands 1.75 m
 - spawning is rolled on a timer, not per frame: normal biomes only at night (`isDay()` false), 35% per 9 s, capped at 2; the wasteland spawns them 24/7 every 6 s, capped at 5 (they stay in wasteland when you are in wasteland)
 - they claw for bleeding damage, are despawned beyond 96 m, and take tool hits (a swing aimed at one hits it before terrain; ~5 hits kills it)
+- their approach/attack/hurt sound effects are **occluded**: `wrapperSoundBlocked()` in game.js marches from the player to the wrapper through the density field and the building shadow, so a wrapper parked on the roof of a bunker (or on the ground above a dug-in one) cannot repeat its sound through the walls; `node assets/js/wrapper-sound.check.mjs` checks the clear/terrain/piece cases
 - standing on wasteland ground adds `WASTELAND_RAD` (0.35 rad/s) on top of ambient, day or night, with a one-time `WASTELAND · HOT GROUND` notice when crossing the biome edge
 
 ### 13j. C4 demolition
@@ -719,7 +735,7 @@ What this does:
 
 ### 14f. Achievements and the NEXT STEP objective
 Relevant parts:
-- `content.js` `GUIDE_STEPS` (the opening build order) and `ACHIEVEMENT_TYPES` (15 categories with 4–13 tiers each: miner, builder, craftsman, engineer, machinist, survivor, irradiated, hunter, researcher, atomics, fuel cycle, explorer, lumberjack, demolition, forager)
+- `content.js` `GUIDE_STEPS` (the opening build order) and `ACHIEVEMENT_TYPES` (17 categories with 4–13 tiers each: miner, builder, craftsman, engineer, machinist, survivor, irradiated, hunter, researcher, atomics, fuel cycle, explorer, lumberjack, demolition, forager, chef, gourmet)
 - `index.html` `#objective` (step counter, title, hint, requirement chips) and `#achievePanel` (header count, horizontally scrolling category grid, detail footer, hover tip)
 - game.js `playTime`, `guideIndex`, `paintGuide()`, `updateGuide()`, `migrateGuideFromMachines()`, `guideStepDone()`
 - `freshAchievements()`, `loadAchievements()`, `backfillAchievements()`, `achBump()`, `achCraft()`, `achievementValue()` / `achievementDone()` / `achievementProgress()`
@@ -727,11 +743,12 @@ Relevant parts:
 - pause-overlay `#achievementsBtn`
 
 What this does:
-- the **NEXT STEP** panel is a live objective tracker: every 0.2 s it checks the current `GUIDE_STEPS` entry against the bag or placed machines, paints `have/need` chips and auto-advances. It is hidden in sandbox and once the guide is finished, and progresses by id (`save.guide`) so a save can skip completed steps
+- the **NEXT STEP** panel is a live objective tracker: every 0.2 s it checks the current `GUIDE_STEPS` entry against the bag or placed machines, paints `have/need` chips and auto-advances. It is hidden in sandbox; after the last real step (the atmospheric scrubber) a terminal `more` step shows `THERES MORE` pointing at the containment suit, plasma drill, scrubber farms and achievements, and stays visible because it has no completion condition. Progress is by id (`save.guide`) so a save can skip completed steps
 - the guide is separate from the recipe browser's **START HERE** strip: the strip is time-based (`playTime < STARTER_GUIDE_SECONDS`), while NEXT STEP is state-based
-- achievements track lifetime stats: `mined`, `placed`, `crafted`, `machines`, `kills`, `dosePeak`, `research` (blueprints), `fuel`, `walked`, `chopped` (trees felled), `blasts` (C4 detonations), `harvested` (plants picked), plus `built.<machineId>` and `started.fission` / `started.fusion`
+- achievements track lifetime stats: `mined`, `placed`, `crafted`, `machines`, `kills`, `dosePeak`, `research` (blueprints), `fuel`, `walked`, `chopped` (trees felled), `blasts` (C4 detonations), `harvested` (plants picked), plus `built.<machineId>` and `started.fission` / `started.fusion`. **CHEF** and **GOURMET** track distinct kinds instead: `cooked` / `eaten` are sets of item ids (first dish crafted from the furnace/oven, first food actually consumed) and `achievementValue()` counts their keys, so variety — not volume — unlocks the tiers. `COOKED_DISHES` in content.js is derived from the cooking machines' recipes; `content.check.mjs` guards that the tiers stay reachable.
 - tiers are defined purely in data (`stat`/`need`, `built`, or `started`); the panel builds the category columns on first open, paints progress and unlock counts, shows a hover tooltip and a detail line for the selected tier
 - existing machines backfill `built`/`machines` on load, and unlocking or closing the panel saves the world
+- unlocking a tier also drops a **toast card** (`#achToast` in index.html, styled in the motion layer of styles.css) from the top right for 7 s: achievement icon left, tier name right, `ACHIEVEMENT UNLOCKED` under it. `updateAchievements()` diffs the set of unlocked tiers on each 0.2 s tick (`achKnown`, seeded on the first tick so already-unlocked tiers don't pop on load) and queues toasts so simultaneous unlocks show one after another; `updateAchToast()` counts the 7 s down per frame. The call sits **outside** the frame loop's `!paused && !sleep` gate (most unlocks happen while a crafting panel is open), and the toast's z-index (44) keeps it above workbench/achievement panels
 - both systems survive save/load via `playTime`, `guide` and `achievements`; the achievements handle is `openAchievements()` from the pause overlay
 
 ### 14g. Drag-and-drop item slots (shared across the whole UI)
@@ -869,6 +886,43 @@ What this does:
 - a machine that is fed by the sky (it has an incoming route) never touches the bag: the chain is a real factory — container → crusher → furnace → assembler
 - speed is `TUNING.SKYLINE_SPEED` (7 m/s), and a pod that arrives with no room to unload waits at the end of the line instead of losing the load
 
+### 16f. IRGC airdrops: pickup boxes, ask boxes and drop boxes
+
+Relevant parts:
+- `content.js`: `rials` (stack 9000, IRGC-printed and controlled currency), the four box items/machines, `RIAL_VALUE` / `rialValue()`, `saleValue()`, `offerPrice()`, two `CRAFT_RECIPES` (pickup box = 5 iron plates + 5 plastic; ask box = 4 iron plates + 4 plastic + 1 circuit board), and a `layoutFor()` branch per kind
+- `machines.js`: `placementBlocked()` (the `solo: 16` rule), `setOrder()`, `paidRials()` / `spendRials()`, `tickOffer()`, `nightfall()`, `airdrop()`; `addOutput()` / `outputsHaveRoom()` now respect each item's `stack` cap so rials fill 9000 per slot
+- `workbench-ui.js`: `orders` layout element, `buildOrders()` / `renderOrders()` / `renderOrderRows()` / `renderOrderGrid()` — three order rows, a search field and a scrollable icon grid. Both halves are signature-guarded because `update()` runs every frame: rebuilding the 160-cell grid on each click made the quantity/clear buttons feel dead or laggy
+- `flare` item (pocket-table craft: magnesium + plastic + carbon): right-click near a pickup/ask box (6 m) burns one and fades the screen to white; it holds full white for 3 s, then `nightfall()` runs for those boxes only as the flash fades out. `#flareFlash` in index.html, `useFlare()` / `updateFlare()` in game.js
+- every successful IRGC pickup/delivery plays `assets/audio/irgc-plane-flyby.mp3` (the sound of a plane passing to lift the goods or drop the order) — one pass per `nightfall()` batch, flare calls included; `playPlaneFlyby()` in game.js is reached through the `planeFlyby` ctx hook in `MachineSystem.nightfall()` and follows the VOLUME setting. `dead-drop.check.mjs` checks one pass per completed batch and none for empty/unpaid boxes
+- the ask box's **PAY EXACT** button calls `MachineSystem.payExact()` (bridge `payExact`): it works out the order's shortfall and pulls exactly that many rials from the bag into `pay0`/`pay1`, so dropping a 9000-stack in does not overpay; it reports `ALREADY PAID` or `NEED n MORE RIALS` instead
+- flat icons installed at `assets/images/items/{rials,flare,crowbar}.png` and wired via `icon:` in their `ITEM_DEFS` entries (`rial.png` was renamed to `rials.png` to match its id); none of the three has a 3D model, so no `ICON_CACHE_KEY` bump was needed
+- `game.js`: `ach.seen` (items ever held), `ach.built` (machines ever placed) exposed as `ctx.hasItem` / `ctx.hasMachine`; the place-ghost turns red near another workbench
+- `assets/css/styles.css`: the order-picker styling; `dead-drop.check.mjs` runs the real `nightfall()` / `tickOffer()` bodies in node
+
+The three self-contained glTFs (`assets/models/workbenches/pickup_box.gltf`, `ask_box.gltf`, `dropbox.gltf`) are installed; the drop pod reuses `dropbox.gltf` rotated 180°. They also supply the item icons/held props, so `ICON_CACHE_KEY` in game.js was bumped to v25 when they landed. The models are ~1.25 m cubes (pickup/ask) and a 1.25 × 2.25 m pod (dropbox), auto-scaled by each machine's `height * MACHINE_SCALE` and grounded by their lowest vertex. `content.check.mjs` asserts all three files exist.
+
+What this does:
+- a **pickup box** is placed away from other workbenches (the 16 m bubble now works both ways: no workbench can be placed near an existing box either, while IRGC airdrops ignore it), stocked with up to 8 items, and at nightfall an IRGC plane lifts the goods, the box disappears and a **drop box** lands 5–10 m away with rials = the summed `RIAL_VALUE` of its stock. An empty box, or one holding only unsellable items (`rials`), stays put with `NO BUYER`
+- an **ask box** lets you pick up to three items (searchable item grid, quantity buttons) and shows the live rial price; items you have never held cost **8×**, and a workbench you have never placed cannot be ordered at all. Rials and the IRGC's own boxes cannot be ordered. Pay with up to two 9000-cap rial slots; at nightfall the plane lifts the order, the box disappears and a **drop pod** lands nearby with the goods. Too little cash, an unavailable item or a blocked spot leaves the box intact
+- the two deliveries share one model (`assets/models/workbenches/dropbox.gltf`, rotated for the pod) and persist as normal saved machines until emptied; the player never crafts them
+- reading all five field notes unlocks a hidden `archivist` achievement (`secret: true`, so its cell is not created until earned; `ach.read` records which notes were opened and is saved)
+- **lore pods**: after 5 minutes of play (`loreNextAt`, saved), an IRGC plane drops a `drop_pod` in a random plains chunk 40–120 m away every 3–6 minutes, capped at 8 pods — but no more drop once all five notes have been read (`ach.read`, the `EVERY WORD` condition). Each holds one of five `book_*` field notes plus 2–4 stacks from `LORE_POD_LOOT` (a thin `BARREL_LOOT`-style pool). Right-clicking a held book opens `#bookModal` with `lore.title` / `lore.text`; Escape and CLOSE shut it. `updateLorePods()` / `useBook()` / `openBook()` in game.js, all five notes share `assets/images/items/book.png`
+- `node assets/js/dead-drop.check.mjs` and `node assets/js/content.check.mjs` cover it; no browser testing
+
+### 16g. Workbench tuning modules (speed / efficiency box)
+
+Relevant parts:
+- `assets/js/modules.js` — pure math: `MODULE_MAX` (50), `MODULE_ROLES`, `moduleCounts()`, `powerMult()` (`1.5^speed × max(0.7, 1 − 0.01 × efficiency)`), `speedMult()` (`2^speed`), `moduleAllowed()`, `modulePut()` (role gate + cap)
+- `content.js` — `speed_module` (1 electric motor + 15 iron plates) and `efficiency_module` (2 circuit_basic + 5 copper solenoids), both stack 50 and sit on the pocket table; their flat art is `assets/images/items/{speed_module,efficiency_module}.png`, wired via `icon:` (no `ICON_CACHE_KEY` bump — they are plain PNGs, not model renders)
+- `machines.js` — `craftCost()` / `useRate()` / `productionRate()` apply the multipliers; the local buffer cap and charge rate scale with them so a maxed machine can still be fed, and `formatPower()` (modules.js) keeps the POWER meter and craft cost readable (`80.3B`, not 11 digits), and the meter reads `NO POWER` with an empty bar whenever the machine stalls on power; processor/excavator/BWE timers advance at `productionRate()`; module slots are gated on put/accept and survive save/restore
+- `workbench-ui.js` / `styles.css` — a borderless two-slot box centred **under** the workbench frame, labelled simply `MODULES`
+- `assets/js/modules.check.mjs` (`node assets/js/modules.check.mjs`)
+
+What this does:
+- every producing workbench (crafting, processor, excavator, BWE, scrubber, water pump) gets the box under its panel; reactors and the greenhouse do not
+- each speed module doubles production speed and multiplies power use by 1.5, up to 50 (≈6.3×10⁸ PU) — a deliberately runaway cost
+- each efficiency module trims 1% off power use, floored at 30%; it **cannot** outrun speed (1.5 × 0.7 > 1), so it is a bandaid, not a fix
+
 ### 17. Workbench UI panels
 Relevant parts in workbench-ui.js:
 - bridge-driven `WorkbenchUI` (HTML panel, inventory sidebar)
@@ -940,16 +994,18 @@ What this does:
 ### Survival layer
 - `TUNING`, `ITEM_DEFS`, `MACHINE_DEFS`, `CRAFT_RECIPES`, `TABLE_OUTPUTS`, `DEPLETED_OF`, `layoutFor()`: content.js
 - `MachineSystem`: placement, power, reactor meltdown, excavator, serialize/restore
+- `RIAL_VALUE` / `rialValue()` / `saleValue()` / `offerPrice()` (content.js) and `nightfall()` / `airdrop()` / `tickOffer()` / `placementBlocked()` / `setOrder()` (machines.js): the IRGC airdrop economy — 8-item pickup boxes, three-item ask boxes with the 8× unseen-item premium and the never-made workbench lock, and the two drop deliveries; `ctx.hasItem` / `ctx.hasMachine` come from `ach.seen` / `ach.built`
 - `clock` / `ambientRad()` / `radStage()` / `doseRate()` / `paintRad()` / `die()`: day, radiation (dose in rad), death
 - `RAD_LETHAL_DOSE` / `RAD_LD50` / `formatRad()` / `formatRadRate()`: human lethal-dose meter scale and real-unit readouts
 - `sourcePoint()` / `transmission()` / `shaftBurial()` / `RAD_OCCL` (radiation.js): the fallout spot, the near-field shadow march that lets walls block radiation, and open-shaft vs depth burial
 - `BuildingSystem` / `shadowCells()` / `snapPlan()` / `meshKey()` (building.js): wall panels, their per-slice attenuation, the DDA shadow march, the piece-to-piece snapping and the mesh a piece is drawn in; `pick()` / `kindFootprint()` / `pieceFootprint()` / `groundBase()` (building.js) place a piece against the anchor and report the hit face, and `collidesBody()` / `overlapsBody()` / `boxHitsBody()` do the continuous cylinder-vs-box collision; `baseAt()` / `anySupport()` / `edgeSupport()` (pieces/placement.js) decide what a piece may stand on; `BUILD_TIERS` / `BUILD_UPGRADES` (build-tiers.js, re-exported by content.js) hold the four shielding tiers
-- `KINDS` / `pieces/*.js` (pieces/registry.js): the five piece kinds (wall, floor, roof, door, triangle) — geometry, support rules, items and recipes, one module each
+- `KINDS` / `pieces/*.js` (pieces/registry.js): the six piece kinds (wall, floor, roof, door, triangle, stair) — geometry, support rules, items and recipes, one module each
 - `doorHit()` / `toggleDoor()` / `updateDoorSwings()` / `swingFrame()` (game.js + pieces/door.js): opening and shutting a door, and the swing animation
 - `mateOf()` / `slideOffset()` (pieces/bunker_door.js) and `BuildingSystem.update(dt)`: the paired blast-door leaves, their opposing slide, and the per-frame ease that rewrites the instanced mesh matrices
 - `radField()` / `radTransmission()` / `radFactor()`: directional field rate, dominant source (ambient, machines, strike craters), and the per-voxel transmission hook
 - `maybeNuclearStrike()` / `spawnNuclearStrike()` / `spawnNukeFx()` / `updateNukeFx()`: 10-day 50% strike roll, safe-site carve, persistent directional crater radiation, PSX blast/mushroom-cloud FX
 - `BARE_HANDS` / `mineOreDrop()` / `hasGardeningGloves()`: mining and gating
+- `terrainBlockLift()` / `updateGroundLift()` (game.js): lifts the body onto a placed dirt/stone/sand sphere over the fill animation so it pushes instead of clipping; refuses when there is no headroom
 - `torches` / `torchLights` / `refreshTorchLights()` / `addTorch()` / `tryTorchPlace()`: placeable lights (torch, lantern, floodlight), drawn by a shared point-light pool
 - `TOOL_MODELS` / `updateViewmodel()` / `triggerSwing()`: held tool viewmodel and swing animation
 - `chopTarget()` / `chopTree()` / `updateChop()`: tree chopping, toppling and wood drops
@@ -959,6 +1015,7 @@ What this does:
 - `DragDrop` / `inventoryAdapter()` / `canDrop()`: shared pointer drag-and-drop for every slot (ghost, merge/swap, click suppression)
 - `CraftOptions` / `craftOptions()` / `startJob()` / `craftRecipe()`: shared scrollable recipe-card list for the pocket table and every recipe machine (fixed side rail), with timed jobs and the ACTIVE/OUTPUTS/PROCESS/QUEUE machine card
 - `outputsHaveRoom()` / `giveOutputs()` / `addOutput()` / `renderMachineWorkflow()` / `collect`: machine output slots and click-to-collect
+- `MODULE_ROLES` / `powerMult()` / `speedMult()` / `moduleAllowed()` (modules.js): the speed/efficiency slot math; `moduleInfo()` / `useRate()` / `productionRate()` (machines.js) apply it to cost, speed and the local buffer
 - `ARMOR_SLOTS` / `carryShield()`: armor and shielding
 - `LIQUID_DEFS` / `liquids.js` (fill/drain/accepts/transfer): liquid types and container rules
 - `useLiquidContainer()`: acid refusal and discarding water; water is filled from tanks/pumps instead
@@ -982,7 +1039,7 @@ What this does:
 - `hand_crank` / `crank()` / `open()`: manual bootstrap generator (right-click spins the handle for 2 s and feeds the grid directly, no stored charge; it never opens a panel)
 - `STARTER_GUIDE` / `STARTER_GUIDE_SECONDS` / `paintStarterGuide()` / `playTime`: 30-minute opening build-order strip above the recipe filters
 - `GUIDE_STEPS` / `guideIndex` / `paintGuide()` / `updateGuide()` / `migrateGuideFromMachines()`: state-driven NEXT STEP objective card (inventory/machine checks, auto-advance, saved by id)
-- `ACHIEVEMENT_TYPES` / `freshAchievements()` / `achBump()` / `achCraft()` / `achievementProgress()` / `paintAchievements()` / `openAchievements()`: lifetime-stat achievements panel with data-defined tiers
+- `ACHIEVEMENT_TYPES` / `freshAchievements()` / `achBump()` / `achCraft()` / `achievementValue()` / `achievementProgress()` / `paintAchievements()` / `openAchievements()`: lifetime-stat achievements panel with data-defined tiers; `COOKED_DISHES` and the `cooked` / `eaten` id sets add the chef/gourmet variety tiers
 - `vitals` / `WOUNDS` / `hurt()` / `addWound()` / `cureWounds()` / `updateVitals()` / `paintVitals()`: health, hunger, wound effects and HUD meters
 - `industrialSite()` / `industrialPadAt()` / `industrialUpdate()` / `buildWallMask()` / `structureCollidesBody()`: deterministic industrial buildings, flattened pads and per-wall/per-box body collision
 - `VEG_SPECIES` / `VEG_LAYERS` / `vegCell()` / `vegResolve()` / `vegStream()` / `vegUpdate()` / `_vegHarvested`: deterministic instanced vegetation, pickups and harvesting
@@ -1049,17 +1106,22 @@ For the survival/gameplay layer:
 8c. `node assets/js/settings.check.mjs` self-checks the settings store (defaults, legacy stores, clamping, persistence, reset) — add a new setting to `SETTING_DEFS` in `assets/js/settings.js` and both the menu and the pause overlay pick it up
 8d. `node assets/js/radiation.check.mjs` self-checks the directional radiation helpers (source point, shadow march, bearing, compass) — shielding tuning lives in `RAD_OCCL` in `assets/js/radiation.js` and the floors in `TUNING`
 8e. `node assets/js/building.check.mjs` self-checks the wall geometry (a 3×3 cell panel), the attenuation law per tier, the DDA shadow march and the snapping planner — wall tuning lives in `BUILD_TIERS` (content.js), panel size in `TUNING.BUILD_WALL_*`
-8f. every piece kind has its own check: `node assets/js/pieces/{wall,floor,roof,door,triangle}.check.mjs` — pure geometry and support assertions, `node` only, no browser
+8f. every piece kind has its own check: `node assets/js/pieces/{wall,floor,roof,door,triangle,stair}.check.mjs` — pure geometry and support assertions, `node` only, no browser; `stair.check.mjs` verifies the ten 0.2 m treads, the four rotated footprints, that all 45 boxes stay inside their cells, the closed mesh and the four tiered items
 8g. the runtime has three more: `node assets/js/building.mesh.check.mjs` (one `InstancedMesh` per kind — a shared mesh would draw a wall flat like a floor), `node assets/js/building.snap.check.mjs` (pieces really placed on the tiny three.js stand in `assets/js/three-stub.mjs`) and `node assets/js/building.intent.check.mjs` (game.js's own `buildingTarget` / `buildingBlocked` / `updateWallPreview` / `doPlace` bodies, extracted from the source and run in node, so the placement intent is checked against the real code)
 8h. `node assets/js/collision.check.mjs` extracts `structureCollidesBody()` from game.js and checks that machine/industrial bodies block from base to top (you stand on a workbench instead of falling into it)
+8h-a. `node assets/js/terrain-place.check.mjs` extracts `terrainBlockLift()` from game.js and checks that a placed block lifts to the density surface (not the geometric sphere edge), distant blocks are a no-op, an offset block lifts less, and a nearby ceiling refuses placement instead of becoming the lift target; `node assets/js/ground-follow.check.mjs` runs game.js's own ground-follow branch and checks that short downslope steps snap but big drops stay airborne and keep their falling speed
 8h-b. `node assets/js/pieces/bunker_door.check.mjs` self-checks the paired blast-door leaves (floor support, mating, opposing slide, open/shut shielding through the real `BuildingSystem`); `node assets/js/radiation.check.mjs` covers `shaftBurial()` (open shaft vs roofed depth shield)
 8h-c. `node assets/js/veg-trunk.check.mjs` checks that tree trunk colliders measure the main bark (lowest 6% slice, 75th percentile) and ignore flared roots/stray low vertices
+8h-c-b. `node assets/js/veg-harvest.check.mjs` runs game.js's own `_vegFinishLayer` body: culling a cell out of range removes its pickup but never marks it harvested, a kept cell is untouched, and card meshes stay out of the frustum-cull path
 8h-d. `node assets/js/wasteland.check.mjs` self-checks the seeded barrel cells (determinism, 1–4 per cell, inside bounds), the recycler's `randomOut` hook and both weighted loot pools
 8i. `node assets/js/far-terrain.check.mjs` checks the far-horizon seam: the ring must meet the detailed terrain at the detail edge (no step in front of the player), stay under the chunks where they overlap, and the far haze must still finish at the rim
 8i. `node assets/js/chunk-dirty.check.mjs` extracts the chunk rebuild bodies from game.js and checks the dirty range against the chunk frame rule, the sliced sample loader against the plain nested loop, and the incremental refresh
 8j. `node assets/js/skyline.check.mjs` self-checks the zipline rules (what a machine can supply, what a destination can do with an item, the auto-connect rule, where a delivery lands) and `node assets/js/skyline.run.check.mjs` runs a whole delivery: a pod leaves the source, rides the wire and lands in the destination's input slots. Tuning lives in `TUNING.SKYLINE_*` and the pylon's range in `SKYLINE_RANGE`
+8j-a. `node assets/js/modules.check.mjs` self-checks the workbench module slots (the 1.5×/2× curves, the 30% efficiency floor, the 50 cap, the two recipes, the slot gate and that module slots survive restore)
+8j-b. `node assets/js/radio.check.mjs` self-checks the held radio: both audio files exist, the item is craftable/on the pocket table, the countdown lands on the strike day, and the signal cuts to static at T−3 min (also static with no strike, silence when not held)
 9. a new light source is just `torch: true` + `light: { mount, range, power, color }` on an `ITEM_DEFS` entry (see torch/lantern/floodlight) — the placement and point-light pool pick it up automatically, and every lit material (terrain, machines, building pieces, models) reacts with no extra work
 10. map visuals live in `assets/js/map.js`: `_renderTile()` owns the flat terrain colouring (`BAND_SHADE` height steps, `surfaceColor()` from the game's context) and `drawFull()` owns markers/layers; `SITE_COLORS` / `MACHINE_COLORS` hold the pixel palette and `industrialDims` in the `MapSystem` options sizes the structure blocks. Run `node assets/js/map.check.mjs` after touching its coordinate helpers.
+11. press `I` in game to copy the lag timesheet: `w` (world streaming/far terrain) and `v` (vegetation) are now measured per frame; `other` is the untimed remainder, not "everything but chunks". The two per-frame costs that used to live in `other` are bounded: `buildNetworks()` (machines.js) caches its O(n²) pairwise pass behind a position/kind signature, and a full species instance-buffer rewrite (up to 6000 flower instances) is capped at once per 150 ms per species in `vegUpdate()`.
 
 ## Summary
 This project is a browser voxel survival game built on a Three.js engine with a custom chunked terrain and finite-volume water simulation, wrapped in a NuclearCraft-style radiation progression. Two layers:

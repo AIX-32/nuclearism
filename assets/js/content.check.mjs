@@ -1,13 +1,13 @@
 
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, ACHIEVEMENT_TYPES, BARREL_LOOT, SCRAP_RECYCLE_TABLE, rollWeighted } from './content.js';
+import { ITEM_DEFS, itemModelIcon, ITEM_MODEL_ICON_EXCLUDE, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, DEPLETED_OF, layoutFor, TUNING, regionOre, ORE_REGION_SIZE, REGION_ORE_IDS, REACTOR_ROD_SLOTS, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, ACHIEVEMENT_TYPES, COOKED_DISHES, BARREL_LOOT, SCRAP_RECYCLE_TABLE, rollWeighted, RIAL_VALUE, rialValue, saleValue, offerPrice, LORE_POD_LOOT, LORE_BOOKS } from './content.js';
 import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'batteryPie', 'input']);
-const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'batteryPie', 'input', 'orders', 'button']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore', 'pickup', 'askbox', 'drop']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
 
@@ -27,6 +27,11 @@ for (const [id, def] of Object.entries(ITEM_DEFS)) {
 for (const r of CRAFT_RECIPES) {
   for (const id of Object.keys(r.out)) ok.push([has(id), `craft out "${id}"`]);
   for (const id of Object.keys(r.needs)) ok.push([has(id), `craft need "${id}"`]);
+}
+
+for (const [seedId, d] of Object.entries(ITEM_DEFS).filter(([, d]) => d.seed)) {
+  ok.push([CRAFT_RECIPES.some((r) => r.out[seedId] === 2 && r.needs[d.seed] === 1),
+    `"${d.seed}" turns into 2 "${seedId}" at the manufactory`]);
 }
 
 
@@ -77,7 +82,7 @@ for (const r of CRAFT_RECIPES) for (const id of Object.keys(r.out)) gridOut.add(
 const machineOut = new Set();
 for (const m of MACHINE_DEFS) for (const r of (m.recipes || [])) for (const id of Object.keys(r.out || {})) machineOut.add(id);
 for (const m of MACHINE_DEFS) {
-  if (m.id === 'infinite_battery') continue;
+  if (m.id === 'infinite_battery' || m.kind === 'drop') continue; // IRGC planes spawn deliveries, you never craft them
   const blockId = Object.keys(ITEM_DEFS).find((k) => ITEM_DEFS[k].workbench === m.id);
   if (blockId) ok.push([gridOut.has(blockId) || machineOut.has(blockId), `machine "${m.id}" is obtainable`]);
 }
@@ -446,7 +451,7 @@ const bsLayout = JSON.parse(readFileSync(new URL('../../assets/ui/battery_stack.
 ok.push([bsLayout.id === 'battery_stack' && !bsLayout.elements.some((e) => e.type === 'slot')
   && bsLayout.elements.some((e) => e.id === 'status') && bsLayout.elements.some((e) => e.type === 'batteryPie')
   && bsLayout.elements.every((e) => TYPES.has(e.type)), 'battery stack panel is a clean charge readout with a machine-drain square chart']);
-for (const id of ['battery_stack', 'bed']) {
+for (const id of ['battery_stack', 'bed', 'pickup_box', 'ask_box', 'dropbox']) {
   ok.push([existsSync(new URL(`../../assets/models/workbenches/${id}.gltf`, import.meta.url)), `${id} has its own model`]);
 }
 const bedRec = CRAFT_RECIPES.find((r) => r.out.bed);
@@ -598,12 +603,12 @@ sys.inv.armor = { head: { id: 'containment_helmet' } };
 const protect = sys.radProtect();
 ok.push([protect > 0 && protect < 0.8, `worn armor protects ambient below the cap (${protect.toFixed(2)})`]);
 
-const ACH_STATS = new Set(['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked', 'days', 'chopped', 'blasts', 'harvested']);
+const ACH_STATS = new Set(['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked', 'days', 'chopped', 'blasts', 'harvested', 'cooked', 'eaten', 'read']);
 const achIds = new Set();
 for (const type of ACHIEVEMENT_TYPES) {
   ok.push([!achIds.has(type.id) && !!type.name, `achievement type "${type.id}" is unique and named`]);
   achIds.add(type.id);
-  ok.push([type.tiers.length >= 4, `"${type.id}" has at least four tiers (${type.tiers.length})`]);
+  ok.push([type.tiers.length >= 4 || type.tiers.some((t) => t.secret), `"${type.id}" has at least four tiers (${type.tiers.length})`]);
   let prevNeed = -1;
   for (const tier of type.tiers) {
     ok.push([has(tier.icon), `"${type.id}" tier "${tier.name}" icon "${tier.icon}" is an item`]);
@@ -616,8 +621,15 @@ for (const type of ACHIEVEMENT_TYPES) {
     }
   }
 }
-for (const id of ['lumberjack', 'demolition', 'forager']) {
+for (const id of ['lumberjack', 'demolition', 'forager', 'chef', 'gourmet']) {
   ok.push([achIds.has(id), `new achievement category "${id}" exists`]);
+}
+ok.push([COOKED_DISHES.size >= 6, `the cooking machines make at least six distinct dishes (${COOKED_DISHES.size})`]);
+for (const id of COOKED_DISHES) ok.push([has(id), `dish "${id}" is a real item`]);
+const foodCount = Object.values(ITEM_DEFS).filter((d) => d.consumable && d.consumable.food).length;
+for (const type of ACHIEVEMENT_TYPES) for (const tier of type.tiers) {
+  if (tier.stat === 'cooked') ok.push([tier.need <= COOKED_DISHES.size, `chef tier "${tier.name}" is reachable`]);
+  if (tier.stat === 'eaten') ok.push([tier.need <= foodCount, `gourmet tier "${tier.name}" is reachable`]);
 }
 
 for (const [name, table] of [['barrel loot', BARREL_LOOT], ['scrap recycle', SCRAP_RECYCLE_TABLE]]) {
@@ -627,6 +639,49 @@ for (const [name, table] of [['barrel loot', BARREL_LOOT], ['scrap recycle', SCR
   }
   for (let i = 0; i < 200; i++) ok.push([has(rollWeighted(table)), `${name} rolls a real item`]);
 }
+
+// IRGC boxes: a lonely pickup box, a three-item ask box, and the two airdrops.
+ok.push([ITEM_DEFS.rials?.stack === 9000, 'rials stack to 9000 per slot']);
+ok.push([RIAL_VALUE.rials === undefined && rialValue('rials') === 0, 'rials cannot be resold']);
+for (const id of Object.keys(RIAL_VALUE)) ok.push([has(id) && RIAL_VALUE[id] > 0, `price list entry "${id}" is a real item with a positive price`]);
+for (const id of ['servo', 'not_an_item']) ok.push([rialValue(id) > 0, `unlisted item "${id}" still has a fallback price`]);
+const pickup = MACHINE_BY_ID.pickup_box, ask = MACHINE_BY_ID.ask_box;
+const dropbox = MACHINE_BY_ID.dropbox, pod = MACHINE_BY_ID.drop_pod;
+ok.push([pickup?.kind === 'pickup' && pickup.solo >= 8, 'pickup box keeps its distance from workbenches']);
+ok.push([ask?.kind === 'askbox' && ask.solo >= 8, 'ask box keeps its distance from workbenches']);
+ok.push([dropbox?.kind === 'drop' && pod?.kind === 'drop' && dropbox.model === pod.model, 'both deliveries share one model']);
+ok.push([!!CRAFT_RECIPES.find((r) => r.out?.pickup_box) && !!CRAFT_RECIPES.find((r) => r.out?.ask_box), 'both boxes are craftable']);
+const pickLayout = layoutFor(pickup), askLayout = layoutFor(ask), dropLayout = layoutFor(dropbox);
+ok.push([pickLayout.elements.filter((e) => e.type === 'slot' && /^input\d+$/.test(e.role)).length === 8, 'pickup box has eight stock slots']);
+ok.push([dropLayout.elements.filter((e) => e.type === 'slot' && /^output\d+$/.test(e.role)).length === 8, 'drop box has eight collection slots']);
+ok.push([askLayout.elements.some((e) => e.type === 'orders') && askLayout.elements.some((e) => e.role === 'pay0'), 'ask box has the order picker and a rial slot']);
+ok.push([askLayout.elements.some((e) => e.type === 'button' && e.action === 'payExact'), 'ask box has a pay-exact button']);
+const stock = {}; for (let i = 0; i < 8; i++) stock[`input${i}`] = i < 2 ? { id: 'iron_ingot', n: 5 } : null;
+const sale = saleValue(stock);
+ok.push([sale.count === 10 && sale.total === 80, 'pickup box prices its stock']);
+const known = () => true, none = () => false;
+const plain = offerPrice([{ id: 'iron_ingot', n: 2 }], known, known);
+const unseen = offerPrice([{ id: 'iron_ingot', n: 2 }], none, known);
+ok.push([plain.price === 16 && unseen.price === 128, 'an item never held costs eight times more']);
+const locked = offerPrice([{ id: 'pickup_box', n: 1 }], known, none);
+ok.push([locked.blocked && !Object.keys(locked.out).length, 'a workbench never made cannot be ordered']);
+for (const id of ['rials', 'dropbox', 'drop_pod']) {
+  const cheat = offerPrice([{ id, n: 9000 }], known, known);
+  ok.push([cheat.price === 0 && !Object.keys(cheat.out).length, `"${id}" cannot be ordered from the IRGC`]);
+}
+ok.push([ITEM_DEFS.flare?.flare === true && ITEM_DEFS.flare.stack === 16, 'flare is a stackable IRGC signal']);
+ok.push([!!CRAFT_RECIPES.find((r) => r.out?.flare) && TABLE_RECIPES.some((r) => r.out?.flare), 'a flare is craftable in the field']);
+for (const id of ['rials', 'flare', 'crowbar']) {
+  const p = ITEM_DEFS[id]?.icon;
+  ok.push([p === `assets/images/items/${id}.png` && existsSync(new URL(`../../${p}`, import.meta.url)), `"${id}" uses a real item icon`]);
+}
+ok.push([LORE_BOOKS.every((id) => ITEM_DEFS[id]?.icon === 'assets/images/items/book.png')
+  && existsSync(new URL('../../assets/images/items/book.png', import.meta.url)), 'all field notes share one real book icon']);
+ok.push([LORE_BOOKS.length >= 4 && LORE_BOOKS.every((id) => ITEM_DEFS[id]?.book && ITEM_DEFS[id].lore?.title && ITEM_DEFS[id].lore?.text), 'every lore book is a readable document']);
+ok.push([LORE_POD_LOOT.length >= 8 && LORE_POD_LOOT.every(([id, w]) => has(id) && w > 0), 'the pod loot pool is a thin pool of real items']);
+for (let i = 0; i < 100; i++) ok.push([has(rollWeighted(LORE_POD_LOOT)), 'pod loot rolls a real item']);
+const secret = ACHIEVEMENT_TYPES.find((t) => t.id === 'archivist');
+ok.push([secret?.tiers.length === 1 && secret.tiers[0].secret && secret.tiers[0].stat === 'read' && secret.tiers[0].need === LORE_BOOKS.length, 'reading every note unlocks one hidden achievement']);
 
 const bad = ok.filter(([p]) => !p);
 if (bad.length) { for (const [, msg] of bad) console.error('FAIL:', msg); process.exit(1); }

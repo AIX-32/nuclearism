@@ -37,7 +37,7 @@ export class WorkbenchUI {
     this.root = document.createElement('section');
     this.root.className = 'workbench-screen';
     this.root.hidden = true;
-    this.root.innerHTML = '<div class="workbench-frame"><section id="powerMeter" aria-label="Machine power level" hidden><header>POWER</header><div class="track"><div id="powerFill"></div></div><span id="powerNum">0 / 0</span></section><aside class="workbench-craft-rail" hidden><header>CRAFTING</header><div class="workbench-craft-list"></div></aside><div class="workbench-window"><section class="workbench-work-area"><header class="workbench-heading"><div><h1></h1></div><button type="button" class="workbench-close">ESC&nbsp; / &nbsp;CLOSE</button></header><div class="workbench-layout"></div></section><aside class="workbench-inventory"><header><h2>INVENTORY</h2></header><div class="workbench-inventory-grid"></div></aside></div></div>';
+    this.root.innerHTML = '<div class="workbench-stack"><div class="workbench-frame"><section id="powerMeter" aria-label="Machine power level" hidden><header>POWER</header><div class="track"><div id="powerFill"></div></div><span id="powerNum">0 / 0</span></section><aside class="workbench-craft-rail" hidden><header>CRAFTING</header><div class="workbench-craft-list"></div></aside><div class="workbench-window"><section class="workbench-work-area"><header class="workbench-heading"><div><h1></h1></div><button type="button" class="workbench-close">ESC&nbsp; / &nbsp;CLOSE</button></header><div class="workbench-layout"></div></section><aside class="workbench-inventory"><header><h2>INVENTORY</h2></header><div class="workbench-inventory-grid"></div></aside></div></div><section class="workbench-modules" aria-label="Machine tuning modules" hidden><header>MODULES</header><div class="workbench-module-slots"></div></section></div>';
     document.body.appendChild(this.root);
     this.compact = false;
     this.mini = document.createElement('section');
@@ -61,6 +61,8 @@ export class WorkbenchUI {
     this.powerPanel = document.getElementById('powerMeter');
     this.powerFill = document.getElementById('powerFill');
     this.powerNum = document.getElementById('powerNum');
+    this.modules = this.root.querySelector('.workbench-modules');
+    this.moduleSlots = this.root.querySelector('.workbench-module-slots');
     this.craftRail = this.root.querySelector('.workbench-craft-rail');
     this.craftListNode = this.root.querySelector('.workbench-craft-list');
     this.craftList = new CraftOptions({
@@ -120,6 +122,10 @@ export class WorkbenchUI {
     this.onClose = onClose;
     this.active = false;
     this.opened = true;
+    this._orderSel = null;
+    this._orderFilter = '';
+    this._orderRowSig = null;
+    this._orderGridSig = null;
     this.inventorySignature = '';
     this.root.hidden = false;
     this.craftRail.hidden = !this.bridge.hasCraftList?.();
@@ -219,10 +225,21 @@ export class WorkbenchUI {
         continue;
       }
 
+      if (el.type === 'orders') {
+        const node = document.createElement('div');
+        node.className = 'workbench-orders';
+        node.dataset.id = el.id;
+        node.style.gridColumn = `${el.x + 1} / span ${el.w}`;
+        node.style.gridRow = `${el.y + 1} / span ${el.h}`;
+        this.buildOrders(node);
+        this.workArea.appendChild(node);
+        continue;
+      }
+
       if (el.type === 'power') continue;
 
       if (el.type === 'recipes') continue;
-      const node = document.createElement(el.type === 'slot' ? 'button' : 'div');
+      const node = document.createElement(el.type === 'slot' || el.type === 'button' ? 'button' : 'div');
       node.className = `workbench-component workbench-${el.type}${el.role ? ` role-${el.role}` : ''}`;
       node.style.gridColumn = `${el.x + 1} / span ${el.w}`;
       node.style.gridRow = `${el.y + 1} / span ${el.h}`;
@@ -252,6 +269,10 @@ export class WorkbenchUI {
           this.renderInventory(); this.renderDynamic();
         });
         this.dragDrop?.bind(node, this.bridge.slotAdapter?.(role));
+      } else if (el.type === 'button') {
+        node.type = 'button';
+        node.textContent = el.text || '';
+        node.addEventListener('click', () => this.bridge[el.action]?.());
       } else if (el.type === 'progress') {
         node.innerHTML = `<span>${el.label || 'PROCESS'}</span><div class="workbench-progress-track"><i></i></div>`;
       } else if (el.type === 'input') {
@@ -455,6 +476,118 @@ export class WorkbenchUI {
     }
   }
 
+  buildOrders(node) {
+    node.innerHTML = '<div class="wb-order-rows"></div><input class="wb-order-search" type="search" placeholder="SEARCH ITEMS" aria-label="Search items to order"><div class="wb-order-grid"></div>';
+    const search = node.querySelector('.wb-order-search');
+    search.value = this._orderFilter || '';
+    search.addEventListener('input', () => { this._orderFilter = search.value.trim().toLowerCase(); this.renderOrderGrid(); });
+    this._orderRowSig = null;
+    this._orderGridSig = null;
+    this.renderOrders();
+  }
+
+  // update() runs every frame, so both halves are signature-guarded: a click
+  // must never replace the button the player is clicking on.
+  renderOrders() {
+    const node = this.workArea?.querySelector('.workbench-orders');
+    if (!node) return;
+    this.renderOrderRows(node);
+    this.renderOrderGrid(node);
+  }
+
+  renderOrderRows(node = this.workArea?.querySelector('.workbench-orders')) {
+    if (!node) return;
+    const want = this.machine?.state?.want || [null, null, null];
+    const sig = JSON.stringify([want, this._orderSel]);
+    if (sig === this._orderRowSig) return;
+    this._orderRowSig = sig;
+    const rows = node.querySelector('.wb-order-rows');
+    rows.replaceChildren();
+    for (let i = 0; i < 3; i++) {
+      const w = want[i];
+      const row = document.createElement('div');
+      row.className = 'wb-order-row' + (w ? '' : ' empty') + (this._orderSel === i ? ' selected' : '');
+      row.addEventListener('click', (e) => {
+        if (e.target.tagName !== 'BUTTON') { this._orderSel = i; this.renderOrderRows(node); }
+      });
+      const tag = document.createElement('b');
+      tag.className = 'wb-order-tag'; tag.textContent = String(i + 1);
+      row.appendChild(tag);
+      if (w) {
+        const url = this.bridge.icon?.(w.id) || '';
+        if (url) {
+          const img = document.createElement('img');
+          img.src = url; img.alt = w.id;
+          row.appendChild(img);
+        } else {
+          const blank = document.createElement('i');
+          blank.className = 'wb-order-icon';
+          row.appendChild(blank);
+        }
+        const name = document.createElement('span');
+        name.className = 'wb-order-name';
+        name.textContent = this.bridge.item?.(w.id)?.name || w.id;
+        row.appendChild(name);
+        const minus = document.createElement('button');
+        minus.type = 'button'; minus.textContent = '−'; minus.title = 'One fewer (clears at 1)';
+        minus.addEventListener('click', () => this.bridge.order?.(i, w.n > 1 ? w.id : null, Math.max(0, w.n - 1)));
+        const count = document.createElement('b');
+        count.className = 'wb-order-count'; count.textContent = String(w.n);
+        const plus = document.createElement('button');
+        plus.type = 'button'; plus.textContent = '+'; plus.title = 'One more';
+        plus.addEventListener('click', () => this.bridge.order?.(i, w.id, w.n + 1));
+        const clear = document.createElement('button');
+        clear.type = 'button'; clear.className = 'wb-order-clear'; clear.textContent = '×'; clear.title = 'Clear order';
+        clear.addEventListener('click', () => this.bridge.order?.(i, null, 0));
+        row.append(minus, count, plus, clear);
+      } else {
+        const name = document.createElement('span');
+        name.className = 'wb-order-name'; name.textContent = 'EMPTY · PICK AN ITEM BELOW';
+        row.appendChild(name);
+      }
+      rows.appendChild(row);
+    }
+  }
+
+  renderOrderGrid(node = this.workArea?.querySelector('.workbench-orders')) {
+    if (!node) return;
+    const filter = this._orderFilter || '';
+    const sig = filter;
+    if (sig === this._orderGridSig) return;
+    this._orderGridSig = sig;
+    const grid = node.querySelector('.wb-order-grid');
+    grid.replaceChildren();
+    let shown = 0;
+    for (const [id, def] of Object.entries(this.bridge.items?.() || {})) {
+      if (id === 'rials' || id === 'dropbox' || id === 'drop_pod') continue;
+      if (filter && !(id.includes(filter) || (def.name || '').toLowerCase().includes(filter))) continue;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'wb-order-pick';
+      cell.title = def.name || id;
+      const url = this.bridge.icon?.(id) || '';
+      if (url) {
+        const img = document.createElement('img');
+        img.src = url; img.alt = id;
+        cell.appendChild(img);
+      }
+      const label = document.createElement('span');
+      label.textContent = (def.code || id).slice(0, 3);
+      cell.appendChild(label);
+      cell.addEventListener('click', () => {
+        const current = this.machine?.state?.want || [null, null, null];
+        let i = current.findIndex((w) => !w);
+        if (i < 0) i = this._orderSel ?? 2;
+        this._orderSel = i;
+        this.bridge.order?.(i, id, 1);
+      });
+      cell.addEventListener('mouseenter', (e) => this.bridge.showTip?.({ id, n: 1 }, e.clientX, e.clientY));
+      cell.addEventListener('mouseleave', () => this.bridge.hideTip?.());
+      grid.appendChild(cell);
+      if (++shown >= 160) break;
+    }
+  }
+
   buildBore(node) {
     node.innerHTML = `
       <div class="bore-pitch">
@@ -463,6 +596,8 @@ export class WorkbenchUI {
         <b class="bore-pitch-value" data-bore="pitch">0°</b>
         <button type="button" data-bore-action="pitchDown" title="Pitch down 5°">▼</button>
         <button type="button" data-bore-action="pitchLevel" title="Level pitch">LEVEL</button>
+        <button type="button" class="bore-toggle" data-bore-action="toggleCollect" aria-pressed="true" title="Keep the ore the bore digs up">PICK UP ANYTHING</button>
+        <button type="button" class="bore-toggle" data-bore-action="toggleCarbon" aria-pressed="false" title="Burn carbon the bore finds as fuel">USE CARBON AS FUEL</button>
         <span class="bore-pitch-hint">-60° to +30°</span>
       </div>
     `;
@@ -485,6 +620,10 @@ export class WorkbenchUI {
     if (pitch) {
       const deg = Math.round((state.pitch || 0) * 180 / Math.PI);
       pitch.textContent = `${deg > 0 ? '+' : ''}${deg}°`;
+    }
+    for (const [action, on] of [['toggleCollect', state.collect !== false], ['toggleCarbon', !!state.burnCarbon]]) {
+      const btn = node.querySelector(`[data-bore-action="${action}"]`);
+      if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
 
@@ -682,6 +821,44 @@ export class WorkbenchUI {
 
   slotNode(role) { return this.workArea.querySelector(`[data-role="${CSS.escape(role)}"]`); }
 
+  renderModules() {
+    const info = this.bridge.moduleInfo?.();
+    this.modules.hidden = !info;
+    if (!info) return;
+    for (const role of ['speed_module', 'efficiency_module']) {
+      let slot = this.moduleSlots.querySelector(`[data-role="${role}"]`);
+      if (!slot) {
+        slot = document.createElement('button');
+        slot.type = 'button';
+        slot.className = `workbench-slot workbench-module-slot role-${role}`;
+        slot.dataset.role = role;
+        slot.innerHTML = `<span class="workbench-slot-label">${role === 'speed_module' ? 'SPEED' : 'EFFICIENCY'}</span><span class="workbench-slot-content"><img alt=""><b class="workbench-slot-count"></b></span>`;
+        slot.addEventListener('mouseenter', (e) => {
+          const view = this.slotView(role);
+          if (view?.item) this.bridge.showTip?.({ id: view.item, n: view.count || 1 }, e.clientX, e.clientY);
+        });
+        slot.addEventListener('mouseleave', () => this.bridge.hideTip?.());
+        slot.addEventListener('click', () => {
+          this.bridge.take?.(role);
+          this.renderInventory(); this.renderDynamic();
+        });
+        this.dragDrop?.bind(slot, this.bridge.slotAdapter?.(role));
+        this.moduleSlots.appendChild(slot);
+      }
+      const view = this.slotView(role);
+      const count = slot.querySelector('.workbench-slot-count');
+      const icon = slot.querySelector('img');
+      const n = view?.count || 0;
+      if (count) count.textContent = n > 0 ? `×${n}` : '';
+      if (icon) {
+        const url = view?.item ? (this.bridge.icon?.(view.item) || '') : '';
+        icon.hidden = !url;
+        if (url) icon.src = url;
+      }
+      slot.classList.toggle('filled', !!view?.item);
+    }
+  }
+
   renderPower() {
     const view = this.bridge.powerView?.();
     const show = !!view;
@@ -700,6 +877,7 @@ export class WorkbenchUI {
   renderDynamic() {
     if (!this.opened) return;
     this.renderPower();
+    this.renderModules();
     for (const el of this.layout.elements) {
       if (el.type === 'slot') {
         const node = this.slotNode(el.role || '');
@@ -761,6 +939,7 @@ export class WorkbenchUI {
       }
     }
     this.renderMachineWorkflow();
+    this.renderOrders();
     this.renderBweDynamic();
     this.renderBoreDynamic();
     this.renderBatteryPieDynamic();

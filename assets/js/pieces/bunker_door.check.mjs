@@ -5,6 +5,7 @@ import { BuildingSystem, shadowCells } from '../building.js';
 import { stubThree, flatWorld } from '../three-stub.mjs';
 import { KIND, ITEMS, mateOf, slideOffset, SLIDE_DIST } from './bunker_door.js';
 import { KIND as FLOOR } from './floor.js';
+import { KINDS } from './registry.js';
 
 const ok = [];
 function check(cond, msg) { ok.push([!!cond, msg]); }
@@ -135,6 +136,14 @@ check(near(liveA.slide, 1) && near(liveB.slide, 1), 'the leaves finish fully ope
 check(near(Math.abs(slideOffset(B, liveA).x - slideOffset(B, liveB).x), SLIDE_DIST * 2),
   'the finished leaves sit one full leaf width apart from where they started');
 check(near(B.shadow(4.5, 2.5, 15, 0, 0, -1, 24), 1), 'open leaves let the field through the runtime');
+
+// Saves store kinds as indices into KINDS. New kinds must be appended: an old
+// bunker door is index 5, and must not come back as a stair after an insert.
+check(Object.keys(KINDS).indexOf('bunker_door') === 5, 'bunker doors keep their legacy save index');
+const B2 = new BuildingSystem({ THREE: stubThree(), scene: { add() { } }, world: flatWorld() });
+B2.restore([[5, 0, 4, 1, 7, 0, 100, 0]]);
+const restored = [...B2.pieces.values()][0];
+check(restored?.kind === 'bunker_door', 'an old save restores index 5 as a bunker door, not a stair');
 
 let failed = 0;
 for (const [cond, msg] of ok) {

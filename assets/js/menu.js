@@ -29,16 +29,13 @@ const createFallout = document.getElementById('createFallout');
 const legacyModal = document.getElementById('legacyModal');
 
 const LOADING_TIPS = [
-  'Radiation ramps up from day 3 - build shielding before the dose turns lethal at 600 rad.',
-  'Bare hands can mine dirt and stone to get your first ore and carbon.',
-  'A hand crank gives bootstrap power with no fuel - right-click it to spin the handle.',
+  'Radiation ramps up from day 3, build shielding before the dose turns lethal at 600 rad.',
   'Water only comes from industrial tanks or a powered water pump; there are no lakes or rivers.',
   'Press M to open the map and B to drop a bookmark where you stand.',
   'Armor and shielding plates cut the radiation dose you take.',
-  'Reactor cooling must match the fuel - over-cooling costs power as much as under-cooling.',
+  'Reactor cooling must match the fuel, over-cooling costs power as much as under-cooling.',
   'Mine a chunk to sample its ore seam, then place an excavator on the good ones.',
   'The NEXT STEP card in the corner tracks what to do first and advances as you progress.',
-  'Right-click a placed machine to open it; power it through a connected network.',
   'Wall panels block radiation from the direction of the source - shielded concrete stops almost all of it.',
   'Put every ore through the crusher, then smelt the powder to get double the ingots.',
   'Mine dirt with gardening gloves to get seeds and plant them in a greenhouse for good food.',
@@ -47,9 +44,12 @@ const LOADING_TIPS = [
   'Make Unrad to remove radiation from your body.',
   'Blueprints are things you need to research to unlock new more advanced machines and recipes.',
   'Making loading screen tips is fun.',
+  'The game is still in development, so expect bugs and missing textures/models.',
   'Paranoia is an effect that makes you see things that are not there. It is caused by hunger and darkness.',
-  'The Assembler is a machine that is a not replacement for the Manufactory, they make different things.',
+  'The Assembler is a not replacement for the Manufactory, they make different things.',
+  'Every 10 days a nuclear strike will happen around you and spread radiation from that direction. Build more shielding to that side to protect yourself.',
   'The bucket wheel excavator is the largest machine in the game, It is used to mine insane amounts of ore and dirt.',
+  'Walking directionaly gives you a small speed boost. Use it to get around faster.',
   'You can middle-click an inventory or container to sort items by category, then alphabetically.',
 ];
 

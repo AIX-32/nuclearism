@@ -65,7 +65,7 @@ export const ITEM_DEFS = {
   ...TRIANGLE_ITEMS,
   ...BUNKER_DOOR_ITEMS,
   stone: { code: 'ST', name: 'STONE', stack: 99, rad: 0, block: true, icon: 'assets/images/items/stone.png' },
-  basalt: { code: 'BA', name: 'BASALT', stack: 99, rad: 0, block: true },
+  basalt: { code: 'BA', name: 'BASALT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/basalt.png' },
   dirt: { code: 'DI', name: 'DIRT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/dirt.png' },
   carbon: { code: 'C+', name: 'CARBON', stack: 99, rad: 0, block: true, icon: 'assets/images/items/carbon.png' },
   flower: { code: 'FL', name: 'FLOWER', stack: 99, rad: 0, block: false, icon: 'assets/images/vegetation/tall_flower.png' },
@@ -79,7 +79,7 @@ export const ITEM_DEFS = {
   sand: { code: 'SD', name: 'SAND', stack: 99, rad: 0, block: true, icon: 'assets/images/items/sand.png', desc: 'Fine silica grit for glass and concrete work.' },
   gravel: { code: 'GV', name: 'GRAVEL', stack: 99, rad: 0, block: true, icon: 'assets/images/items/gravel.png', desc: 'Crushed rock used for fill, paths and cement mixes.' },
   glass: { code: 'GL', name: 'GLASS', stack: 99, rad: 0, block: true, icon: 'assets/images/items/glass.png', desc: 'Melted silica, made by heating the clean mineral feedstock.' },
-  silica: { code: 'SX', name: 'SILICA', stack: 99, rad: 0, block: false, desc: 'Pure silica powder from crushed stone.' },
+  silica: { code: 'SX', name: 'SILICA', stack: 99, rad: 0, block: false, icon: 'assets/images/items/silica.png', desc: 'Pure silica powder from crushed stone.' },
 
 
   wheat: { code: 'WT', name: 'WHEAT', stack: 99, rad: 0, block: false, icon: 'assets/images/items/wheat.png', consumable: { food: 6 }, desc: 'A bundle of golden grain.' },
@@ -163,7 +163,7 @@ export const ITEM_DEFS = {
   zirconium_plate: PLATE('zirconium', 'Z▭'),
 
 
-  scrap: I('SC', 'SCRAP', { block: false, stack: 99, desc: 'Twisted salvage from wasteland barrels. A recycler can pull something useful out of it.' }),
+  scrap: I('SC', 'SCRAP', { block: false, stack: 99, icon: 'assets/images/items/scrap.png', desc: 'Twisted salvage from wasteland barrels. A recycler can pull something useful out of it.' }),
   plastic: I('PL', 'PLASTIC', { block: false, icon: 'assets/images/items/plastic.png' }),
   car_battery: I('BA', 'CAR BATTERY', { block: false, battery: true }),
   graphite: I('GR', 'GRAPHITE', { block: false, icon: 'assets/images/items/graphite.png' }),
@@ -177,20 +177,20 @@ export const ITEM_DEFS = {
   circuit_mid: I('c3', 'MID CIRCUIT', { block: false, model: CIRCUIT_MODEL, tint: 0xd9a441 }),
   circuit_advanced: I('c2', 'ADVANCED CIRCUIT', { block: false, model: CIRCUIT_MODEL, tint: 0xd9534f }),
   machine_chassis: I('MC', 'MACHINE CHASSIS', { block: false, icon: 'assets/images/items/machine_chassis.png' }),
-  reactor_casing: I('RC', 'REACTOR CASING', { block: false, rad: 0.05 }),
-  control_rod: I('CR', 'GRAPHITE CONTROL ROD', { block: false, rod: { cool: 20, absorb: 0, mod: 0.08 }, desc: 'Steel-clad graphite. Moderates neutrons for a small output gain, but barely cools the core.' }),
-  fuel_rod_casing: I('FC', 'FUEL ROD CASING', { block: false }),
+  reactor_casing: I('RC', 'REACTOR CASING', { block: false, rad: 0.05, icon: 'assets/images/items/reactor_casing.png' }),
+  control_rod: I('CR', 'GRAPHITE CONTROL ROD', { block: false, rod: { cool: 20, absorb: 0, mod: 0.08 }, icon: 'assets/images/items/control_rod.png', desc: 'Steel-clad graphite. Moderates neutrons for a small output gain, but barely cools the core.' }),
+  fuel_rod_casing: I('FC', 'FUEL ROD CASING', { block: false, icon: 'assets/images/items/fuel_rod_casing.png' }),
 
-  hafnium: I('HF', 'HAFNIUM', { block: false, desc: 'Neutron-hungry metal separated from zirconium; the basis of long-life control rods.' }),
-  cadmium: I('CD', 'CADMIUM', { block: false, desc: 'Soft, toxic metal recovered from lead-zinc smelting. A classic thermal-neutron absorber.' }),
-  boron_carbide: I('B4', 'BORON CARBIDE', { block: false, desc: 'B4C ceramic: boron and carbon fused into a hard, cheap neutron poison.' }),
+  hafnium: I('HF', 'HAFNIUM', { block: false, icon: 'assets/images/items/hafnium.png', desc: 'Neutron-hungry metal separated from zirconium; the basis of long-life control rods.' }),
+  cadmium: I('CD', 'CADMIUM', { block: false, icon: 'assets/images/items/cadmium.png', desc: 'Soft, toxic metal recovered from lead-zinc smelting. A classic thermal-neutron absorber.' }),
+  boron_carbide: I('B4', 'BORON CARBIDE', { block: false, icon: 'assets/images/items/boron_carbide.png', desc: 'B4C ceramic: boron and carbon fused into a hard, cheap neutron poison.' }),
 
-  beryllium_rod: I('eC', 'BERYLLIUM REFLECTOR ROD', { block: false, rod: { cool: 30, absorb: 0, mod: 0.12 }, desc: 'Beryllium reflects neutrons back into the core. Weak cooling, strong reactivity gain.' }),
-  cadmium_rod: I('cC', 'CADMIUM CONTROL ROD', { block: false, rod: { cool: 50, absorb: 0.22, mod: 0 }, desc: 'Cadmium soaks up thermal neutrons. Cheap and effective, but it poisons the reaction.' }),
-  zirconium_rod: I('zC', 'ZIRCONIUM COOLANT ROD', { block: false, rod: { cool: 70, absorb: 0.05, mod: 0.02 }, desc: 'Zircaloy coolant channel: very low neutron cost for its cooling.' }),
-  hafnium_rod: I('hR', 'HAFNIUM CONTROL ROD', { block: false, rod: { cool: 100, absorb: 0.16, mod: 0 }, desc: 'Hafnium absorbs neutrons without cadmium corrosion problems. A long-lived control rod.' }),
-  boron_rod: I('bC', 'BORON CARBIDE CONTROL ROD', { block: false, rod: { cool: 150, absorb: 0.28, mod: 0 }, desc: 'B4C in zircaloy cladding: the workhorse absorber for high-power cores. Strong cooling, strong poisoning.' }),
-  heavy_water_rod: I('dC', 'HEAVY WATER COOLANT ROD', { block: false, rod: { cool: 320, absorb: 0.04, mod: 0.10 }, desc: 'Sealed D2O channel. Best cooling in the game with a moderation bonus; needs heavy water to build.' }),
+  beryllium_rod: I('eC', 'BERYLLIUM REFLECTOR ROD', { block: false, rod: { cool: 30, absorb: 0, mod: 0.12 }, icon: 'assets/images/items/control_rod.png', desc: 'Beryllium reflects neutrons back into the core. Weak cooling, strong reactivity gain.' }),
+  cadmium_rod: I('cC', 'CADMIUM CONTROL ROD', { block: false, rod: { cool: 50, absorb: 0.22, mod: 0 }, icon: 'assets/images/items/control_rod.png', desc: 'Cadmium soaks up thermal neutrons. Cheap and effective, but it poisons the reaction.' }),
+  zirconium_rod: I('zC', 'ZIRCONIUM COOLANT ROD', { block: false, rod: { cool: 70, absorb: 0.05, mod: 0.02 }, icon: 'assets/images/items/control_rod.png', desc: 'Zircaloy coolant channel: very low neutron cost for its cooling.' }),
+  hafnium_rod: I('hR', 'HAFNIUM CONTROL ROD', { block: false, rod: { cool: 100, absorb: 0.16, mod: 0 }, icon: 'assets/images/items/control_rod.png', desc: 'Hafnium absorbs neutrons without cadmium corrosion problems. A long-lived control rod.' }),
+  boron_rod: I('bC', 'BORON CARBIDE CONTROL ROD', { block: false, rod: { cool: 150, absorb: 0.28, mod: 0 }, icon: 'assets/images/items/control_rod.png', desc: 'B4C in zircaloy cladding: the workhorse absorber for high-power cores. Strong cooling, strong poisoning.' }),
+  heavy_water_rod: I('dC', 'HEAVY WATER COOLANT ROD', { block: false, rod: { cool: 320, absorb: 0.04, mod: 0.10 }, icon: 'assets/images/items/control_rod.png', desc: 'Sealed D2O channel. Best cooling in the game with a moderation bonus; needs heavy water to build.' }),
   drill_bit: I('DB', 'DRILL BIT', { block: false }),
 
 
@@ -210,11 +210,11 @@ export const ITEM_DEFS = {
   advanced_shielding_plate: I('aP', 'ADVANCED SHIELDING PLATE', { block: false, plate: { radShield: 10, defense: 3, carry: 0.3 }, icon: SHEET_ICON, tint: 0x555d68 }),
 
 
-  u235: I('2U', 'URANIUM-235', { block: false, rad: 1.2 }),
-  u238: I('8U', 'URANIUM-238', { block: false, rad: 0.2 }),
-  u233: I('3U', 'URANIUM-233', { block: false, rad: 1.4 }),
-  pu239: I('9P', 'PLUTONIUM-239', { block: false, rad: 2.5 }),
-  th232: I('2T', 'THORIUM-232', { block: false, rad: 0.3 }),
+  u235: I('2U', 'URANIUM-235', { block: false, rad: 1.2, icon: 'assets/images/items/matter.png' }),
+  u238: I('8U', 'URANIUM-238', { block: false, rad: 0.2, icon: 'assets/images/items/matter.png' }),
+  u233: I('3U', 'URANIUM-233', { block: false, rad: 1.4, icon: 'assets/images/items/matter.png' }),
+  pu239: I('9P', 'PLUTONIUM-239', { block: false, rad: 2.5, icon: 'assets/images/items/matter.png' }),
+  th232: I('2T', 'THORIUM-232', { block: false, rad: 0.3, icon: 'assets/images/items/matter.png' }),
 
 
   tbu_fuel: I('TB', 'TBU FUEL', { block: false, rad: 0.4, fuel: { power: 60, heat: 18, cool: 20, lifetime: 480, rad: 1 }, icon: 'assets/images/items/tbu_fuel.png' }),
@@ -227,14 +227,14 @@ export const ITEM_DEFS = {
   leu_235_oxide: I('o5', 'LEU-235 OXIDE FUEL', { block: false, rad: 0.7, fuel: { power: 300, heat: 100, cool: 100, lifetime: 480, rad: 3 }, icon: 'assets/images/items/leu_235_oxide.png' }),
   heu_235_oxide: I('O5', 'HEU-235 OXIDE FUEL', { block: false, rad: 1.4, fuel: { power: 1200, heat: 800, cool: 800, lifetime: 480, rad: 6 }, icon: 'assets/images/items/heu_235_oxide.png' }),
   tbu_oxide: I('oB', 'TBU OXIDE FUEL', { block: false, rad: 0.5, fuel: { power: 90, heat: 25, cool: 30, lifetime: 480, rad: 2 }, icon: 'assets/images/items/tbu_oxide.png' }),
-  fusion_fuel: I('FF', 'FUSION FUEL', { block: false, rad: 1.4, fuel: { power: 3200, heat: 1200, cool: 1600, lifetime: 480, rad: 3 }, desc: 'A deuterium-tritium pellet in a heavy-water jacket. Burns far hotter than any fission rod.' }),
+  fusion_fuel: I('FF', 'FUSION FUEL', { block: false, rad: 1.4, fuel: { power: 3200, heat: 1200, cool: 1600, lifetime: 480, rad: 3 }, icon: 'assets/images/items/fusion_fuel.png', desc: 'A deuterium-tritium pellet in a heavy-water jacket. Burns far hotter than any fission rod.' }),
 
 
-  depleted_tbu: I('dT', 'DEPLETED TBU', { block: false, rad: 1.5 }),
-  depleted_leu: I('dL', 'DEPLETED LEU', { block: false, rad: 2.5 }),
-  depleted_heu: I('dH', 'DEPLETED HEU', { block: false, rad: 5.0 }),
-  depleted_lep: I('dP', 'DEPLETED LEP', { block: false, rad: 4.0 }),
-  depleted_fusion: I('dF', 'DEPLETED FUSION FUEL', { block: false, rad: 3.0, desc: 'A spent pellet. Still worth cracking for the lithium and boron jacket.' }),
+  depleted_tbu: I('dT', 'DEPLETED TBU', { block: false, rad: 1.5, icon: 'assets/images/items/tbu_fuel.png', tint: 0x777777 }),
+  depleted_leu: I('dL', 'DEPLETED LEU', { block: false, rad: 2.5, icon: 'assets/images/items/leu_235_fuel.png', tint: 0x777777 }),
+  depleted_heu: I('dH', 'DEPLETED HEU', { block: false, rad: 5.0, icon: 'assets/images/items/heu_235_fuel.png', tint: 0x777777 }),
+  depleted_lep: I('dP', 'DEPLETED LEP', { block: false, rad: 4.0, icon: 'assets/images/items/lep_239_fuel.png', tint: 0x777777 }),
+  depleted_fusion: I('dF', 'DEPLETED FUSION FUEL', { block: false, rad: 3.0, icon: 'assets/images/items/fusion_fuel.png', tint: 0x777777, desc: 'A spent pellet. Still worth cracking for the lithium and boron jacket.' }),
 
 
   unrad_juice: I('UJ', 'UNRAD JUICE', { block: false, stack: 16, consumable: { dose: -120 }, icon: 'assets/images/items/unrad_juice.png' }),
@@ -275,7 +275,7 @@ export const ITEM_DEFS = {
 
 
   sugar: I('SG', 'SUGAR', { block: false, icon: 'assets/images/items/sugar.png' }),
-  noodles: I('ND', 'NOODLES', { block: false }),
+  noodles: I('ND', 'NOODLES', { block: false, icon: 'assets/images/items/noodles.png' }),
   broth: I('BH', 'RAMEN BROTH', { block: false }),
   soda_can: I('SC', 'EMPTY SODA CAN', { block: false, stack: 64, icon: 'assets/images/items/soda_can.png' }),
 
@@ -348,7 +348,7 @@ export const ITEM_DEFS = {
 
   pipe: I('PI', 'PIPE', { block: false, stack: 64, pipeGrid: true, model: 'assets/models/pipes/long.glb' }),
   hammer: { code: 'HM', name: 'HAMMER', stack: 1, rad: 0, icon: 'assets/images/items/hammer.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], build: true, damage: 20 }, desc: 'Upgrades a wall to the next tier and pulls it back down again.' },
-  crowbar: { code: 'CW', name: 'CROWBAR', stack: 1, rad: 0, tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], damage: 24, crowbar: true }, desc: 'Pries open the sealed barrels scattered across the wasteland.' },
+  crowbar: { code: 'CW', name: 'CROWBAR', stack: 1, rad: 0, icon: 'assets/images/items/crowbar.png', tool: { radius: 0.1, rate: 0.5, yield: 0, good: [], damage: 24, crowbar: true }, desc: 'Pries open the sealed barrels scattered across the wasteland.' },
   fuel_generator: I('GG', 'GAS GENERATOR', { block: false, stack: 4, workbench: 'fuel_generator', desc: 'Burns gasoline or ethanol to make power. Fill it from a jerry can.' }),
 
 
@@ -371,12 +371,13 @@ export const ITEM_DEFS = {
   floodlight: { code: 'FD', name: 'FLOODLIGHT', stack: 8, rad: 0, torch: true, light: { mount: 'wall', range: 30, power: 2.8, color: 0xd8e8ff } },
   flashlight: { code: 'FL', name: 'FLASHLIGHT', stack: 1, rad: 0, tool: { flashlight: true, radius: 0.1, rate: 0.1, yield: 0, good: [], damage: 5 }, light: { mount: 'held', range: 54, power: 2.8, color: 0xdfefff }, icon: 'assets/images/items/flashlight.png' },
   geiger_counter: I('GC', 'GEIGER COUNTER', { block: false, stack: 1, geiger: true, icon: 'assets/images/items/geiger_counter.png' }),
+  radio: I('RA', 'RADIO', { block: false, stack: 1, radio: true, icon: 'assets/images/items/radio.png', desc: 'Held receiver: an intercepted broadcast when a strike is scheduled, static otherwise.' }),
 
 
-  hazmat_helmet: I('hH', 'HAZMAT HELMET', { block: false, stack: 1, armor: { slot: 'head', defense: 1, radShield: 2, plateSlots: 1 } }),
-  hazmat_chestplate: I('hC', 'HAZMAT CHESTPLATE', { block: false, stack: 1, armor: { slot: 'chest', defense: 2, radShield: 3, plateSlots: 2 } }),
-  hazmat_leggings: I('hL', 'HAZMAT LEGGINGS', { block: false, stack: 1, armor: { slot: 'legs', defense: 2, radShield: 2, plateSlots: 1 } }),
-  hazmat_boots: I('hB', 'HAZMAT BOOTS', { block: false, stack: 1, armor: { slot: 'feet', defense: 1, radShield: 2, plateSlots: 1 } }),
+  hazmat_helmet: I('hH', 'HAZMAT HELMET', { block: false, stack: 1, icon: 'assets/images/items/hazmat_helmet.png', armor: { slot: 'head', defense: 1, radShield: 2, plateSlots: 1 } }),
+  hazmat_chestplate: I('hC', 'HAZMAT CHESTPLATE', { block: false, stack: 1, icon: 'assets/images/items/hazmat_chestplate.png', armor: { slot: 'chest', defense: 2, radShield: 3, plateSlots: 2 } }),
+  hazmat_leggings: I('hL', 'HAZMAT LEGGINGS', { block: false, stack: 1, icon: 'assets/images/items/hazmat_leggings.png', armor: { slot: 'legs', defense: 2, radShield: 2, plateSlots: 1 } }),
+  hazmat_boots: I('hB', 'HAZMAT BOOTS', { block: false, stack: 1, icon: 'assets/images/items/hazmat_boots.png', armor: { slot: 'feet', defense: 1, radShield: 2, plateSlots: 1 } }),
   lead_helmet: I('lH', 'LEAD HELMET', { block: false, stack: 1, armor: { slot: 'head', defense: 2, radShield: 4, plateSlots: 2 } }),
   lead_chestplate: I('lC', 'LEAD CHESTPLATE', { block: false, stack: 1, armor: { slot: 'chest', defense: 3, radShield: 6, plateSlots: 3 } }),
   lead_leggings: I('lL', 'LEAD LEGGINGS', { block: false, stack: 1, armor: { slot: 'legs', defense: 3, radShield: 4, plateSlots: 2 } }),
@@ -419,6 +420,9 @@ export const ITEM_DEFS = {
 
 
 
+  speed_module: I('SM', 'SPEED MODULE', { block: false, stack: 50, module: 'speed', icon: 'assets/images/items/speed_module.png', desc: 'Doubles this workbench\'s production speed. Multiplies its power use by 1.5 each. Max 50.' }),
+  efficiency_module: I('EM', 'EFFICIENCY MODULE', { block: false, stack: 50, module: 'efficiency', icon: 'assets/images/items/efficiency_module.png', desc: 'Trims this workbench\'s power use by 1% each, up to 30%. Cannot cancel a speed module.' }),
+
   circuit_board: I('MB', 'CIRCUIT BOARD', { block: false, model: CIRCUIT_MODEL, tint: 0x4f8fe0, icon: 'assets/images/items/circuit_board.png' }),
   memory_module: I('MM', 'MEMORY MODULE', { block: false, icon: 'assets/images/items/memory_module.png' }),
   data_drive: I('DD', 'DATA DRIVE', { block: false, icon: 'assets/images/items/data_drive.png' }),
@@ -437,6 +441,18 @@ export const ITEM_DEFS = {
 
   c4: I('C4', 'C4 CHARGE', { block: false, stack: 8, c4: true, desc: 'Place on the ground. Arms and detonates in 5 seconds.' }),
 
+
+  rials: I('RI', 'RIALS', { block: false, stack: 9000, icon: 'assets/images/items/rials.png', desc: 'Currency printed and controlled by the IRGC. They take it back in exchange for goods.' }),
+  flare: I('FR', 'FLARE', { block: false, stack: 16, flare: true, icon: 'assets/images/items/flare.png', desc: 'Right-click near a pickup or ask box to call an IRGC plane early. The world goes white while it passes.' }),
+  book_artesh: I('B1', 'BOOK: I', { block: false, stack: 1, book: true, icon: 'assets/images/items/book.png', lore: { title: 'BOOK: I · THE ARTESH', text: 'The Artesh were the old army, built from conscripts, border posts and parade grounds. They kept the borders and the boring hours. When the order came to choose a side, half the officers stayed with the Artesh and half went with the Guard. That was the day the country split in two.' } }),
+  book_war: I('B2', 'BOOK: II', { block: false, stack: 1, book: true, icon: 'assets/images/items/book.png', lore: { title: 'BOOK: II · THE CIVIL WAR', text: 'The Artesh held the cities for a time. The IRGC held the missile sites and the roads out. Checkpoints multiplied; papers mattered more than money. Nobody counted the dead after the third month. The IRGC won because the Artesh ran out of fuel before they ran out of will.' } }),
+  book_intervention: I('B3', 'BOOK: III', { block: false, stack: 1, book: true, icon: 'assets/images/items/book.png', lore: { title: 'BOOK: III · FOREIGN HANDS', text: 'Israel struck first from the sky, then the Americans came in from the sea. Every strike was answered, and every answer brought another. The IRGC called it defence. The radio called it the end of the world. Both were partly right.' } }),
+  book_nukes: I('B4', 'BOOK: IV', { block: false, stack: 1, book: true, icon: 'assets/images/items/book.png', lore: { title: 'BOOK: IV · THE BRIGHT NIGHT', text: 'They used everything. Cities, bases and the coast were all hit as the IRGC spent its arsenal on everyone at once. There was no warning worth the name. The sky went white from the Gulf to the mountains, and the reactors kept running after the people stopped.' } }),
+  book_after: I('B5', 'BOOK: V', { block: false, stack: 1, book: true, icon: 'assets/images/items/book.png', lore: { title: 'BOOK: V · THE ZONE', text: 'What is left is the Zone. The IRGC still prints the rials and still flies the pods; the planes drop payment for whatever the ground can still make. Keep the box away from the workbenches, feed it, wait for dark, and do not look up when you hear the engines.' } }),
+  pickup_box: { code: 'PB', name: 'PICKUP BOX', stack: 16, rad: 0, block: false, workbench: 'pickup_box', desc: 'Stock it, keep it away from workbenches, and an IRGC plane lifts the goods and drops rials after dark.' },
+  ask_box: { code: 'AB', name: 'ASK BOX', stack: 16, rad: 0, block: false, workbench: 'ask_box', desc: 'Write an order, pay in rials, and an IRGC plane drops the goods after dark.' },
+  dropbox: { code: 'DB', name: 'DROP BOX', stack: 1, rad: 0, block: false, workbench: 'dropbox', desc: 'An IRGC plane dropped this. Open it to collect the payment.' },
+  drop_pod: { code: 'DP', name: 'DROP POD', stack: 1, rad: 0, block: false, workbench: 'drop_pod', desc: 'A delivery pod dropped by an IRGC plane. Open it to collect the order.' },
 
   recycler: { code: 'RE', name: 'RECYCLER', stack: 16, rad: 0, block: false, workbench: 'recycler', desc: 'Turns wasteland scrap into random recovered parts.' },
   manufactory: { code: 'MF', name: 'MANUFACTORY', stack: 16, rad: 0, block: false, workbench: 'manufactory', desc: 'A powered crafting bench. Each craft pulls power from the grid.' },
@@ -559,12 +575,68 @@ export const SCRAP_RECYCLE_TABLE = [
   ['carbon', 12], ['graphite', 6], ['carbon_mesh', 4], ['copper_solenoid', 3],
   ['circuit_basic', 1.5], ['electric_motor', 1.5], ['linear_actuator', 1], ['machine_chassis', 0.8],
 ];
+// A thin version of BARREL_LOOT for the pods that fall in the plains.
+export const LORE_POD_LOOT = [
+  ['scrap', 18], ['iron_ingot', 8], ['copper_ingot', 8], ['lead_ingot', 5], ['iron_plate', 6],
+  ['plastic', 10], ['glass', 6], ['carbon', 8], ['herb', 7], ['cigarette_pack', 3],
+  ['iodine_pill', 2], ['circuit_basic', 0.8], ['electric_motor', 0.5],
+];
+export const LORE_BOOKS = ['book_artesh', 'book_war', 'book_intervention', 'book_nukes', 'book_after'];
+
 export function rollWeighted(table) {
   let total = 0;
   for (const [, w] of table) total += w;
   let r = Math.random() * total;
   for (const [id, w] of table) { r -= w; if (r <= 0) return id; }
   return table[table.length - 1][0];
+}
+
+// What the IRGC pay, in rials, per item. Anything unlisted is worth 4, a machine block 300.
+export const RIAL_VALUE = {
+  stone: 1, dirt: 1, sand: 1, gravel: 1, basalt: 1, wood: 2, carbon: 3, herb: 2, flower: 2,
+  iron: 3, copper: 3, tin: 3, lead: 4, magnesium: 5, lithium: 7, boron: 7, zirconium: 10,
+  beryllium: 12, uranium: 9, thorium: 9, polonium: 18, scrap: 2,
+  iron_ingot: 8, copper_ingot: 8, tin_ingot: 8, lead_ingot: 10, bronze_ingot: 18, steel_ingot: 20,
+  iron_plate: 10, copper_plate: 12, lead_plate: 14, steel_plate: 28,
+  glass: 4, plastic: 5, cable: 4, graphite: 5, carbon_mesh: 9,
+  circuit_basic: 22, circuit_mid: 55, circuit_board: 65, card_reader: 80, timer_module: 80,
+  optic_lens: 80, cooling_fan: 70, memory_module: 90, data_drive: 110, data_disk: 110,
+  electric_motor: 95, linear_actuator: 120, machine_chassis: 150, fuel_rod_casing: 60,
+  reactor_casing: 90, rdx: 30, detonator: 35, filter_cartridge: 120,
+  iodine_pill: 25, unrad_juice: 60, neurozam_9: 120, cigarette_pack: 20,
+};
+
+export function rialValue(id) {
+  if (id === 'rials') return 0;
+  const v = RIAL_VALUE[id];
+  if (v) return v;
+  return ITEM_DEFS[id]?.workbench ? 300 : 4;
+}
+
+export function saleValue(slots) {
+  let count = 0, total = 0;
+  for (let i = 0; i < 8; i++) {
+    const s = slots?.[`input${i}`];
+    if (!s || !s.id || !s.n) continue;
+    const v = rialValue(s.id);
+    if (v > 0) { count += s.n; total += v * s.n; }
+  }
+  return { count, total };
+}
+
+// An unseen item costs eight times more; a workbench you have never placed cannot be ordered at all.
+export function offerPrice(want, hasItem = () => true, hasMachine = () => true) {
+  const out = {};
+  let price = 0, blocked = false;
+  for (const w of want || []) {
+    if (!w?.id || !w.n) continue;
+    const def = ITEM_DEFS[w.id];
+    if (!def || w.id === 'rials' || w.id === 'dropbox' || w.id === 'drop_pod') continue;
+    if (def.workbench && !hasMachine(def.workbench)) { blocked = true; break; }
+    price += rialValue(w.id) * w.n * (hasItem(w.id) ? 1 : 8);
+    out[w.id] = (out[w.id] || 0) + w.n;
+  }
+  return { price: Math.round(price), out, blocked };
 }
 
 export const MACHINE_DEFS = [
@@ -743,7 +815,7 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'isotope_separator', kind: 'processor', name: 'ISOTOPE SEPARATOR', model: MODEL('isotope_separator'), layout: LAYOUT('isotope_separator'), label: 'Use isotope separator', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 110 }, rad: 0.4,
+    id: 'isotope_separator', kind: 'processor', name: 'ISOTOPE SEPARATOR', model: MODEL('isotope_separator'), layout: LAYOUT('isotope_separator'), label: 'Use isotope separator', height: 1.6, dx: 2.8, dz: 1.8, energy: { use: 600 }, rad: 0.4,
     recipes: [
       { in: { fuel_rod_casing: 1, u235: 1, u238: 4 }, out: { leu_235_fuel: 1 }, time: 12, rad: 1 },
       { in: { fuel_rod_casing: 1, u235: 4, u238: 1 }, out: { heu_235_fuel: 1 }, time: 16, rad: 2 },
@@ -959,9 +1031,31 @@ export const MACHINE_DEFS = [
       { in: { scrap: 2 }, out: { iron_ingot: 1 }, time: 5 },
     ]
   },
+  {
+    id: 'pickup_box', kind: 'pickup', name: 'PICKUP BOX', model: MODEL('pickup_box'), layout: LAYOUT('pickup_box'), label: 'Open pickup box',
+    height: 0.9, dx: 1.2, dz: 1.2, solo: 16,
+  },
+  {
+    id: 'ask_box', kind: 'askbox', name: 'ASK BOX', model: MODEL('ask_box'), layout: LAYOUT('ask_box'), label: 'Open ask box',
+    height: 1.0, dx: 1.2, dz: 1.2, solo: 16,
+  },
+  {
+    id: 'dropbox', kind: 'drop', name: 'DROP BOX', model: MODEL('dropbox'), layout: LAYOUT('dropbox'), label: 'Open drop box',
+    height: 0.9, dx: 1.2, dz: 1.2, outputs: 8,
+  },
+  {
+    id: 'drop_pod', kind: 'drop', name: 'DROP POD', model: MODEL('dropbox'), layout: LAYOUT('drop_pod'), label: 'Open drop pod',
+    height: 0.9, dx: 1.2, dz: 1.2, outputs: 8, modelRotY: Math.PI,
+  },
 ];
 
 export const MACHINE_BY_ID = Object.fromEntries(MACHINE_DEFS.map((m) => [m.id, m]));
+
+// Anything the furnace or oven cooks out counts toward the chef achievements.
+export const COOKED_DISHES = new Set(
+  ['electric_furnace', 'oven'].flatMap((id) =>
+    (MACHINE_BY_ID[id].recipes || []).map((r) => Object.keys(r.out)[0])),
+);
 
 
 
@@ -999,11 +1093,21 @@ export const CRAFT_RECIPES = [
   ...TRIANGLE_RECIPES,
   ...BUNKER_DOOR_RECIPES,
 
+  // Every greenhouse crop can be turned back into its own seeds at the manufactory.
+  ...Object.entries(ITEM_DEFS).filter(([, d]) => d.seed).map(([id, d]) => ({
+    out: { [id]: 2 }, needs: { [d.seed]: 1 },
+  })),
+
+  { out: { pickup_box: 1 }, needs: { iron_plate: 5, plastic: 5 } },
+  { out: { ask_box: 1 }, needs: { iron_plate: 4, plastic: 4, circuit_board: 1 } },
+  { out: { flare: 2 }, needs: { magnesium: 1, plastic: 2, carbon: 1 } },
+  { out: { speed_module: 1 }, needs: { electric_motor: 1, iron_plate: 15 } },
+  { out: { efficiency_module: 1 }, needs: { circuit_basic: 2, copper_solenoid: 5 } },
+
+ 
 
 
-
-
-
+ 
   { out: { chicken_leg: 5 }, needs: { cooked_chicken: 1 } },
 
   { out: { jp_soy_sauce: 1 }, needs: { aromatic_powder: 2, carbon: 2, plastic: 1 } },
@@ -1104,6 +1208,7 @@ export const CRAFT_RECIPES = [
   { out: { hoe: 1 }, needs: { steel_ingot: 2, wood: 2 } },
   { out: { drill: 1 }, needs: { steel_ingot: 3, circuit_basic: 1, electric_motor: 1 } },
   { out: { geiger_counter: 1 }, needs: { circuit_basic: 1, lead_plate: 1, copper_plate: 1 } },
+  { out: { radio: 1 }, needs: { circuit_basic: 1, copper_plate: 2, iron_plate: 1 } },
   { out: { graphite: 1 }, needs: { carbon: 2 } },
   { out: { carbon_mesh: 1 }, needs: { carbon: 3 } },
 
@@ -1170,12 +1275,12 @@ const TABLE_OUTPUTS = new Set([
   ...Object.entries(ITEM_DEFS).filter(([, d]) => d.table).map(([id]) => id),
 
   'iron_ingot', 'copper_ingot', 'tin_ingot', 'torch', 'simple_lamp', 'lantern', 'flashlight', 'graphite', 'carbon_mesh',
-  'zipline_wrench', 'crowbar', 'recycler',
+  'zipline_wrench', 'crowbar', 'recycler', 'flare', 'speed_module', 'efficiency_module',
   'cigarette_pack', 'lighter', 'jerry_can_black', 'plastic', 'flour', 'cup_noodles', 'chicken_leg',
 
   'sugar', 'noodles', 'broth', 'soda_can',
   'bronze_ingot', 'circuit_basic', 'pick', 'shovel',
-  'gardening_gloves', 'test_bench',
+  'gardening_gloves', 'test_bench', 'radio',
 
   'manufactory', 'armor_workbench', 'crusher', 'electric_furnace', 'cable', 'simple_container', 'wooden_powerpole',
   'hand_crank', 'water_pump', 'bed', 'oven',
@@ -1209,6 +1314,24 @@ export function layoutFor(def) {
     S('armor', 0, 1, 2, 2, 'armor', 'ARMOR');
     for (let i = 0; i < 4; i++) S(`p${i}`, 3 + i * 2, 1, 2, 2, `plate${i}`, 'PLATE');
     el.push({ id: 'status', type: 'label', x: 0, y: 3, w: 12, h: 1, text: 'DROP PLATES TO INSTALL', size: 12 });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
+  if (def.kind === 'pickup' || def.kind === 'drop') {
+    const role = (i) => (def.kind === 'pickup' ? `input${i}` : `output${i}`);
+    for (let i = 0; i < 8; i++) S(`slot${i}`, 2 + (i % 4) * 2, 1 + Math.floor(i / 4) * 2, 2, 2, role(i), '');
+    el.push({ id: 'info', type: 'label', x: 0, y: 5, w: 12, h: 1, text: def.kind === 'pickup' ? 'STOCK THE BOX · IRGC PLANE DROPS PAYMENT AFTER DARK' : 'COLLECT WHAT THE PLANE DROPPED', size: 12 });
+    el.push({ id: 'status', type: 'label', x: 0, y: 6, w: 12, h: 1, text: 'WAITING', size: 12 });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
+  if (def.kind === 'askbox') {
+    el.push({ id: 'info', type: 'label', x: 0, y: 1, w: 12, h: 1, text: 'PICK UP TO 3 ITEMS · PAY IN RIALS', size: 12 });
+    el.push({ id: 'orders', type: 'orders', x: 0, y: 2, w: 9, h: 4 });
+    S('pay0', 9, 2, 3, 2, 'pay0', 'PAY RIALS');
+    S('pay1', 9, 4, 3, 2, 'pay1', '');
+    el.push({ id: 'status', type: 'label', x: 0, y: 6, w: 9, h: 1, text: 'NO ORDER', size: 12 });
+    el.push({ id: 'payExact', type: 'button', x: 9, y: 6, w: 3, h: 1, text: 'PAY EXACT', action: 'payExact' });
     return { version: 1, id: def.id, title, grid, theme, elements: el };
   }
 
@@ -1445,6 +1568,7 @@ export const GUIDE_STEPS = [
   { id: 'fusion_reactor', title: 'BUILD A FUSION REACTOR', hint: 'Assembler: 6 chassis, 6 advanced circuits, 2 heavy-water rods, 8 reactor casings.', place: 'fusion_reactor' },
   { id: 'blueprint_scrubber', title: 'RESEARCH THE SCRUBBER BLUEPRINT', hint: 'Lab: 2 polonium, 2 data disks, an advanced circuit and 4 lead plates.', need: { blueprint_scrubber: 1 } },
   { id: 'scrubber', title: 'BUILD AN ATMOSPHERIC SCRUBBER', hint: 'Assembler: 4 chassis, 4 advanced circuits, 12 lead plates, 4 cooling fans.', place: 'atmospheric_scrubber' },
+  { id: 'more', title: 'THERES MORE', hint: 'The guide ends here, but the game doesnt. Research the containment blueprint for the suit and plasma drill, build a scrubber farm, chase achievements and survive the next strike. Just go on.' },
 ];
 
 
@@ -1598,6 +1722,30 @@ export const ACHIEVEMENT_TYPES = [
       { name: 'BASKETFUL', icon: 'flower', req: 'Gather 50 plants.', stat: 'harvested', need: 50 },
       { name: 'FIELD WORKER', icon: 'wheat_seed', req: 'Gather 200 plants.', stat: 'harvested', need: 200 },
       { name: 'MASTER GATHERER', icon: 'greenhouse', req: 'Gather 500 plants.', stat: 'harvested', need: 500 },
+    ],
+  },
+  {
+    id: 'chef', name: 'CHEF',
+    tiers: [
+      { name: 'LINE COOK', icon: 'cooked_chicken', req: 'Cook 2 different dishes.', stat: 'cooked', need: 2 },
+      { name: 'SOUS CHEF', icon: 'chicken_soup', req: 'Cook 3 different dishes.', stat: 'cooked', need: 3 },
+      { name: 'HEAD CHEF', icon: 'ratatouille', req: 'Cook 5 different dishes.', stat: 'cooked', need: 5 },
+      { name: 'MASTER CHEF', icon: 'stuffed_bell_peppers', req: 'Cook all 7 dishes.', stat: 'cooked', need: 7 },
+    ],
+  },
+  {
+    id: 'gourmet', name: 'GOURMET',
+    tiers: [
+      { name: 'HUNGRY', icon: 'apple', req: 'Eat 5 different foods.', stat: 'eaten', need: 5 },
+      { name: 'BIG APPETITE', icon: 'potato', req: 'Eat 12 different foods.', stat: 'eaten', need: 12 },
+      { name: 'FOOD CRITIC', icon: 'ramen_miso', req: 'Eat 24 different foods.', stat: 'eaten', need: 24 },
+      { name: 'CAFETERIA CHAMPION', icon: 'cooked_chicken', req: 'Eat 40 different foods.', stat: 'eaten', need: 40 },
+    ],
+  },
+  {
+    id: 'archivist', name: 'THE ARCHIVIST',
+    tiers: [
+      { name: 'EVERY WORD', icon: 'book_after', req: 'Read all five field notes.', stat: 'read', need: 5, secret: true },
     ],
   },
 ];

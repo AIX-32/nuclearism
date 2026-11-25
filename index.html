@@ -70,13 +70,22 @@
     <span id="nowPlayingName" class="np-name"></span>
   </div>
 
+  <div id="achToast" class="ach-toast" role="status" aria-live="polite">
+    <img id="achToastIcon" class="ach-toast-icon" alt="" draggable="false">
+    <div class="ach-toast-text">
+      <b id="achToastName"></b>
+      <span>ACHIEVEMENT UNLOCKED</span>
+    </div>
+  </div>
+
   <div id="urgentCard" class="urgent-card" hidden>
     <div class="urgent-title"></div>
     <div class="urgent-body"></div>
   </div>
 
   <div id="deathBanner"><span>YOU DIED</span><small>you lost everything you carried</small></div>
-  <div id="sleepOverlay" aria-hidden="true"></div>
+  <div id="sleepOverlay" aria-hidden="true"><div id="sleepZzz"><span>z</span><span>z</span><span>z</span></div></div>
+  <div id="flareFlash" aria-hidden="true"></div>
 
   <div id="minimap" aria-hidden="true"><canvas id="minimapCanvas"></canvas></div>
 
@@ -281,6 +290,14 @@
     </div>
   </div>
 
+  <div id="bookModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="bookTitle">
+    <div class="introBox">
+      <h2 id="bookTitle">BOOK</h2>
+      <p id="bookText"></p>
+      <button id="bookClose" class="mbtn primary">CLOSE</button>
+    </div>
+  </div>
+
   <div id="saveFail" class="hidden" role="dialog" aria-modal="true" aria-labelledby="saveFailTitle">
     <div class="saveFailBox">
       <h2 id="saveFailTitle">SAVE FAILED</h2>
@@ -311,8 +328,8 @@
           <a class="menu-promo-item" href="https://aix-32.github.io/Xyper/" target="_blank" rel="noopener">
             <b>XYPER</b><span>My portfolio, check it out.</span>
           </a>
-          <a class="menu-promo-item" href="https://discord.gg/jX4Nm9Hq8P" target="_blank" rel="noopener">
-            <b>DISCORD</b><span>Projects including this game.</span>
+          <a class="menu-promo-item" href="https://aix-32.github.io/Madar/" target="_blank" rel="noopener">
+            <b>MADAR</b><span>One connected picture of the people, places, and objects in your hands.</span>
           </a>
         </div>
       </div>

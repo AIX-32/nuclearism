@@ -23,15 +23,15 @@ for (let i = src.indexOf('{', at); i < src.length; i++) {
   else if (c === '}' && --depth === 0) { end = i + 1; break; }
 }
 if (end < 0) throw new Error('unterminated drop block');
-const collect = new Function('m', 'removed', src.slice(at, end));
+const collect = new Function('m', 'removed', 'st', 'fuelDef', src.slice(at, end));
 
-function run(drops, count = 7) {
+function run(drops, count = 7, state = {}) {
   const system = {
     ctx: { groundBand: () => 'stone', mineDrops: drops },
     out: [],
     addOutput(m, id, n) { this.out.push([id, n]); },
   };
-  collect.call(system, {}, Array.from({ length: count }, (_, i) => [i, 10, i]));
+  collect.call(system, {}, Array.from({ length: count }, (_, i) => [i, 10, i]), state, { carbon: 12 });
   return system.out;
 }
 
@@ -42,6 +42,14 @@ check(run(() => [['dirt', 1]]).length === 0, 'dirt is never stored');
 check(run(() => [['basalt', 1], ['uranium', 2]]).every(([id, n]) => id === 'uranium' && n === 2),
   'only ore amounts are kept');
 check(run(() => [['stone', 1], ['copper', 1]], 1).length === 1, 'one voxel yields one ore, not a random sample');
+check(run(() => [['stone', 1], ['iron', 2]], 2, { collect: false }).length === 0, 'pick-up off keeps nothing');
+const fuelState = { burnCarbon: true };
+const mixed = run(() => [['stone', 1], ['carbon', 3], ['iron', 2]], 1, fuelState);
+check(mixed.length === 1 && mixed[0][0] === 'iron', 'carbon used as fuel is not stored as ore');
+check(fuelState.fuelBuf === 36, 'carbon found becomes fuel');
+const quiet = { collect: false, burnCarbon: true };
+check(run(() => [['stone', 1], ['carbon', 2], ['copper', 1]], 1, quiet).length === 0 && quiet.fuelBuf === 24,
+  'carbon still fuels the bore while pick-up is off');
 
 let failed = 0;
 for (const [ok, msg] of results) { if (!ok) failed++; console.log(`${ok ? 'ok' : 'FAIL'} ${msg}`); }

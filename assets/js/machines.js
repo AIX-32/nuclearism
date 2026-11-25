@@ -12,9 +12,10 @@
 
 
 
-import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate, TUNING, rollWeighted } from './content.js';
+import { DEPLETED_OF, regionOre, REACTOR_ROD_SLOTS, formatRadRate, TUNING, rollWeighted, saleValue, offerPrice } from './content.js';
 import { inventoryAdapter } from './drag-drop.js';
 import { accepts, drain, fill } from './liquids.js';
+import { MODULE_ROLES, powerMult, speedMult, modulePut, moduleAllowed, formatPower } from './modules.js';
 
 export const ARMOR_SLOTS = ['head', 'chest', 'legs', 'feet', 'hands'];
 
@@ -290,6 +291,8 @@ export class MachineSystem {
     if (action === 'pitchDown') pitch -= step;
     else if (action === 'pitchUp') pitch += step;
     else if (action === 'pitchLevel') pitch = 0;
+    else if (action === 'toggleCollect') { inst.state.collect = inst.state.collect === false; return true; }
+    else if (action === 'toggleCarbon') { inst.state.burnCarbon = !inst.state.burnCarbon; return true; }
     else return false;
     inst.state.pitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 6, pitch));
     return true;
@@ -309,7 +312,7 @@ export class MachineSystem {
     m.mesh.rotation.y = (m.rot || 0) + b.yawCur;
     b.pivot.rotation.z = -b.boomCur;
 
-    const cost = (m.def.energy?.use || 0) * dt;
+    const cost = this.useRate(m) * dt;
     const powered = !b.wheelOn || this.drawPower(m, cost);
     if (b.wheelOn && powered) {
       b.spinVel = Math.min(2.8, b.spinVel + dt * 1.8);
@@ -325,7 +328,7 @@ export class MachineSystem {
     m.mesh.updateMatrixWorld(true);
 
     if (!b.wheelOn || !powered || !this.hasOutputRoom(m)) return;
-    b.digT = (b.digT || 0) - dt;
+    b.digT = (b.digT || 0) - dt * this.productionRate(m);
     if (b.digT > 0) return;
     b.digT = 0.16;
     this.digBwe(m);
@@ -400,6 +403,7 @@ export class MachineSystem {
   place(id, x, z, opts = {}) {
     const tpl = this.templates.get(id);
     if (!tpl) return null;
+    if (!opts.restore && !opts.drop && this.placementBlocked(x, z, id)) return null;
     const size = tpl.def.footprint ? { x: tpl.def.footprint[0], z: tpl.def.footprint[1] } : (tpl.size || { x: 1, z: 1 });
     const rot = (opts.rot || 0) % (Math.PI * 2);
     const quarter = Math.round(rot / (Math.PI / 2)) % 2;
@@ -435,7 +439,7 @@ export class MachineSystem {
       uid: this.uidSeq++, def: tpl.def, x, y, z, rot, mesh, layout: tpl.layout,
       top: y + tpl.def.height * MACHINE_SCALE, hx, hz,
       spinNode: spinNodes[0] || null, spinNodes, bwe, boreMask: tpl.bore || null,
-      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0, usage: {} },
+      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0, collect: true, burnCarbon: false, usage: {}, want: [null, null, null] },
       mixer: null, action: null, net: null,
     };
     if (tpl.animations.length) {
@@ -458,6 +462,7 @@ export class MachineSystem {
   remove(inst, refund = true) {
     const i = this.instances.indexOf(inst);
     if (i < 0) return;
+    if (this.openInst === inst) this.ui?.close();
     this.instances.splice(i, 1);
     if (inst.mesh.parent) inst.mesh.parent.remove(inst.mesh);
     const ma = this.ctx.machineActivators;
@@ -475,6 +480,59 @@ export class MachineSystem {
     return null;
   }
 
+  // Drop boxes keep a clear bubble: a box cannot be placed near a workbench,
+  // and no workbench can be placed near a box. IRGC airdrops ignore it.
+  placementBlocked(x, z, id) {
+    const solo = this.templates.get(id)?.def?.solo;
+    if (solo) {
+      for (const m of this.instances) if (Math.hypot(m.x - x, m.z - z) < solo) return true;
+      return false;
+    }
+    for (const m of this.instances) {
+      const r = m.def.solo;
+      if (r && Math.hypot(m.x - x, m.z - z) < r) return true;
+    }
+    return false;
+  }
+
+  setOrder(i, id, n) {
+    const m = this.openInst;
+    if (!m || m.def.kind !== 'askbox' || i < 0 || i > 2) return;
+    m.state.want = m.state.want || [null, null, null];
+    m.state.want[i] = id ? { id, n: Math.max(1, Math.min(64, n || 1)) } : null;
+    this.ui.renderOrderRows?.();
+  }
+
+  // Pull only the shortfall from the bag, so an exact payment never overpays.
+  payExact() {
+    const m = this.openInst;
+    if (!m || m.def.kind !== 'askbox') return false;
+    const offer = offerPrice(m.state.want, this.ctx.hasItem, this.ctx.hasMachine);
+    if (offer.blocked || !Object.keys(offer.out).length || offer.price > 18000) return false;
+    const need = offer.price - this.paidRials(m.state);
+    if (need <= 0) { this.ctx.notice?.('ALREADY PAID'); return false; }
+    const have = this.invCounts().rials || 0;
+    if (have < need) { this.ctx.notice?.(`NEED ${(need - have).toLocaleString()} MORE RIALS`); return false; }
+    if (this.takeInv('rials', need) !== 0) return false;
+    let left = need;
+    for (const role of ['pay0', 'pay1']) {
+      if (left <= 0) break;
+      const cur = m.state.slots[role];
+      if (cur && cur.id !== 'rials') continue;
+      const cap = this.stackCap('rials');
+      const room = cap - (cur?.n || 0);
+      if (room <= 0) continue;
+      const add = Math.min(room, left);
+      if (cur) cur.n += add;
+      else m.state.slots[role] = { id: 'rials', n: add };
+      left -= add;
+    }
+    this.ctx.syncBars?.();
+    this.ui?.refresh?.();
+    this.ctx.notice?.(`PAID ${need.toLocaleString()} RIALS`);
+    return true;
+  }
+
 
 
 
@@ -482,7 +540,7 @@ export class MachineSystem {
   powerCap(m) {
     const d = m.def;
     if (d.capacity) return Math.max(400, d.capacity);
-    return Math.max(400, d.energy?.use ? d.energy.use * 3 : 0);
+    return Math.max(400, d.energy?.use ? d.energy.use * 3 * powerMult(m.state.slots) : 0);
   }
 
   hasPowerPort(m) {
@@ -492,7 +550,7 @@ export class MachineSystem {
 
   chargeRate(m) {
     const cap = this.powerCap(m);
-    return Math.max(POWER_FLOW, (m.def.energy?.use || 0) * 2, cap / POWER_REFILL_SECONDS);
+    return Math.max(POWER_FLOW, this.useRate(m) * 2, cap / POWER_REFILL_SECONDS);
   }
 
   chargePower(m, dt, net) {
@@ -539,6 +597,9 @@ export class MachineSystem {
     return {
       inventory: () => this.inv.hot.concat(this.inv.main),
       item: (id) => this.ITEMS[id],
+      items: () => this.ITEMS,
+      order: (i, id, n) => this.setOrder(i, id, n),
+      payExact: () => this.payExact(),
       icon: (id) => this.ctx.icon(id),
       selectedHotbar: () => this.inv.sel,
       selectHotbar: (i) => { this.inv.sel = i; this.ctx.syncBars(); },
@@ -560,9 +621,11 @@ export class MachineSystem {
       progressValue: () => this.openInst ? this.openInst.state.progress : 0,
       powerView: () => {
         const m = this.openInst; if (!m || !this.hasPowerPort(m)) return null;
+        if (m.state.status === 'NO POWER') return { value: 0, text: 'NO POWER' };
         const cap = this.powerCap(m), buf = Math.min(cap, m.state.buffer || 0);
-        return { value: cap ? buf / cap : 0, text: `${Math.round(buf)} / ${Math.round(cap)}` };
+        return { value: cap ? buf / cap : 0, text: `${formatPower(buf)} / ${formatPower(cap)}` };
       },
+      moduleInfo: () => this.moduleInfo(),
       heatValue: () => { const m = this.openInst; return m && m.def.heatMax ? m.state.heat / m.def.heatMax : null; },
       matchValue: () => { const m = this.openInst; return m && m.def.kind === 'reactor' ? (m.state.coolMatch || 0) : null; },
       bweState: () => {
@@ -578,7 +641,7 @@ export class MachineSystem {
       boreState: () => {
         const m = this.openInst;
         if (!m || m.def.kind !== 'bore') return null;
-        return { pitch: m.state.pitch || 0, status: m.state.status };
+        return { pitch: m.state.pitch || 0, status: m.state.status, collect: m.state.collect !== false, burnCarbon: !!m.state.burnCarbon };
       },
       boreControl: (action) => this.controlBore(this.openInst, action),
       batteryUsage: () => {
@@ -629,8 +692,13 @@ export class MachineSystem {
   slotAccepts(role, stack) {
     const m = this.openInst;
     if (!m || !stack) return false;
+    if (MODULE_ROLES.includes(role)) {
+      const cur = m.state.slots[role];
+      return stack.id === role && !stack.liquid && !(cur && cur.n >= this.stackCap(role));
+    }
     if (role === 'armor') return !!this.ITEMS[stack.id]?.armor;
     if (role.startsWith('output')) return false;
+    if (role.startsWith('pay')) return stack.id === 'rials';
     if (role.startsWith('plate')) {
       const armor = m.state.slots.armor;
       const a = armor && this.ITEMS[armor.id]?.armor;
@@ -664,6 +732,13 @@ export class MachineSystem {
     if (!m || !stack) return stack;
     const item = this.ITEMS[stack.id] || {};
 
+    if (MODULE_ROLES.includes(role)) {
+      const cur = m.state.slots[role] || null;
+      const res = modulePut(role, stack, cur, this.stackCap(role));
+      if (!res) return stack;
+      m.state.slots[role] = res.slot;
+      return res.left > 0 ? { ...stack, n: res.left } : null;
+    }
     if (role === 'armor') {
       if (!item.armor) return stack;
       const cur = m.state.slots.armor || null;
@@ -898,7 +973,18 @@ export class MachineSystem {
   }
 
 
-  craftCost(m) { return m?.def.energy?.craft || 0; }
+  craftCost(m) { return (m?.def.energy?.craft || 0) * powerMult(m?.state?.slots); }
+  useRate(m) { return (m?.def?.energy?.use || 0) * powerMult(m?.state?.slots); }
+  productionRate(m) { return speedMult(m?.state?.slots); }
+  moduleInfo() {
+    const m = this.openInst;
+    if (!m || !moduleAllowed(m.def)) return null;
+    return {
+      speed: Math.min(50, m.state.slots.speed_module?.n || 0),
+      efficiency: Math.min(50, m.state.slots.efficiency_module?.n || 0),
+      powerMult: powerMult(m.state.slots), speedMult: speedMult(m.state.slots),
+    };
+  }
 
   bagOptions(m, recipes, { powerCost = 0 } = {}) {
     const counts = this.invCounts();
@@ -1096,16 +1182,18 @@ export class MachineSystem {
     }
   }
 
+  stackCap(id) { return this.ITEMS[id]?.stack || MAXSLOT; }
+
   outputsHaveRoom(m, r) {
     const slots = [];
     const n = m.def.outputs || 4;
     for (let i = 0; i < n; i++) slots.push(m.state.slots[`output${i}`] || null);
     for (const [id, count] of Object.entries(r.out)) {
-      let left = count;
+      let left = count, cap = this.stackCap(id);
       for (let i = 0; i < n && left > 0; i++) {
         const s = slots[i];
-        if (s && s.id === id) left -= (MAXSLOT - s.n);
-        else if (!s) { slots[i] = { id, n: Math.min(left, MAXSLOT) }; left -= Math.min(left, MAXSLOT); }
+        if (s && s.id === id) left -= (cap - s.n);
+        else if (!s) { slots[i] = { id, n: Math.min(left, cap) }; left -= Math.min(left, cap); }
       }
       if (left > 0) return false;
     }
@@ -1113,12 +1201,12 @@ export class MachineSystem {
   }
 
   addOutput(m, id, n) {
-    const slots = m.def.outputs || 4;
+    const slots = m.def.outputs || 4, cap = this.stackCap(id);
     let left = n;
     for (let i = 0; i < slots && left > 0; i++) {
       const s = m.state.slots[`output${i}`];
-      if (s && s.id === id) { const t = Math.min(MAXSLOT - s.n, left); s.n += t; left -= t; }
-      else if (!s) { const t = Math.min(MAXSLOT, left); m.state.slots[`output${i}`] = { id, n: t }; left -= t; }
+      if (s && s.id === id) { const t = Math.min(cap - s.n, left); s.n += t; left -= t; }
+      else if (!s) { const t = Math.min(cap, left); m.state.slots[`output${i}`] = { id, n: t }; left -= t; }
     }
     return left;
   }
@@ -1144,6 +1232,18 @@ export class MachineSystem {
 
 
     const ins = this.instances.filter((m) => m.def.kind !== 'pylon' && !(m.def.kind === 'storage' && !m.def.capacity));
+    // The runtime calls this every frame; the pairwise pass is O(machines^2), so
+    // cache it until a machine's position, count or kind actually changes.
+    let hx = 0, hy = 0, hz = 0;
+    for (const m of ins) {
+      let k = 0;
+      for (let i = 0; i < m.def.kind.length; i++) k = (k * 31 + m.def.kind.charCodeAt(i)) | 0;
+      hx = (hx * 33 + Math.round(m.x * 100) + k) | 0;
+      hy = (hy * 33 + Math.round(m.y * 100) + k) | 0;
+      hz = (hz * 33 + Math.round(m.z * 100) + k) | 0;
+    }
+    const sig = `${ins.length}:${hx}:${hy}:${hz}`;
+    if (sig === this._netSig && this._netCache) return this._netCache;
     const parent = ins.map((_, i) => i);
     const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
     const uni = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
@@ -1165,7 +1265,9 @@ export class MachineSystem {
     const groups = new Map();
     ins.forEach((m, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(m); });
     const nets = [...groups.values()].map((members) => ({ members, pool: 0, cap: 0 }));
-    return { nets, edges };
+    this._netSig = sig;
+    this._netCache = { nets, edges };
+    return this._netCache;
   }
 
   reactorRods(m) {
@@ -1222,6 +1324,10 @@ export class MachineSystem {
 
 
   update(dt) {
+    const night = typeof this.ctx.isDay === 'function' && !this.ctx.isDay();
+    if (this._night === undefined) this._night = night;
+    else if (night && !this._night) this.nightfall();
+    this._night = night;
     this.emitList.length = 0;
     this.absorbers.length = 0;
     this.cleaners.length = 0;
@@ -1292,6 +1398,7 @@ export class MachineSystem {
         else if (k === 'bore') this.tickBore(m, dt, net);
         else if (k === 'absorber') this.tickAbsorber(m, dt, net);
         else if (k === 'scrubber') this.tickScrubber(m, dt, net);
+        else if (k === 'pickup' || k === 'askbox') this.tickOffer(m);
         else if (k === 'geiger') {
           const r = this.localRad(m.x, m.y + 1, m.z);
           m.state.status = `FIELD ${formatRadRate(r)}`;
@@ -1463,13 +1570,13 @@ export class MachineSystem {
     }
     const r = job.recipe;
     const dur = Math.max(0.001, r.time || 1);
-    const cost = m.def.kind === 'crafting' ? 0 : (m.def.energy?.use || 0) * dt;
+    const cost = m.def.kind === 'crafting' ? 0 : this.useRate(m) * dt;
     if (cost && !this.drawPower(m, cost)) {
       st.progress = Math.min(1, job.t / dur);
       st.status = 'NO POWER';
       return;
     }
-    job.t += dt;
+    job.t += dt * this.productionRate(m);
     st.progress = Math.min(1, job.t / dur);
     st.status = m.def.kind === 'crafting' ? 'CRAFTING' : 'RUNNING';
     for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 6));
@@ -1591,10 +1698,10 @@ export class MachineSystem {
     const st = m.state;
     const savanna = this.ctx.biomeAt?.(m.x, m.z) === this.ctx.savannaBiome;
     const seam = this.seamAt(m);
-    const cost = (m.def.energy?.use || 0) * dt;
+    const cost = this.useRate(m) * dt;
     if (!this.hasOutputRoom(m)) { st.status = 'OUTPUT FULL'; return; }
     if (!this.drawPower(m, cost)) { st.status = 'NO POWER'; return; }
-    st.progress += dt * (m.def.drillRate || 0.3);
+    st.progress += dt * (m.def.drillRate || 0.3) * this.productionRate(m);
     st.status = seam ? `DRILLING ${this.ITEMS[seam]?.name || seam}` : 'BARREN GROUND';
     for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 6));
     if (st.progress >= 1) {
@@ -1751,7 +1858,12 @@ export class MachineSystem {
           const band = this.ctx.groundBand(x, y, z);
           // mineDrops puts the base block first; only the ore after it is collected
           for (const [id, n] of this.ctx.mineDrops(band, y, x, z).slice(1)) {
-            if (n > 0) this.addOutput(m, id, n);
+            if (n <= 0) continue;
+            if (id === 'carbon' && st.burnCarbon) {
+              st.fuelBuf = (st.fuelBuf || 0) + (fuelDef.carbon || 12) * n;
+              continue;
+            }
+            if (st.collect !== false) this.addOutput(m, id, n);
           }
         }
       }
@@ -1775,7 +1887,7 @@ export class MachineSystem {
   }
 
   tickAbsorber(m, dt, net) {
-    const cost = (m.def.energy?.use || 0) * dt;
+    const cost = this.useRate(m) * dt;
     if (!this.drawPower(m, cost)) { m.state.status = 'NO POWER'; return; }
     m.state.status = 'ABSORBING';
     this.absorbers.push(m);
@@ -1793,7 +1905,7 @@ export class MachineSystem {
       st.progress = 0;
       return;
     }
-    const cost = (m.def.energy?.use || 0) * dt;
+    const cost = this.useRate(m) * dt;
     if (!this.drawPower(m, cost)) { st.status = 'NO POWER'; return; }
     st.burnT = (st.burnT || 0) + dt;
     st.progress = Math.min(1, st.burnT / Math.max(1, filter.seconds));
@@ -1936,7 +2048,7 @@ export class MachineSystem {
       const n = this.craftOptions(m).length;
       const cost = this.craftCost(m);
       const head = `${n} RECIPE${n === 1 ? '' : 'S'} AVAILABLE`;
-      return cost ? `${head} · CRAFT COST ${cost} PU` : head;
+      return cost ? `${head} · CRAFT COST ${formatPower(cost)} PU` : head;
     }
     if (m.def.kind === 'processor') {
       if (m.state.job) {
@@ -2000,6 +2112,89 @@ export class MachineSystem {
     return Math.max(TUNING.ABSORB_FLOOR, f);
   }
 
+  paidRials(st) {
+    let n = 0;
+    for (const role of ['pay0', 'pay1']) { const s = st.slots?.[role]; if (s?.id === 'rials') n += s.n; }
+    return n;
+  }
+
+  spendRials(st, price) {
+    for (const role of ['pay0', 'pay1']) {
+      const s = st.slots[role];
+      if (!s || s.id !== 'rials' || price <= 0) continue;
+      const take = Math.min(s.n, price);
+      s.n -= take; price -= take;
+      if (s.n <= 0) st.slots[role] = null;
+    }
+    return price;
+  }
+
+  // Live panel text: what a stocked pickup box will fetch, or what an order still needs.
+  tickOffer(m) {
+    const st = m.state;
+    if (st.noSpotUntil && Date.now() < st.noSpotUntil) return;
+    st.noSpotUntil = 0;
+    if (m.def.kind === 'pickup') {
+      const { count, total } = saleValue(st.slots);
+      st.status = count ? `${count} ITEMS · ${Math.round(total).toLocaleString()} RIALS` : 'NO BUYER';
+      return;
+    }
+    const offer = offerPrice(st.want, this.ctx.hasItem, this.ctx.hasMachine);
+    if (offer.blocked) st.status = 'NOT AVAILABLE · MAKE IT FIRST';
+    else if (!Object.keys(offer.out).length) st.status = 'NO ORDER';
+    else if (offer.price > 18000) st.status = 'ORDER TOO LARGE';
+    else {
+      const have = this.paidRials(st);
+      st.status = have >= offer.price
+        ? `READY · ${offer.price.toLocaleString()} RIALS`
+        : `NEED ${Math.max(0, offer.price - have).toLocaleString()} RIALS`;
+    }
+  }
+
+  // At nightfall the IRGC plane lifts stocked goods and drops payment or orders.
+  // A flare calls it early for a subset of boxes.
+  nightfall(list = this.instances) {
+    let flew = false;
+    for (const m of [...list]) {
+      if (!this.instances.includes(m)) continue;
+      if (m.def.kind === 'pickup') {
+        const { count, total } = saleValue(m.state.slots);
+        if (!count) { m.state.status = 'NO BUYER'; continue; }
+        if (this.airdrop(m, 'dropbox', `IRGC PLANE DROPPED ${Math.round(total)} RIALS`, (drop) => {
+          this.addOutput(drop, 'rials', Math.round(total));
+        })) { this.remove(m, false); flew = true; }
+        else { m.state.status = 'NO DROP SPOT'; m.state.noSpotUntil = Date.now() + 5000; }
+      } else if (m.def.kind === 'askbox') {
+        const offer = offerPrice(m.state.want, this.ctx.hasItem, this.ctx.hasMachine);
+        if (offer.blocked || !Object.keys(offer.out).length || offer.price > 18000) continue;
+        if (this.paidRials(m.state) < offer.price) continue;
+        if (this.airdrop(m, 'drop_pod', 'IRGC PLANE DROPPED ORDER', (drop) => {
+          this.spendRials(m.state, offer.price);
+          for (const [id, n] of Object.entries(offer.out)) this.addOutput(drop, id, n);
+        })) { this.remove(m, false); flew = true; }
+        else { m.state.status = 'NO DROP SPOT'; m.state.noSpotUntil = Date.now() + 5000; }
+      }
+    }
+    if (flew) this.ctx.planeFlyby?.(); // one pass per batch, whether the plane picked up or dropped off
+  }
+
+  // The plane never drops onto a workbench: pick a clear spot a few metres from the box.
+  airdrop(src, id, message, fill) {
+    const start = Math.random() * Math.PI * 2;
+    for (let k = 0; k < 8; k++) {
+      const a = start + k * Math.PI / 4;
+      const r = 5 + Math.random() * 5;
+      const x = src.x + Math.cos(a) * r, z = src.z + Math.sin(a) * r;
+      if (this.at(x, z, 2.5)) continue;
+      const drop = this.place(id, x, z, { rot: src.rot, drop: true });
+      if (!drop) continue;
+      fill(drop);
+      drop.state.status = 'COLLECT';
+      this.ctx.notice?.(message);
+      return true;
+    }
+    return false;
+  }
 
   serialize() {
     return this.instances.map((m) => ({
@@ -2012,8 +2207,9 @@ export class MachineSystem {
           .map((q) => ({ i: (m.def.kind === 'crafting' ? (this.ctx.craftRecipes || []) : (m.def.recipes || [])).indexOf(q.recipe), t: +(q.t || 0).toFixed(2) }))
           .filter((q) => q.i >= 0),
         bwe: m.bwe ? { yaw: +(m.bwe.yawCur ?? m.bwe.yaw).toFixed(3), boom: +(m.bwe.boomCur ?? m.bwe.boom).toFixed(3), wheel: !!m.bwe.wheelOn } : null,
-        bore: m.def.bore ? { fb: +(m.state.fuelBuf || 0).toFixed(3), bp: +(m.state.boreProg || 0).toFixed(3), pitch: +(m.state.pitch || 0).toFixed(3) } : null,
+        bore: m.def.bore ? { fb: +(m.state.fuelBuf || 0).toFixed(3), bp: +(m.state.boreProg || 0).toFixed(3), pitch: +(m.state.pitch || 0).toFixed(3), pk: m.state.collect !== false, bc: !!m.state.burnCarbon } : null,
         usage: m.def.capacity ? m.state.usage || {} : null,
+        want: m.state.want || null,
       },
     }));
   }
@@ -2025,11 +2221,12 @@ export class MachineSystem {
       const inst = this.place(e.id, e.x, e.z, { y: e.y, rot: e.r || 0, restore: true });
       if (!inst || !e.s) continue;
       inst.state.slots = e.s.slots || {};
+      if (Array.isArray(e.s.want)) inst.state.want = e.s.want;
       inst.state.progress = e.s.progress || 0;
       inst.state.heat = e.s.heat || 0;
       inst.state.burning = !!e.s.burning;
       inst.state.burnT = e.s.burnT || 0;
-      inst.state.buffer = e.s.buffer || 0;
+      inst.state.buffer = Math.min(this.powerCap(inst), e.s.buffer || 0);
        inst.state.genRate = e.s.genRate || 0;
       if (inst.def.capacity && e.s.usage) inst.state.usage = e.s.usage;
       if (inst.bwe && e.s.bwe) {
@@ -2046,6 +2243,8 @@ export class MachineSystem {
         inst.state.boreProg = +e.s.bore.bp || 0;
         inst.state.pitch = +e.s.bore.pitch || 0;
         inst.state.pitchCur = inst.state.pitch;
+        inst.state.collect = e.s.bore.pk !== false;
+        inst.state.burnCarbon = !!e.s.bore.bc;
         inst.mesh.rotation.order = 'YXZ';
         inst.mesh.rotation.z = -inst.state.pitch;
       }
@@ -2067,7 +2266,7 @@ export class MachineSystem {
       if (inst.def.kind === 'processor') {
         for (const key of Object.keys(inst.state.slots)) {
           if (key.startsWith('output')) continue;
-
+          if (MODULE_ROLES.includes(key)) continue;
 
           if (key.startsWith('input')) continue;
           const s = inst.state.slots[key];
@@ -2111,7 +2310,7 @@ export class MachineSystem {
   pump(inst) {
     if (!inst || inst.def.kind !== 'pump') return;
     const amount = inst.def.pump?.amount ?? 5;
-    const cost = inst.def.pump?.cost ?? 30;
+    const cost = (inst.def.pump?.cost ?? 30) * powerMult(inst.state.slots);
     const stack = this.inv.hot[this.inv.sel];
     const def = stack && this.ITEMS[stack.id];
     if (!def?.container) { this.ctx.notice?.('HOLD A JERRY CAN'); inst.state.status = 'HOLD A JERRY CAN'; return; }

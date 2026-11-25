@@ -2,8 +2,9 @@
     import { WorkbenchUI } from './workbench-ui.js';
     import { CraftOptions } from './craft-options.js';
     import { DragDrop, inventoryAdapter } from './drag-drop.js';
-    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, TERRAIN_BLOCKS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES, BARREL_LOOT, rollWeighted } from './content.js';
+    import { ITEM_DEFS, ITEM_MODEL_ICON_EXCLUDE, TERRAIN_BLOCKS, itemModelIcon, modelTint, MACHINE_DEFS, MACHINE_BY_ID, CRAFT_RECIPES, TABLE_RECIPES, layoutFor, TUNING, LIQUID_DEFS, regionOre, formatRad, formatRadRate, STARTER_GUIDE, STARTER_GUIDE_SECONDS, GUIDE_STEPS, ACHIEVEMENT_TYPES, COOKED_DISHES, BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES, BARREL_LOOT, rollWeighted, LORE_POD_LOOT, LORE_BOOKS } from './content.js';
     import * as Liquid from './liquids.js';
+    import { RADIO_STATIC, RADIO_SIGNAL, radioTrack, secondsUntilStrike, nextStrikeDay } from './radio.js';
     import { MachineSystem } from './machines.js';
     import { PipeSystem } from './pipes.js';
     import { SkylineSystem } from './skyline.js';
@@ -79,7 +80,7 @@
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
-    const ICON_CACHE_KEY = 'idte.icon.v24.';
+    const ICON_CACHE_KEY = 'idte.icon.v25.';
 
     async function readSaveData(key = SAVE_KEY) {
       try {
@@ -2996,8 +2997,11 @@
             achievements: ach,
             timeLock: timeLock !== null,
             prayReadyAt: +prayReadyAt.toFixed(1),
+            loreNextAt: +loreNextAt.toFixed(1),
             nuclearStrikes: nuclearStrikes.map((s) => ({ x: +s.x.toFixed(2), y: +s.y.toFixed(2), z: +s.z.toFixed(2), day: s.day | 0, r: +s.r.toFixed(2), radMult: +(s.radMult ?? 1).toFixed(4) })),
             lastNukeCheckDay: lastNukeCheckDay | 0,
+            nextNukeDay: nextNukeDay | 0,
+            nextNukeWillHit: !!nextNukeWillHit,
             nukeRadMult: +nukeRadMult.toFixed(4),
             machines: machineSystem ? machineSystem.serialize() : [],
             pipes: pipeSystem ? pipeSystem.serialize() : [],
@@ -3114,6 +3118,10 @@
             .map((s) => ({ x: s.x, y: s.y, z: s.z, day: s.day | 0, r: Math.max(8, s.r), radMult: Number.isFinite(s.radMult) ? Math.max(1, s.radMult) : 1 }));
         }
         if (Number.isFinite(data.lastNukeCheckDay)) lastNukeCheckDay = Math.max(0, data.lastNukeCheckDay | 0);
+        if (Number.isFinite(data.nextNukeDay) && data.nextNukeDay > clock.day) {
+          nextNukeDay = data.nextNukeDay | 0;
+          nextNukeWillHit = data.nextNukeWillHit === true;
+        } else scheduleNextNuke(clock.day);
         if (Number.isFinite(data.nukeRadMult)) nukeRadMult = Math.max(1, data.nukeRadMult);
         if (Array.isArray(data.openedBarrels)) {
           for (const k of data.openedBarrels) if (typeof k === 'string') openedBarrels.add(k);
@@ -4035,13 +4043,23 @@
       approach: ['approach-1.ogg', 'approach-2.ogg', 'approach-3.ogg', 'approach-4.ogg', 'approach-5.ogg', 'approach-6.ogg'],
     };
     const _wrapperSoundLast = {};
+    // Sound, like dose, does not pass through a bunker roof or a wall of dirt.
+    function wrapperSoundBlocked(pos) {
+      const px = player.pos.x, py = player.pos.y + 1, pz = player.pos.z;
+      const dx = pos.x - px, dy = (pos.y ?? 0) - py, dz = (pos.z ?? 0) - pz;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const ux = dx / len, uy = dy / len, uz = dz / len;
+      if (world && transmission((x, y, z) => solidAt(world.field, x, y, z) ? 0 : 1, px, py, pz, ux, uy, uz,
+        { samples: Math.ceil(len), range: len }) <= 0) return true;
+      return buildingSystem ? buildingSystem.shadow(px, py, pz, ux, uy, uz, len) < 0.99 : false;
+    }
     function playWrapperSound(name, pos) {
       const pool = WRAPPER_SOUND_POOLS[name];
       if (!pool || !pool.length) return;
       const dx = pos.x - player.pos.x, dz = (pos.z ?? 0) - (player.pos.z ?? 0);
       const dy = (pos.y ?? 0) - (player.pos.y ?? 0);
       const dist = Math.hypot(dx, dy, dz);
-      if (dist > 40) return;
+      if (dist > 40 || wrapperSoundBlocked(pos)) return;
       const vol = Math.max(0, 1 - dist / 40) * 0.85 * (typeof masterVolume === 'number' ? masterVolume : 1);
       if (vol <= 0.01) return;
       let pick = pool[(Math.random() * pool.length) | 0];
@@ -5210,6 +5228,7 @@
     }
     function giveStack(stack) {
       if (!stack || !stack.id) return false;
+      ach.seen[stack.id] = true;
       fillGasCarton(stack);
       for (const g of [inv.hot, inv.main]) {
         for (let i = 0; i < g.length; i++) if (!g[i]) { g[i] = stack; syncBars(); return true; }
@@ -5229,6 +5248,13 @@
     let nuclearStrikes = [];
     let lastNukeCheckDay = 0;
     let nukeRadMult = 1;
+    // The outcome of the next 10-day roll is decided up front so a held radio can warn about it.
+    let nextNukeDay = 0, nextNukeWillHit = false;
+    function scheduleNextNuke(fromDay) {
+      nextNukeDay = nextStrikeDay(fromDay, TUNING.NUKE_DAY_INTERVAL);
+      nextNukeWillHit = Math.random() < (TUNING.NUKE_CHANCE ?? 0.5);
+    }
+    scheduleNextNuke(clock.day);
     const nukeFx = [];
     let playTime = 0;
     function formatPlayTime(sec) {
@@ -5241,6 +5267,7 @@
       return `${m}m ${s % 60}s`;
     }
     let prayReadyAt = 0;
+    let loreNextAt = 300;
     let guideIndex = 0;
     let guidePaintSig = '';
     let guideTick = 0;
@@ -5250,7 +5277,8 @@
         mined: 0, placed: 0, crafted: 0, machines: 0, kills: 0,
         dosePeak: 0, research: 0, fuel: 0, walked: 0,
         chopped: 0, blasts: 0, harvested: 0,
-        built: Object.create(null), started: Object.create(null),
+        built: Object.create(null), started: Object.create(null), seen: Object.create(null),
+        cooked: Object.create(null), eaten: Object.create(null), read: Object.create(null),
       };
     }
     let ach = freshAchievements();
@@ -5261,6 +5289,9 @@
     let achSelected = null;
     let achieveOpen = false;
     let achUnlocked = -1;
+    let achKnown = null;
+    let achToastQueue = [];
+    let achToastTimer = 0;
     let starterUiTimer = 0;
     let armorShieldTimer = 0;
     let radIntakeTimer = 0;
@@ -5453,6 +5484,20 @@
       } catch { }
     }
 
+    let planeAudio = null;
+    function playPlaneFlyby() {
+      try {
+        if (!planeAudio) {
+          planeAudio = new Audio('assets/audio/irgc-plane-flyby.mp3');
+          planeAudio.preload = 'auto';
+        }
+        planeAudio.pause();
+        planeAudio.currentTime = 0;
+        planeAudio.volume = Math.max(0, Math.min(1, 0.9 * (typeof masterVolume === 'number' ? masterVolume : 1)));
+        planeAudio.play().catch(() => {});
+      } catch { }
+    }
+
     function spawnNuclearStrike() {
       const site = findNukeSite();
       if (!site) return false;
@@ -5471,9 +5516,29 @@
     function maybeNuclearStrike() {
       if (clock.day <= 0) return;
       if (clock.day === lastNukeCheckDay) return;
-      if (clock.day % (TUNING.NUKE_DAY_INTERVAL || 10) !== 0) return;
+      if (clock.day < nextNukeDay) return;
       lastNukeCheckDay = clock.day;
-      if (Math.random() < (TUNING.NUKE_CHANCE ?? 0.5)) spawnNuclearStrike();
+      if (nextNukeWillHit) spawnNuclearStrike();
+      scheduleNextNuke(clock.day);
+    }
+
+    let radioAudio = null, radioTrackId = '';
+    function updateRadio() {
+      const held = inv.hot[inv.sel];
+      const secondsLeft = secondsUntilStrike(clock, nextNukeDay, TUNING.DAY_SECONDS);
+      const track = sleep ? null : radioTrack(held?.id, nextNukeWillHit, secondsLeft);
+      try {
+        if (!track) { if (radioAudio && !radioAudio.paused) radioAudio.pause(); return; }
+        if (!radioAudio) { radioAudio = new Audio(); radioAudio.loop = true; radioAudio.preload = 'auto'; }
+        if (radioTrackId !== track) {
+          radioAudio.pause();
+          radioAudio.src = track;
+          radioAudio.currentTime = 0;
+          radioTrackId = track;
+        }
+        radioAudio.volume = Math.max(0, Math.min(1, 0.6 * masterVolume));
+        if (radioAudio.paused) radioAudio.play().catch(() => {});
+      } catch { }
     }
 
 
@@ -6462,7 +6527,20 @@
       return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) - y + n;
     }
 
-
+    // groundYAt is cached and analytic; refining a short band around it avoids
+    // marching the whole column for every plant the stream resolves.
+    function vegSurfaceY(x, z) {
+      const y0 = groundYAt(x + WORLD_SEED, z + WORLD_SEED);
+      if (!Number.isFinite(y0)) return world.surfaceY(x, z, Math.ceil(terrainTrend(x + WORLD_SEED, z + WORLD_SEED)) + 12);
+      let prev = world.field.sample(x, y0 + 1.5, z);
+      for (let y = y0 + 1.25; y >= y0 - 1.75; y -= 0.25) {
+        const cur = world.field.sample(x, y, z);
+        if (prev <= 0 && cur > 0) return y + 0.25 - 0.25 * (prev / (prev - cur));
+        prev = cur;
+      }
+      // Edits or caves moved the surface outside the band; fall back to the full march.
+      return world.surfaceY(x, z, Math.max(y0 + 2, Math.ceil(terrainTrend(x + WORLD_SEED, z + WORLD_SEED)) + 12));
+    }
 
 
     function vegResolve(pl) {
@@ -6482,8 +6560,7 @@
         pl.y = wsurf + 0.02;
         pl.n = _up;
       } else {
-        const fromY = Math.ceil(terrainTrend(pl.x + WORLD_SEED, pl.z + WORLD_SEED)) + 12;
-        const y = world.surfaceY(pl.x, pl.z, fromY);
+        const y = vegSurfaceY(pl.x, pl.z);
         if (y <= -8) return null;
 
         if (mountainRockAt(pl.x, pl.z)) return null;
@@ -6681,7 +6758,10 @@
       const mesh = new THREE.InstancedMesh(geo, mat, cap);
       mesh.count = 0;
       mesh.visible = false;
-      mesh.frustumCulled = !atlasRects;
+      // InstancedMesh caches its bounding sphere on first render; streaming moves
+      // the instances, so frustum culling would hide the whole layer once the
+      // sphere falls behind the player. The other veg meshes cull for the same reason.
+      mesh.frustumCulled = false;
       mesh.matrixAutoUpdate = false;
       if (atlasRects) {
         mesh.geometry.setAttribute('aFlowerUv', new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4));
@@ -7417,15 +7497,24 @@
       task.dz = -task.r; task.dx = -task.r; task.phase = 1;
     }
 
+    // The stream touches thousands of plant cells; a linear worldPickups.find
+    // per cell (and per culled plant) turned streaming into the frame's top cost.
+    function vegPickupIndex() {
+      const m = new Map();
+      for (const p of worldPickups) if (p.__vegKey && !m.has(p.__vegKey)) m.set(p.__vegKey, p);
+      return m;
+    }
+
     function _vegFinishLayer(task) {
-      const layer = task.layer, active = task.active, keep = task.keep;
+      const active = task.active, keep = task.keep;
+      const byKey = task.pickups || vegPickupIndex();
       for (const [key, pl] of active) {
         if (keep.has(key)) continue;
         if (pl && pl.sp.pickup) {
           const pickupKey = key + ':' + pl.sp.n;
-          const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
+          const pickup = byKey.get(pickupKey);
           if (pickup) {
-            _vegHarvested.add(`${layer}:${key}`);
+            // Streaming out of range is not a harvest; the cell must regrow on return.
             if (pickup.mesh.parent) pickup.mesh.parent.remove(pickup.mesh);
             if (pickup.mesh.userData.outlineRoot && pickup.mesh.userData.outlineRoot.parent) {
               pickup.mesh.userData.outlineRoot.parent.remove(pickup.mesh.userData.outlineRoot);
@@ -7433,6 +7522,7 @@
             const outIdx = outlineTargets.indexOf(pickup.mesh.userData.outlineRoot);
             if (outIdx >= 0) outlineTargets.splice(outIdx, 1);
             worldPickups.splice(worldPickups.indexOf(pickup), 1);
+            byKey.delete(pickupKey);
           }
         }
         if (pl) vegRemove(pl.sp, key);
@@ -7444,6 +7534,7 @@
       const task = _vegStreamTask;
       if (!task) return false;
       const t0 = performance.now();
+      task.pickups = vegPickupIndex();
       if (!task.layer) _vegInitLayer(task);
       while (performance.now() - t0 < budgetMs) {
         if (task.phase === 1) {
@@ -7458,7 +7549,8 @@
               if (active.has(key)) {
                 const pl = active.get(key);
                 if (pl && pl.sp.pickup) {
-                  const pickup = worldPickups.find((p) => p.__vegKey === `${key}:${pl.sp.n}`);
+                  const pk = `${key}:${pl.sp.n}`;
+                  const pickup = task.pickups.get(pk);
                   if (pickup) {
                     if (pickup.mesh.parent) pickup.mesh.parent.remove(pickup.mesh);
                     if (pickup.mesh.userData.outlineRoot && pickup.mesh.userData.outlineRoot.parent) {
@@ -7467,6 +7559,7 @@
                     const outIdx = outlineTargets.indexOf(pickup.mesh.userData.outlineRoot);
                     if (outIdx >= 0) outlineTargets.splice(outIdx, 1);
                     worldPickups.splice(worldPickups.indexOf(pickup), 1);
+                    task.pickups.delete(pk);
                   }
                 }
                 if (pl) vegRemove(pl.sp, key);
@@ -7486,7 +7579,7 @@
                   active.set(key, rp);
                   if (rp.sp.pickup) {
                     const pickupKey = key + ':' + rp.sp.n;
-                    const pickup = worldPickups.find((p) => p.__vegKey === pickupKey);
+                    const pickup = task.pickups.get(pickupKey);
                     if (!pickup) {
                       const p = registerPickup({
                         x: rp.x, y: rp.y + 0.6, z: rp.z,
@@ -7496,10 +7589,12 @@
                         label: rp.sp.pickup.label || `Pick ${rp.sp.pickup.itemId || 'flower'}`,
                       });
                       p.__vegKey = pickupKey; p.__vegCellKey = key; p.__vegLayer = layer;
+                      task.pickups.set(pickupKey, p);
                     } else {
                       pickup.x = rp.x; pickup.y = rp.y + 0.6; pickup.z = rp.z;
                       pickup.__vegCellKey = key; pickup.__vegLayer = layer;
                       pickup.mesh.position.set(pickup.x, pickup.y, pickup.z);
+                      pickup.mesh.updateMatrixWorld();
                       if (pickup.mesh.userData.outlineRoot) pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
                     }
                   }
@@ -7528,17 +7623,23 @@
       return true;
     }
 
+    let _vegPendingX = NaN, _vegPendingZ = NaN;
+
     function vegUpdate(px, pz) {
       if (Number.isFinite(px) && Number.isFinite(pz)) {
-        const gx = Math.floor(px / 8), gz = Math.floor(pz / 8);
-        if (gx !== _vegGX || gz !== _vegGZ) {
-          _vegGX = gx; _vegGZ = gz;
-          _vegBeginStream(px, pz);
-        }
+        const gx = Math.floor(px / 16), gz = Math.floor(pz / 16);
+        if (gx !== _vegGX || gz !== _vegGZ) { _vegPendingX = px; _vegPendingZ = pz; }
       }
       if (_vegStreamTask) {
         const l = _vegStreamTask.layer;
-        vegStreamStep(l === 'flowers' || l === 'flower_spots' ? 4.0 : 2.0);
+        vegStreamStep(l === 'flowers' ? 3.0 : 1.5);
+      }
+      // Restarting mid-stream threw away completed layers and made the scan
+      // re-walk the same cells every time the player crossed a grid line.
+      if (!_vegStreamTask && Number.isFinite(_vegPendingX)) {
+        _vegGX = Math.floor(_vegPendingX / 16); _vegGZ = Math.floor(_vegPendingZ / 16);
+        _vegBeginStream(_vegPendingX, _vegPendingZ);
+        _vegPendingX = _vegPendingZ = NaN;
       }
 
 
@@ -7546,7 +7647,11 @@
       let budget = 2;
       for (const sp of VEG_SPECIES) {
         if (!sp.dirty) continue;
+        // A full instance-buffer rewrite is O(placements) (up to 6000 flowers);
+        // streaming marks species dirty every frame, so cap refreshes per species.
+        if (ti - (sp._instAt || 0) < 150) continue;
         if (budget-- <= 0) break;
+        sp._instAt = ti;
         vegUpdateInstances(sp);
         sp.dirty = false;
       }
@@ -7994,6 +8099,7 @@
 
     let flying = false;
     let lastSpaceTap = 0;
+    let groundLift = null;
 
     const footsteps = createFootsteps();
     let stepAccum = 0;
@@ -8305,8 +8411,10 @@
       if (pickup.mesh.userData.outlineRoot) {
         pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
       }
+      // A pickup is a hit target only: resolveInteractTarget raycasts it directly,
+      // so keeping it out of the scene avoids a scene-graph walk per render.
+      pickup.mesh.updateMatrixWorld();
       bindInteractEntry(pickup.mesh, { target: pickup, type: 'pickup', label: pickup.label, activate: () => pickup.activate() });
-      scene.add(pickup.mesh);
       worldPickups.push(pickup);
       return pickup;
     }
@@ -8477,6 +8585,7 @@
       if (!found) return;
       player.pos.set(found.x, found.y, found.z);
       player.vel.set(0, 0, 0);
+      groundLift = null;
     }
 
 
@@ -8524,6 +8633,7 @@
       const t = Number.isFinite(saved.dayT) ? Math.max(0, saved.dayT) : 0;
       playTime = Math.max(0, (d - 1) * TUNING.DAY_SECONDS + t);
     }
+    if (saved && Number.isFinite(saved.loreNextAt)) loreNextAt = Math.max(playTime, saved.loreNextAt);
     if (saved && saved.guide !== undefined) {
       if (saved.guide === null) guideIndex = GUIDE_STEPS.length;
       else {
@@ -8602,11 +8712,14 @@
       syncBars,
       bagRoomFor,
       notice: (msg) => notice(msg),
+      planeFlyby: () => playPlaneFlyby(),
       mineDrops, groundBand, biomeAt, savannaBiome: B.SAVANNA,
       defs: MACHINE_DEFS, byId: MACHINE_BY_ID, craftRecipes: CRAFT_RECIPES, layoutFor,
       GLTFLoader, registerMachine, machineActivators,
       ui: workbenchUI,
       isDay,
+      hasItem: (id) => !!ach.seen[id],
+      hasMachine: (id) => !!ach.built[id],
       startSleep: (inst) => startSleep(inst),
       startDrive: (inst) => startDrive(inst),
       onOpen: () => { unlockPointer(); setOverlay(false); },
@@ -8842,6 +8955,45 @@
       lockPointer();
     }
 
+    const bookModal = document.getElementById('bookModal');
+    const bookTitleEl = document.getElementById('bookTitle');
+    const bookTextEl = document.getElementById('bookText');
+    let bookOpen = false;
+
+    function openBook(def) {
+      if (!bookModal || bookOpen) return;
+      closeAllMenus();
+      bookOpen = true;
+      if (bookTitleEl) bookTitleEl.textContent = def.lore?.title || def.name || 'BOOK';
+      if (bookTextEl) bookTextEl.textContent = def.lore?.text || '';
+      const held = inv.hot[inv.sel];
+      if (held?.id) {
+        ach.read[held.id] = true;
+        queueSave('field note');
+      }
+      bookModal.classList.remove('hidden');
+      setOverlay(false);
+      unlockPointer();
+    }
+
+    function closeBook() {
+      if (!bookOpen) return;
+      bookOpen = false;
+      bookModal.classList.add('hidden');
+      lockPointer();
+    }
+
+    document.getElementById('bookClose')?.addEventListener('click', closeBook);
+
+    function useBook() {
+      const s = inv.hot[inv.sel];
+      if (!s) return false;
+      const def = ITEMS[s.id];
+      if (!def?.book) return false;
+      openBook(def);
+      return true;
+    }
+
     function doGive() {
       const nameQ = (prayInput?.value || '').trim();
       if (!nameQ) return;
@@ -9061,7 +9213,7 @@
 
 
       if (overlay.classList.contains('loading-mode')) return;
-      setOverlay(!locked && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen);
+      setOverlay(!locked && !introOpen && !prayOpen && !bookOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen);
       if (!locked) {
         settingsView.classList.add('hidden');
         mainView.classList.remove('hidden');
@@ -9070,7 +9222,7 @@
 
     document.addEventListener('pointerlockerror', () => {
       if (overlay.classList.contains('loading-mode')) return;
-      if (!introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen) setOverlay(true);
+      if (!introOpen && !prayOpen && !bookOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen) setOverlay(true);
     });
 
 
@@ -9143,6 +9295,9 @@
     const achieveReqEl = document.getElementById('achieveReq');
     const achieveProgEl = document.getElementById('achieveProg');
     const achieveTipEl = document.getElementById('achieveTip');
+    const achToastEl = document.getElementById('achToast');
+    const achToastIconEl = document.getElementById('achToastIcon');
+    const achToastNameEl = document.getElementById('achToastName');
 
     document.getElementById('achievementsBtn').addEventListener('click', openAchievements);
     document.getElementById('achieveClose').addEventListener('click', closeAchievements);
@@ -9529,11 +9684,9 @@
       for (const key of ['mined', 'placed', 'crafted', 'machines', 'kills', 'dosePeak', 'research', 'fuel', 'walked', 'chopped', 'blasts', 'harvested']) {
         if (Number.isFinite(data[key])) next[key] = Math.max(0, data[key]);
       }
-      if (data.built && typeof data.built === 'object') {
-        for (const id of Object.keys(data.built)) if (data.built[id]) next.built[id] = true;
-      }
-      if (data.started && typeof data.started === 'object') {
-        for (const id of Object.keys(data.started)) if (data.started[id]) next.started[id] = true;
+      for (const key of ['built', 'started', 'seen', 'cooked', 'eaten', 'read']) {
+        if (!data[key] || typeof data[key] !== 'object') continue;
+        for (const id of Object.keys(data[key])) if (data[key][id]) next[key][id] = true;
       }
       ach = next;
     }
@@ -9558,6 +9711,7 @@
     function achCraft(id, n = 1) {
       if (!id || n <= 0) return;
       achBump('crafted', n);
+      if (COOKED_DISHES.has(id)) ach.cooked[id] = true;
       if (id.startsWith('blueprint_')) achBump('research', n);
       if (/_fuel$/.test(id)) achBump('fuel', n);
     }
@@ -9565,6 +9719,7 @@
     function achievementValue(tier) {
       if (!tier) return 0;
       if (tier.stat === 'days') return clock.day;
+      if (tier.stat === 'cooked' || tier.stat === 'eaten' || tier.stat === 'read') return Object.keys(ach[tier.stat] || {}).length;
       if (tier.stat) return Number(ach[tier.stat]) || 0;
       return 0;
     }
@@ -9598,6 +9753,7 @@
         const col = document.createElement('div');
         col.className = 'achCol';
         type.tiers.forEach((tier, tierIndex) => {
+          if (tier.secret && !achievementDone(tier)) return;
           const cell = document.createElement('button');
           cell.type = 'button';
           cell.className = 'achCell';
@@ -9669,12 +9825,30 @@
       paintAchievementDetail();
     }
 
+    function showAchToast(tier) {
+      if (!achToastEl || !tier) return;
+      achToastIconEl.src = itemIconUrl(tier.icon) || '';
+      achToastNameEl.textContent = tier.name;
+      achToastEl.classList.add('show');
+      achToastTimer = 7;
+    }
+
+    function updateAchToast(dt) {
+      if (achToastTimer <= 0) return;
+      achToastTimer -= dt;
+      if (achToastTimer > 0) return;
+      achToastEl.classList.remove('show');
+      if (achToastQueue.length) showAchToast(achToastQueue.shift());
+    }
+
     function updateAchievements(dt) {
+      updateAchToast(dt);
       if (!achievePanelEl) return;
       achTick -= dt;
       if (achTick > 0) return;
       achTick = 0.2;
 
+      for (const grid of [inv.hot, inv.main]) for (const s of grid) if (s?.id) ach.seen[s.id] = true;
       if (inv.dose > ach.dosePeak) ach.dosePeak = inv.dose;
       if (achLastPos) {
         const d = Math.hypot(player.pos.x - achLastPos.x, player.pos.z - achLastPos.z);
@@ -9691,9 +9865,21 @@
         }
       }
 
-      const unlocked = countUnlockedAchievements();
-      if (unlocked !== achUnlocked) {
-        achUnlocked = unlocked;
+      const nowUnlocked = new Set();
+      for (const type of ACHIEVEMENT_TYPES) {
+        type.tiers.forEach((tier, i) => { if (achievementDone(tier)) nowUnlocked.add(`${type.id}:${i}`); });
+      }
+      if (achKnown) {
+        for (const key of nowUnlocked) {
+          if (achKnown.has(key)) continue;
+          const [typeId, idx] = key.split(':');
+          const tier = ACHIEVEMENT_TYPES.find((t) => t.id === typeId)?.tiers[+idx];
+          if (tier) achToastQueue.push(tier);
+        }
+      }
+      achKnown = nowUnlocked;
+      if (nowUnlocked.size !== achUnlocked) {
+        achUnlocked = nowUnlocked.size;
         queueSave('achievement');
       }
       if (achieveOpen) paintAchievements();
@@ -9993,7 +10179,8 @@
 
 
     function closeAllMenus() {
-      const any = recipeOpen || workbenchUI.opened || skylineSystem?.isOpen() || invOpen || !!mapSystem?.isOpen() || prayOpen;
+      const any = recipeOpen || workbenchUI.opened || skylineSystem?.isOpen() || invOpen || !!mapSystem?.isOpen() || prayOpen || bookOpen;
+      if (bookOpen) closeBook();
       if (prayOpen) closePray();
       if (recipeOpen) toggleRecipes(false);
       if (workbenchUI.opened) workbenchUI.close();
@@ -10520,8 +10707,9 @@
         return;
       }
 
-      if (introOpen || prayOpen) {
+      if (introOpen || prayOpen || bookOpen) {
         if (prayOpen && e.code === 'Escape') { e.preventDefault(); closePray(); }
+        else if (bookOpen && e.code === 'Escape') { e.preventDefault(); closeBook(); }
         return;
       }
 
@@ -10669,12 +10857,12 @@
         const max = frames.length ? Math.max(...frames.map(f => f.ms)).toFixed(1) : '0';
         lines.push(`avgMs: ${avg}  maxMs: ${max}`);
         lines.push('');
-        lines.push('WORST FRAMES (ms, work, idle, other, dirty, loading, rebuild, load, worldMs, renderMs, dirtyMs)');
-        for (const f of worst) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} r=${f.renderMs} pd=${f.dirtyMs}`);
+        lines.push('WORST FRAMES (ms, work, idle, other, dirty, loading, rebuild, load, worldMs, vegMs, renderMs, dirtyMs)');
+        for (const f of worst) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} v=${f.vegMs} r=${f.renderMs} pd=${f.dirtyMs}`);
         lines.push('');
         lines.push('EVENTS (>34ms frame or chunk activity)');
         const ev = events.slice(-80);
-        for (const f of ev) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} r=${f.renderMs} pd=${f.dirtyMs}`);
+        for (const f of ev) lines.push(`${f.ms.toFixed ? f.ms.toFixed(1) : f.ms}\t work=${f.workMs ?? ''} idle=${f.idleMs ?? ''} other=${f.otherMs ?? ''} d=${f.dirty} l=${f.loading} rb=${f.rebuild} ld=${f.load} w=${f.worldMs} v=${f.vegMs} r=${f.renderMs} pd=${f.dirtyMs}`);
         lines.push('');
         const spans = hudEl.querySelectorAll('.copy');
         const hud = spans.length ? Array.from(spans, (s) => s.innerText).join(' | ') : hudEl.innerText.replace(/\s+/g, ' ').trim();
@@ -11832,6 +12020,61 @@
     }
     function buildingBlocked(b, t) { return !!buildingPlaceIssue(b, t); }
 
+    // A placed terrain block grows as a sphere over a few frames. Lift the body
+    // onto its finished surface so the fill pushes the player up, not through them.
+    // Returns null when there is no headroom above the new block.
+    function terrainBlockLift(center, radius) {
+      const p = player.pos, r = player.radius, h = player.height;
+      const cols = [[0, 0]];
+      for (let a = 0; a < 8; a++) {
+        const ang = a * Math.PI / 4;
+        cols.push([Math.cos(ang) * r, Math.sin(ang) * r]);
+      }
+      let top = -Infinity;
+      for (const [ox, oz] of cols) {
+        const dx = p.x + ox - center.x, dz = p.z + oz - center.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= radius * radius) continue;
+        const half = Math.sqrt(radius * radius - d2);
+        const yMax = Math.min(center.y + half, p.y + h + radius);
+        let colTop = -Infinity;
+        for (let y = p.y; y <= yMax; y += 0.1) {
+          const dy = y - center.y;
+          const added = 1.8 * (radius - Math.sqrt(d2 + dy * dy));
+          if (added > 0 && world.field.sample(p.x + ox, y, p.z + oz) + added > 0) colTop = y;
+          // Stop at the first air gap so a cave ceiling above is not treated as the top.
+          else if (colTop > -Infinity && y > colTop + 0.35) break;
+        }
+        if (colTop > top) top = colTop;
+      }
+      if (top === -Infinity) return p.y;
+      const feet = top + 0.05;
+      const saved = p.y;
+      p.y = feet;
+      let blocked = false;
+      for (const [ox, oz] of cols) {
+        for (const y of [0.05, 0.35, 0.7, 1.05, 1.4, h - 0.02]) {
+          if (world.field.sample(p.x + ox, feet + y, p.z + oz) > 0) { blocked = true; break; }
+        }
+        if (blocked) break;
+      }
+      p.y = saved;
+      return blocked ? null : feet;
+    }
+
+    // Ride the rising surface over the same 0.28 s the fill takes, instead of
+    // snapping the camera up in one frame.
+    function updateGroundLift(dt) {
+      if (!groundLift) return;
+      if (keys.Space || flying || mapSystem?.isOpen()) { groundLift = null; return; }
+      groundLift.t += dt;
+      const e = Math.min(1, groundLift.t / 0.28);
+      const s = e * e * (3 - 2 * e);
+      const y = groundLift.from + (groundLift.to - groundLift.from) * s;
+      if (player.pos.y < y) { player.pos.y = y; player.vel.y = 0; player.onGround = true; }
+      if (e >= 1) groundLift = null;
+    }
+
     function doPlace(opts = {}) {
       const drag = !!opts.drag;
       const s = inv.hot[inv.sel];
@@ -11922,7 +12165,19 @@
       if (!hit) return null;
       const r = Math.min(6, heldTool().radius * 2.2);
       const p = hit.clone().addScaledVector(dir, r * 0.75);
+      const lift = terrainBlockLift(p, r);
+      if (lift === null) { notice('NO ROOM TO PLACE HERE'); return null; }
+      const savedY = player.pos.y;
+      if (lift > savedY) player.pos.y = lift;
+      const noRoom = playerCollides();
+      // Check headroom at the finished surface, but ride up from the old height.
+      player.pos.y = savedY;
+      if (noRoom) {
+        notice('NO ROOM TO PLACE HERE');
+        return null;
+      }
       world.placeAnimated(p, r, dir);
+      if (lift > savedY) groundLift = { from: savedY, to: lift, t: 0 };
       achBump('placed', 1);
       triggerSwing(0.26);
       if (--s.n <= 0) inv.hot[inv.sel] = null;
@@ -12042,7 +12297,8 @@
         else { x = hit.x + dir.x * 1.5; z = hit.z + dir.z * 1.5; }
         y = world.getSurfaceHeight(x, z, 90);
       }
-      const blocked = Math.hypot(x - player.pos.x, z - player.pos.z) < 1.4 || machineSystem.at(x, z, 1.4);
+      const blocked = Math.hypot(x - player.pos.x, z - player.pos.z) < 1.4 || machineSystem.at(x, z, 1.4)
+        || machineSystem.placementBlocked(x, z, wb);
       if (placeGhostKey !== wb) { hidePlaceGhost(); placeGhost = buildPlaceGhost(tpl.model); placeGhostKey = wb; scene.add(placeGhost.group); }
       placeGhost.group.position.set(x, y, z);
       placeGhost.group.rotation.y = placeRot;
@@ -12384,6 +12640,78 @@
       notice(`C4 ARMED · ${C4_FUSE}s`);
     }
 
+    // A flare calls an IRGC plane early for nearby boxes; the white flash hides the swap.
+    function useFlare() {
+      const s = inv.hot[inv.sel];
+      if (!s || !ITEMS[s.id]?.flare) return false;
+      if (flareFx.phase !== 'idle') return true;
+      const px = player.pos.x, pz = player.pos.z;
+      const targets = machineSystem.instances.filter((m) =>
+        (m.def.kind === 'pickup' || m.def.kind === 'askbox') && Math.hypot(m.x - px, m.z - pz) < 6);
+      if (!targets.length) { notice('NO BOX IN RANGE'); return true; }
+      flareFx.targets = targets;
+      flareFx.phase = 'in';
+      flareFx.t = 0;
+      if (--s.n <= 0) inv.hot[inv.sel] = null;
+      triggerSwing(0.26);
+      syncBars();
+      return true;
+    }
+
+    function updateFlare(dt) {
+      if (!flareFlashEl) return;
+      if (flareFx.phase === 'idle') { if (flareFlashEl.style.opacity) flareFlashEl.style.opacity = '0'; return; }
+      flareFx.t += dt;
+      if (flareFx.phase === 'in') {
+        const k = Math.min(1, flareFx.t / 0.4);
+        flareFlashEl.style.opacity = String(k);
+        if (k >= 1) { flareFx.phase = 'hold'; flareFx.t = 0; }
+      } else if (flareFx.phase === 'hold') {
+        if (flareFx.t >= 3) {
+          machineSystem.nightfall(flareFx.targets);
+          notice('IRGC PLANE PASSED');
+          flareFx.phase = 'out'; flareFx.t = 0;
+        }
+      } else {
+        const k = Math.min(1, flareFx.t / 0.6);
+        flareFlashEl.style.opacity = String(1 - k);
+        if (k >= 1) {
+          flareFx.phase = 'idle';
+          flareFx.targets = [];
+          flareFlashEl.style.opacity = '0';
+        }
+      }
+    }
+
+    // Every few minutes an IRGC plane drops a pod in the plains: thin salvage plus one field note.
+    function updateLorePods(dt) {
+      if (LORE_BOOKS.every((id) => ach.read[id])) return; // no notes left to find
+      if (playTime < loreNextAt) return;
+      loreNextAt = playTime + 180 + Math.random() * 180;
+      const active = machineSystem.instances.filter((m) => m.def.id === 'drop_pod').length;
+      if (active >= 8) return;
+      for (let i = 0; i < 24; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 40 + Math.random() * 80;
+        const x = player.pos.x + Math.cos(a) * r, z = player.pos.z + Math.sin(a) * r;
+        if (biomeAt(x, z) !== B.PLAINS) continue;
+        if (machineSystem.at(x, z, 3)) continue;
+        const y = world.getSurfaceHeight(x, z, 90);
+        if (!Number.isFinite(y)) continue;
+        const pod = machineSystem.place('drop_pod', x, z, { y, drop: true });
+        if (!pod) continue;
+        machineSystem.addOutput(pod, LORE_BOOKS[Math.floor(Math.random() * LORE_BOOKS.length)], 1);
+        const items = 2 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < items; k++) {
+          machineSystem.addOutput(pod, rollWeighted(LORE_POD_LOOT), 1 + Math.floor(Math.random() * 3));
+        }
+        pod.state.status = 'COLLECT';
+        notice('AN IRGC PLANE DROPPED SOMETHING IN THE PLAINS');
+        queueSave('lore pod');
+        return;
+      }
+    }
+
     function useC4() {
       const s = inv.hot[inv.sel];
       if (!s || !ITEMS[s.id]?.c4) return false;
@@ -12531,6 +12859,7 @@
       const c = def.consumable;
       inv.dose = Math.max(0, inv.dose + (c.dose || 0));
       if (c.food) {
+        ach.eaten[s.id] = true;
         vitals.hunger = Math.min(vitals.maxHunger, vitals.hunger + effectiveFood(s.id, c.food));
         vitals.foodNumb[s.id] = Math.max(-2, foodNumb(s.id) - 0.1);
         for (const id of Object.keys(vitals.foodNumb)) {
@@ -12583,6 +12912,8 @@
           if (useBweController()) return;
           if (useBuildingUpgrade()) return;
           if (useSkylineWrench()) return;
+          if (useBook()) return;
+          if (useFlare()) return;
           if (useConsumable()) return;
           if (useDoorToggle()) return;
           if (useInteractable()) return;
@@ -12696,6 +13027,9 @@
     const MAX_WALK_SLOPE = Math.tan(50 * Math.PI / 180);
     const SLOPE_PROBE = 1.0;
     const STEP_UP_MAX = 0.6;
+    // Ground-follow descent is rate-limited: a bigger step is a fall under
+    // gravity, not an instant teleport down with the terrain.
+    const GROUND_FOLLOW_SPEED = 12;
 
     function slopeBlocked(dx, dz) {
       const len = Math.hypot(dx, dz);
@@ -12733,6 +13067,7 @@
 
 
     let sliding = false, slideT = 0, slideQueued = false;
+    let jumpUsed = false;
     const SLIDE_TIME = 1.6;
 
     function accelerate(wx, wz, wishSpeed, accel, dt) {
@@ -12802,6 +13137,10 @@
     function movePlayer(dt) {
       if (mapSystem?.isOpen()) return;
 
+      // Releasing Space re-arms the jump: wedging against a wall can re-ground
+      // the body every frame, and a held key must not charge 1 hunger each time.
+      if (!keys.Space) jumpUsed = false;
+
       if (flying) {
         const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
         const s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
@@ -12865,7 +13204,8 @@
       }
 
 
-      if (!inWater && keys.Space && player.onGround) {
+      if (!inWater && keys.Space && !jumpUsed && player.onGround) {
+        jumpUsed = true;
         if (vitals.hunger >= 1) vitals.hunger -= 1;
         player.vel.y = 8.6;
         player.onGround = false;
@@ -12950,7 +13290,9 @@
       } else if (wasGrounded && player.vel.y <= 0 && (mx !== 0 || mz !== 0)) {
 
         const gy = groundY();
-        if (gy !== null) {
+        // Only a rate-limited step follows the surface; a bigger drop falls
+        // under gravity instead of teleporting down with the terrain.
+        if (gy !== null && player.pos.y - gy <= GROUND_FOLLOW_SPEED * dt) {
           player.pos.y = gy;
           player.onGround = true;
           player.vel.y = 0;
@@ -13198,6 +13540,8 @@
     const barFill = document.getElementById('barFill');
     const deathBanner = document.getElementById('deathBanner');
     const sleepOverlay = document.getElementById('sleepOverlay');
+    const flareFlashEl = document.getElementById('flareFlash');
+    const flareFx = { phase: 'idle', t: 0, targets: [] };
     let sleep = null;
     let drive = null;
 
@@ -14294,6 +14638,7 @@
       _doseFrame++;
       scheduleNextFrame();
       const _fStart = performance.now();
+      let _worldMs = 0, _vegFrameMs = 0;
 
       renderer.info.autoReset = false;
       renderer.info.reset();
@@ -14425,11 +14770,13 @@
       if (exporting && exportSim) replayExport.needsSim = false;
       last = now;
       tickTreeShake(dt);
-      const paused = !locked && !replayPlay && !introOpen && !prayOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
+      const paused = !locked && !replayPlay && !introOpen && !prayOpen && !bookOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
       if (!paused && !sleep) playTime += dt;
       // The sim clamps dt to avoid tunneling; the FPS readout must not, or a stall reads as 20fps.
       fpsSmooth += ((1 / Math.max(exporting ? dt : rawDt, 1e-4)) - fpsSmooth) * 0.08;
       if (sleep) { updateSleep(dt); mining = false; player.vel.set(0, 0, 0); }
+      // Unlock detection and the toast must run even while a panel is open — that is when most crafts happen.
+      updateAchievements(dt);
 
       if (!paused && !sleep) {
       const _pMove = performance.now();
@@ -14457,6 +14804,7 @@
       }
       updateDaylight();
       updateAmbientMusic(dt);
+      updateRadio();
       updateMachineSounds(dt);
       if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
       if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
@@ -14467,7 +14815,6 @@
       if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
       updateVitals(dt);
       updateGuide(dt);
-      updateAchievements(dt);
       const inWaste = biomeAt(player.pos.x, player.pos.z) === B.WASTELAND;
       if (inWaste !== wasInWaste) {
         wasInWaste = inWaste;
@@ -14528,6 +14875,7 @@
 
       const _pJobs = performance.now();
       world.updateJobs(dt);
+      updateGroundLift(dt);
       perf.jobs += performance.now() - _pJobs;
 
 
@@ -14547,12 +14895,13 @@
       if (WORLD_TERRAIN === 'realistic') realisticTerrain().recenter(player.pos.x + WORLD_SEED, player.pos.z + WORLD_SEED);
       world.update(player.pos.x, player.pos.y, player.pos.z);
       farTerrain.update(player.pos.x, player.pos.z);
-      const _worldMs = performance.now() - _pWorld;
+      _worldMs = performance.now() - _pWorld;
       perf.world += _worldMs;
       vegPerf.frames++;
       const _pVeg = performance.now();
       vegFalling(dt);
-      vegPerf.anim += performance.now() - _pVeg;
+      _vegFrameMs = performance.now() - _pVeg;
+      vegPerf.anim += _vegFrameMs;
       updateChop(dt);
       industrialUpdate(player.pos.x, player.pos.z);
       barrelUpdate(player.pos.x, player.pos.z);
@@ -14712,6 +15061,8 @@
       updateTorches(dt, now);
       updateDoorSwings(dt);
       updateC4(dt);
+      updateFlare(dt);
+      updateLorePods(dt);
       updateNukeFx(dt);
 
 
@@ -14830,9 +15181,10 @@
       const dlN = (cp.loadN || 0) - lagSheet.lastLoadN;
       lagSheet.lastRebuildN = cp.rebuildN || 0;
       lagSheet.lastLoadN = cp.loadN || 0;
-      const wMs = +((typeof _worldMs === 'number' ? _worldMs : 0)).toFixed(1);
+      const wMs = +_worldMs.toFixed(1);
       const rMs = +((typeof _renderMs === 'number' ? _renderMs : 0)).toFixed(1);
       const dMs = +((typeof _dirtyFrameMs === 'number' ? _dirtyFrameMs : 0)).toFixed(1);
+      const vMs = +_vegFrameMs.toFixed(1);
       const workMs = +(performance.now() - _fStart).toFixed(1);
       const sample = {
         t: +now.toFixed(0),
@@ -14844,9 +15196,10 @@
         rebuild: dr,
         load: dlN,
         worldMs: wMs,
+        vegMs: vMs,
         renderMs: rMs,
         dirtyMs: dMs,
-        otherMs: +(Math.max(0, workMs - wMs - rMs - dMs)).toFixed(1),
+        otherMs: +(Math.max(0, workMs - wMs - vMs - rMs - dMs)).toFixed(1),
       };
       lagSheet.frames.push(sample);
       if (lagSheet.frames.length > 600) lagSheet.frames.splice(0, lagSheet.frames.length - 600);
