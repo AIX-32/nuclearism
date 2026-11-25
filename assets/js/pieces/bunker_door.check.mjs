@@ -137,8 +137,8 @@ check(near(Math.abs(slideOffset(B, liveA).x - slideOffset(B, liveB).x), SLIDE_DI
   'the finished leaves sit one full leaf width apart from where they started');
 check(near(B.shadow(4.5, 2.5, 15, 0, 0, -1, 24), 1), 'open leaves let the field through the runtime');
 
-// Saves store kinds as indices into KINDS. New kinds must be appended: an old
-// bunker door is index 5, and must not come back as a stair after an insert.
+
+
 check(Object.keys(KINDS).indexOf('bunker_door') === 5, 'bunker doors keep their legacy save index');
 const B2 = new BuildingSystem({ THREE: stubThree(), scene: { add() { } }, world: flatWorld() });
 B2.restore([[5, 0, 4, 1, 7, 0, 100, 0]]);

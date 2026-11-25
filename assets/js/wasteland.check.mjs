@@ -4,7 +4,7 @@ import { MACHINE_BY_ID, BARREL_LOOT, SCRAP_RECYCLE_TABLE, rollWeighted } from '.
 
 const src = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 
-// Pull the real barrel generator out of game.js so the check cannot drift from the runtime.
+
 function functionOf(name) {
   const at = src.indexOf(`function ${name}(`);
   assert.ok(at >= 0, `${name} is present in game.js`);
@@ -26,7 +26,7 @@ function functionOf(name) {
 }
 
 let seed = 1234;
-// Hash stand-in with the same 0..1 contract as game.js's hash3.
+
 const hash3 = (x, y, z) => {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 2246822519) ^ seed;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
@@ -47,7 +47,7 @@ for (let cz = -12; cz < 12; cz++) for (let cx = -12; cx < 12; cx++) if (game.bar
 const ratio = filled / (24 * 24);
 assert.ok(ratio > 0.6 && ratio < 0.9, `barrels are common but not universal (${ratio.toFixed(2)})`);
 
-// The recycler must be a processor whose rolled output happens at job completion.
+
 const rec = MACHINE_BY_ID.recycler;
 assert.equal(rec.kind, 'processor', 'recycler uses the existing processor runtime');
 assert.ok(rec.randomOut === SCRAP_RECYCLE_TABLE && rec.recipes[0].in.scrap > 0, 'recycler consumes scrap and rolls the recycle table');
@@ -55,7 +55,7 @@ const machineSrc = readFileSync(new URL('./machines.js', import.meta.url), 'utf8
 assert.ok(machineSrc.includes('m.def.randomOut') && machineSrc.includes('rollWeighted(m.def.randomOut)'),
   'the machine runtime rolls randomOut at completion');
 
-// Rare parts stay rare, and every roll is a catalogue item.
+
 const common = SCRAP_RECYCLE_TABLE.filter(([id]) => id.endsWith('_ingot')).reduce((s, [, w]) => s + w, 0);
 const rare = SCRAP_RECYCLE_TABLE.filter(([id]) => ['electric_motor', 'linear_actuator', 'machine_chassis'].includes(id)).reduce((s, [, w]) => s + w, 0);
 assert.ok(common > rare * 10, 'ingots dominate the recycler, motors and actuators are rare');

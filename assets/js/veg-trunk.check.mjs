@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// Extract the real radius helper from game.js so the check cannot drift from the runtime.
+
 const src = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 const at = src.indexOf('function vegTrunkRadius(');
 assert.ok(at >= 0, 'vegTrunkRadius is present in game.js');
@@ -22,7 +22,7 @@ for (let i = open; i < src.length; i++) {
 assert.ok(end > 0, 'vegTrunkRadius closes');
 const vegTrunkRadius = new Function(`${src.slice(at, end)}\nreturn vegTrunkRadius;`)();
 
-// A ring of bark vertices at a radius, with a few far-out vertices representing root flare.
+
 const ring = (radius, y, count, cx = 0, cz = 0) => {
   const a = [];
   for (let i = 0; i < count; i++) {
@@ -33,23 +33,23 @@ const ring = (radius, y, count, cx = 0, cz = 0) => {
 };
 const part = (arr) => ({ geo: { attributes: { position: { array: new Float32Array(arr) } } } });
 
-// Old code took the max over a 15% bottom band, so these roots made the collider ~10x too wide.
+
 const bark = part([...ring(0.05, 0, 20), ...ring(0.05, 0.03, 20)]);
 const roots = part([...ring(0.5, 0.1, 8), ...ring(0.5, 0.14, 8)]);
 assert.ok(Math.abs(vegTrunkRadius([bark, roots], 0, 0, 0, 1) - 0.05) < 0.002,
   'flared roots and low branches do not inflate the bark radius');
 
-// A stray vertex inside the sampled slice is ignored by the percentile.
+
 const stray = part([...ring(0.05, 0, 24), 0.6, 0, 0]);
 assert.ok(Math.abs(vegTrunkRadius([stray], 0, 0, 0, 1) - 0.05) < 0.002,
   'one far-out vertex at the base does not inflate the bark radius');
 
-// A thicker bark is still measured as thicker.
+
 const thick = part(ring(0.22, 0, 40));
 assert.ok(Math.abs(vegTrunkRadius([thick], 0, 0, 0, 1) - 0.22) < 0.002,
   'a genuinely thick trunk keeps its radius');
 
-// No vertices in the slice means no measured collider (callers apply their own minimum).
+
 assert.equal(vegTrunkRadius([part(ring(0.3, 0.5, 20))], 0, 0, 0, 1), 0,
   'a model with no base vertices yields radius zero');
 

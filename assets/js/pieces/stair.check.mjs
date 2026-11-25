@@ -24,11 +24,11 @@ for (let rot = 0; rot < 4; rot++) {
     && b.minZ >= Z0 && b.maxZ <= Z0 + 3), `rot ${rot} stays in the 3x3 footprint`);
   assert.ok(boxes.every(([, b]) => b.maxY - b.minY <= 1 + 1e-9), `rot ${rot} boxes never exceed one level`);
 
-  // The highest tread reaches the next cell exactly, so a floor can rest on it.
+
   assert.equal(Math.max(...boxes.map(([, b]) => b.maxY)), Y0 + 2, `rot ${rot} top lands on the next cell`);
 
-  // Every riser is 0.2 m: small enough to step up (0.6 m cap) and to follow
-  // down at the 12 m/s ground-follow rate at 60 fps.
+
+
   const tops = [...new Set(boxes.map(([, b]) => Math.round(b.maxY * 100) / 100))].sort((a, b) => a - b);
   for (let i = 1; i < tops.length; i++) {
     assert.ok(Math.abs(tops[i] - tops[i - 1] - 0.2) < 1e-9, `rot ${rot} treads are 0.2 m apart`);
@@ -66,7 +66,7 @@ const center = STAIR.center(X0, Y0, Z0, 0), scale = STAIR.scale(X0, Y0, Z0, 0);
 assert.equal(center.y, Y0, 'the mesh pivot sits at the piece base');
 assert.deepEqual(scale, { x: 3, y: 2, z: 3 }, 'scaling the mesh fills the footprint and the rise');
 
-// base/support use the shared helpers with the real cell list.
+
 const sys = {
   surfaceHeight: () => 6,
   topAt: () => null,
@@ -77,14 +77,14 @@ assert.equal(STAIR.base(sys, X0, Z0, 0), 6, 'base uses the terrain under the foo
 assert.equal(STAIR.support(sys, X0, Y0, Z0, 0), true, 'ground under the bottom row supports the stair');
 assert.equal(STAIR.support(sys, X0, Y0 + 5, Z0, 0), false, 'a floating stair is refused');
 
-// Content: four tiers, wood on the pocket table, all recipes spend known items.
+
 assert.equal(Object.keys(ITEMS).length, 4, 'one item per tier');
 assert.ok(Object.values(ITEMS).every((it) => it.building?.kind === 'stair'));
 assert.equal(ITEMS.stair_wood.table, true, 'the wood stair is a bootstrap craft');
 assert.equal(RECIPES.length, 4);
 assert.ok(RECIPES.every((r) => Object.keys(r.out).length === 1 && Object.keys(r.needs).length > 0));
 
-// Real runtime: place it, block the body, refuse overlap, survive a save/load.
+
 const { BuildingSystem } = await import('../building.js');
 const { stubThree, flatWorld } = await import('../three-stub.mjs');
 const makeWorld = () => ({ THREE: stubThree(), scene: { add() {} }, world: flatWorld() });

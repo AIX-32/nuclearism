@@ -1,5 +1,5 @@
-// Machine tuning slots: speed doubles output but multiplies power use, efficiency
-// only trims use (it can never cancel a speed module).
+
+
 export const MODULE_MAX = 50;
 export const MODULE_ROLES = ['speed_module', 'efficiency_module'];
 
@@ -25,7 +25,7 @@ export function moduleAllowed(def) {
   return !!def && def.kind !== 'reactor' && def.id !== 'greenhouse' && MAKER_KINDS.has(def.kind);
 }
 
-// Keeps huge module-scaled power figures readable in the UI.
+
 export function formatPower(n) {
   n = Math.round(n || 0);
   if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`;
@@ -34,7 +34,7 @@ export function formatPower(n) {
   return `${n}`;
 }
 
-// Shared slot rules: only its own module, capped at MODULE_MAX, never liquids.
+
 export function modulePut(role, stack, cur, cap = MODULE_MAX) {
   if (!stack || stack.id !== role || stack.liquid || !MODULE_ROLES.includes(role)) return null;
   if (cur && cur.id !== role) return null;

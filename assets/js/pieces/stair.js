@@ -1,8 +1,8 @@
 import { anySupport, baseAt } from './placement.js';
 
-// A 3 m wide stair climbing 2 m over a 3 m run in ten 0.2 m risers. 0.2 m is
-// one rate-limited ground-follow step at 60 fps, so walking down stays smooth,
-// and the top tread reaches the next cell exactly so a floor can rest on it.
+
+
+
 const W = 3, D = 3, RISE = 2, STEP = 0.2;
 const STEPS_PER_CELL = [3, 3, 4];
 

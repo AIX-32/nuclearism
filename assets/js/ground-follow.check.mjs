@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
-// Run game.js's own ground-follow statements, not a copy of the maths.
+
 const src = fs.readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 const speed = src.match(/const GROUND_FOLLOW_SPEED = ([\d.]+);/);
 const snap = src.match(/const gy = groundY\(\);[\s\S]*?if \(gy !== null && player\.pos\.y - gy <= GROUND_FOLLOW_SPEED \* dt\) \{[\s\S]*?\n        \}/);
@@ -14,26 +14,26 @@ const frame = new Function('player', 'dt', 'groundY', `
 `);
 const body = (y) => ({ pos: { y }, onGround: false, vel: { y: -0.4 } });
 
-// A short step down still glues the body to the surface.
+
 let p = body(1);
 frame(p, 1 / 60, () => 0.95);
 assert.equal(p.pos.y, 0.95, 'a small drop snaps to the ground');
 assert.equal(p.onGround, true, 'a followed step is grounded');
 assert.equal(p.vel.y, 0, 'a followed step cancels vertical speed');
 
-// A big drop must not teleport: leave the body to gravity.
+
 p = body(1);
-frame(p, 1 / 60, () => 0.4); // 0.6 m > 12/60 = 0.2 m
+frame(p, 1 / 60, () => 0.4);
 assert.equal(p.pos.y, 1, 'a big drop is not snapped down');
 assert.equal(p.onGround, false, 'a big drop leaves the body airborne');
 assert.equal(p.vel.y, -0.4, 'a big drop keeps falling speed');
 
-// The limit scales with dt, and a missing surface is a no-op.
+
 p = body(1);
-frame(p, 1 / 60, () => 0.8); // exactly 0.2 m at 60 fps
+frame(p, 1 / 60, () => 0.8);
 assert.equal(p.pos.y, 0.8, 'a drop at the cap still follows');
 p = body(1);
-frame(p, 0.05, () => 0.5); // 0.5 m < 12*0.05
+frame(p, 0.05, () => 0.5);
 assert.equal(p.pos.y, 0.5, 'a longer frame allows a longer step');
 p = body(1);
 frame(p, 1 / 60, () => null);

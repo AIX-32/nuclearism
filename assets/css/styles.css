@@ -5968,7 +5968,7 @@ body.lowhp #hpFill {
 }
 
 
-/* World creation: plain rectangular buttons and compact option rows. */
+
 .menu-field-label {
   display: flex;
   justify-content: space-between;
@@ -6055,7 +6055,7 @@ body.lowhp #hpFill {
 .workbench-button:hover { background: rgba(255, 255, 255, .22); }
 .workbench-button:focus-visible { outline: 1px solid #fff; outline-offset: 1px; }
 
-/* Ask box order picker: three rows, a search field, then a compact icon grid. */
+
 .workbench-orders {
   display: flex;
   flex-direction: column;

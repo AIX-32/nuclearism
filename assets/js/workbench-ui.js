@@ -486,8 +486,8 @@ export class WorkbenchUI {
     this.renderOrders();
   }
 
-  // update() runs every frame, so both halves are signature-guarded: a click
-  // must never replace the button the player is clicking on.
+
+
   renderOrders() {
     const node = this.workArea?.querySelector('.workbench-orders');
     if (!node) return;

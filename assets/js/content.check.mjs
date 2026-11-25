@@ -82,7 +82,7 @@ for (const r of CRAFT_RECIPES) for (const id of Object.keys(r.out)) gridOut.add(
 const machineOut = new Set();
 for (const m of MACHINE_DEFS) for (const r of (m.recipes || [])) for (const id of Object.keys(r.out || {})) machineOut.add(id);
 for (const m of MACHINE_DEFS) {
-  if (m.id === 'infinite_battery' || m.kind === 'drop') continue; // IRGC planes spawn deliveries, you never craft them
+  if (m.id === 'infinite_battery' || m.kind === 'drop') continue;
   const blockId = Object.keys(ITEM_DEFS).find((k) => ITEM_DEFS[k].workbench === m.id);
   if (blockId) ok.push([gridOut.has(blockId) || machineOut.has(blockId), `machine "${m.id}" is obtainable`]);
 }
@@ -640,7 +640,7 @@ for (const [name, table] of [['barrel loot', BARREL_LOOT], ['scrap recycle', SCR
   for (let i = 0; i < 200; i++) ok.push([has(rollWeighted(table)), `${name} rolls a real item`]);
 }
 
-// IRGC boxes: a lonely pickup box, a three-item ask box, and the two airdrops.
+
 ok.push([ITEM_DEFS.rials?.stack === 9000, 'rials stack to 9000 per slot']);
 ok.push([RIAL_VALUE.rials === undefined && rialValue('rials') === 0, 'rials cannot be resold']);
 for (const id of Object.keys(RIAL_VALUE)) ok.push([has(id) && RIAL_VALUE[id] > 0, `price list entry "${id}" is a real item with a positive price`]);

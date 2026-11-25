@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// Run game.js's own stream-out body: leaving a cell must not harvest it.
+
 const source = readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 function extract(name) {
   const at = source.indexOf(`function ${name}(`);
@@ -48,14 +48,14 @@ finish({ active: new Map([['1,2', pl]]), keep: new Set(), pickups: null }, deps)
 assert.equal(deps.worldPickups.length, 0, 'the stale pickup is removed when the cell streams out');
 assert.equal(deps._vegHarvested.size, 0, 'streaming out of range must not harvest the cell');
 
-// A kept cell is untouched.
+
 const kept = { ...pickup, mesh: { parent: { remove() {} }, userData: { outlineRoot: null } } };
 const keptDeps = { ...deps, worldPickups: [kept], _vegHarvested: new Set() };
 keptDeps.vegPickupIndex = () => new Map([[kept.__vegKey, kept]]);
 finish({ active: new Map([['1,2', pl]]), keep: new Set(['1,2']), pickups: null }, keptDeps);
 assert.equal(keptDeps.worldPickups.length, 1, 'a cell still in range keeps its pickup');
 
-// The card meshes must not keep the bounding sphere computed at first render.
+
 const cards = source.slice(source.indexOf('async function loadCardModel('), source.indexOf('async function loadVegModel('));
 assert.match(cards, /mesh\.frustumCulled = false;/, 'card meshes must not be frustum culled after instances move');
 

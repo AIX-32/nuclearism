@@ -480,8 +480,8 @@ export class MachineSystem {
     return null;
   }
 
-  // Drop boxes keep a clear bubble: a box cannot be placed near a workbench,
-  // and no workbench can be placed near a box. IRGC airdrops ignore it.
+
+
   placementBlocked(x, z, id) {
     const solo = this.templates.get(id)?.def?.solo;
     if (solo) {
@@ -503,7 +503,7 @@ export class MachineSystem {
     this.ui.renderOrderRows?.();
   }
 
-  // Pull only the shortfall from the bag, so an exact payment never overpays.
+
   payExact() {
     const m = this.openInst;
     if (!m || m.def.kind !== 'askbox') return false;
@@ -1232,8 +1232,8 @@ export class MachineSystem {
 
 
     const ins = this.instances.filter((m) => m.def.kind !== 'pylon' && !(m.def.kind === 'storage' && !m.def.capacity));
-    // The runtime calls this every frame; the pairwise pass is O(machines^2), so
-    // cache it until a machine's position, count or kind actually changes.
+
+
     let hx = 0, hy = 0, hz = 0;
     for (const m of ins) {
       let k = 0;
@@ -1856,7 +1856,7 @@ export class MachineSystem {
       if (this.ctx.mineDrops && this.ctx.groundBand) {
         for (const [x, y, z] of removed) {
           const band = this.ctx.groundBand(x, y, z);
-          // mineDrops puts the base block first; only the ore after it is collected
+
           for (const [id, n] of this.ctx.mineDrops(band, y, x, z).slice(1)) {
             if (n <= 0) continue;
             if (id === 'carbon' && st.burnCarbon) {
@@ -2129,7 +2129,7 @@ export class MachineSystem {
     return price;
   }
 
-  // Live panel text: what a stocked pickup box will fetch, or what an order still needs.
+
   tickOffer(m) {
     const st = m.state;
     if (st.noSpotUntil && Date.now() < st.noSpotUntil) return;
@@ -2151,8 +2151,8 @@ export class MachineSystem {
     }
   }
 
-  // At nightfall the IRGC plane lifts stocked goods and drops payment or orders.
-  // A flare calls it early for a subset of boxes.
+
+
   nightfall(list = this.instances) {
     let flew = false;
     for (const m of [...list]) {
@@ -2175,10 +2175,10 @@ export class MachineSystem {
         else { m.state.status = 'NO DROP SPOT'; m.state.noSpotUntil = Date.now() + 5000; }
       }
     }
-    if (flew) this.ctx.planeFlyby?.(); // one pass per batch, whether the plane picked up or dropped off
+    if (flew) this.ctx.planeFlyby?.();
   }
 
-  // The plane never drops onto a workbench: pick a clear spot a few metres from the box.
+
   airdrop(src, id, message, fill) {
     const start = Math.random() * Math.PI * 2;
     for (let k = 0; k < 8; k++) {

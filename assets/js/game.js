@@ -2886,8 +2886,8 @@
         const cx0 = Math.floor((ux0 - 1) / CHUNK_SIZE), cx1 = Math.floor((ux1 + 1) / CHUNK_SIZE);
         const cy0 = Math.floor((uy0 - 1) / CHUNK_SIZE), cy1 = Math.floor((uy1 + 1) / CHUNK_SIZE);
         const cz0 = Math.floor((uz0 - 1) / CHUNK_SIZE), cz1 = Math.floor((uz1 + 1) / CHUNK_SIZE);
-        // Animated edits go through the budgeted queue like every other edit; rebuilding
-        // the whole mining box here used to stall a frame by tens of milliseconds.
+
+
         for (let cx = cx0; cx <= cx1; cx++)
           for (let cy = cy0; cy <= cy1; cy++)
             for (let cz = cz0; cz <= cz1; cz++) {
@@ -3738,7 +3738,7 @@
     }
 
     function entityGroundY(x, z, hintY) {
-      // shortcut: voxel-height snap instead of smooth surfaceY, cheaper for many entities; standY still corrects small steps
+
       const fromY = hintY + 6;
       const gy = world.getSurfaceHeight(x, z, Math.max(fromY, 90));
       if (!Number.isFinite(gy) || gy < hintY - 40) return world.getSurfaceHeight(x, z, 90);
@@ -4043,7 +4043,7 @@
       approach: ['approach-1.ogg', 'approach-2.ogg', 'approach-3.ogg', 'approach-4.ogg', 'approach-5.ogg', 'approach-6.ogg'],
     };
     const _wrapperSoundLast = {};
-    // Sound, like dose, does not pass through a bunker roof or a wall of dirt.
+
     function wrapperSoundBlocked(pos) {
       const px = player.pos.x, py = player.pos.y + 1, pz = player.pos.z;
       const dx = pos.x - px, dy = (pos.y ?? 0) - py, dz = (pos.z ?? 0) - pz;
@@ -4468,7 +4468,7 @@
         this.walkAmt += (targetAmt - this.walkAmt) * Math.min(1, dtStep * 10);
         if (this.walkAmt > 0.01) this.walkPhase += dtStep * (7 + this.speed * 2) * this.walkAmt;
         this.applyWalk(this.walkPhase, this.walkAmt);
-        // shortcut: idle chickens resnap ground every 2s, terrain edits under one can take 2s to settle
+
         this.groundSnapT = (this.groundSnapT || 0) - dtStep;
         if (moving || this.walkAmt > 0.02 || this.groundSnapT <= 0) {
           const gy = entityStandY(this.pos.x, this.pos.z, this.pos.y, this.radius, this.height);
@@ -5248,7 +5248,7 @@
     let nuclearStrikes = [];
     let lastNukeCheckDay = 0;
     let nukeRadMult = 1;
-    // The outcome of the next 10-day roll is decided up front so a held radio can warn about it.
+
     let nextNukeDay = 0, nextNukeWillHit = false;
     function scheduleNextNuke(fromDay) {
       nextNukeDay = nextStrikeDay(fromDay, TUNING.NUKE_DAY_INTERVAL);
@@ -6352,7 +6352,7 @@
       ground: { cell: 2.0, size: 1.0, fill: { [B.FOREST]: 0.62, [B.JUNGLE]: 0.60, [B.PLAINS]: 0.72, [B.SAVANNA]: 0.55, [B.TUNDRA]: 0.30, [B.SNOWY_PEAKS]: 0.10, [B.WASTELAND]: 0.30, [B.BEACH]: 0.05 } },
       cover: { cell: 3.0, size: 1.2, fill: { [B.FOREST]: 0.55, [B.JUNGLE]: 0.60, [B.PLAINS]: 0.38, [B.SAVANNA]: 0.26, [B.TUNDRA]: 0.30, [B.SNOWY_PEAKS]: 0.14, [B.WASTELAND]: 0.08 } },
       floor: { cell: 2.0, size: 1.0, fill: { [B.FOREST]: 0.50, [B.PLAINS]: 0.32, [B.JUNGLE]: 0.46, [B.SAVANNA]: 0.30, [B.TUNDRA]: 0.24 } },
-      // 1.2 m still reads as a flower field; 0.72 m made ~14k cells a 48 m radius.
+
       flowers: { cell: 1.2, size: 1.0, fill: { [B.FLOWER_PLAINS]: 1.0, [B.PLAINS]: 0.35, [B.FOREST]: 0.28 } },
       aquatic: { cell: 3.0, size: 1.0, fill: { [B.SHALLOW]: 0.50, [B.BEACH]: 0.40, [B.OCEAN]: 0.06 } },
     };
@@ -6479,7 +6479,7 @@
       let fill = VEG_LAYERS[layer].fill[b];
       if (!fill) return null;
       if (layer === 'canopy' && WORLD_TERRAIN === 'realistic') fill = Math.min(1, canopyFill(x, z, b, fill));
-      // wildflowers leak out of the flower plains into small, rare patches in plains/forest
+
       if (layer === 'flowers' && b !== B.FLOWER_PLAINS) {
         const sx = x + WORLD_SEED, sz = z + WORLD_SEED;
         fill *= smoothstep01(0.66, 0.74, fbm3(sx * 0.02, 63.7, sz * 0.02, 2));
@@ -6527,8 +6527,8 @@
       return terrainTrend(x + WORLD_SEED, z + WORLD_SEED) - y + n;
     }
 
-    // groundYAt is cached and analytic; refining a short band around it avoids
-    // marching the whole column for every plant the stream resolves.
+
+
     function vegSurfaceY(x, z) {
       const y0 = groundYAt(x + WORLD_SEED, z + WORLD_SEED);
       if (!Number.isFinite(y0)) return world.surfaceY(x, z, Math.ceil(terrainTrend(x + WORLD_SEED, z + WORLD_SEED)) + 12);
@@ -6538,7 +6538,7 @@
         if (prev <= 0 && cur > 0) return y + 0.25 - 0.25 * (prev / (prev - cur));
         prev = cur;
       }
-      // Edits or caves moved the surface outside the band; fall back to the full march.
+
       return world.surfaceY(x, z, Math.max(y0 + 2, Math.ceil(terrainTrend(x + WORLD_SEED, z + WORLD_SEED)) + 12));
     }
 
@@ -6758,9 +6758,9 @@
       const mesh = new THREE.InstancedMesh(geo, mat, cap);
       mesh.count = 0;
       mesh.visible = false;
-      // InstancedMesh caches its bounding sphere on first render; streaming moves
-      // the instances, so frustum culling would hide the whole layer once the
-      // sphere falls behind the player. The other veg meshes cull for the same reason.
+
+
+
       mesh.frustumCulled = false;
       mesh.matrixAutoUpdate = false;
       if (atlasRects) {
@@ -6779,8 +6779,8 @@
       return sp;
     }
 
-    // The bottom band includes flared roots and low branches; a max over it makes the collider
-    // far wider than the bark. Sample only the lowest slice and take a high percentile of it.
+
+
     function vegTrunkRadius(parts, cx, cz, mny, mxy) {
       const barkTop = mny + (mxy - mny) * 0.06;
       const radii = [];
@@ -7195,7 +7195,7 @@
       }
     }
 
-    // Wasteland barrels: deterministic per-cell salvage, streamed like industrial sites.
+
     const BARREL_CELL = 24;
     const BARREL_CHANCE = 0.75;
     const _barrelCells = new Map();
@@ -7497,8 +7497,8 @@
       task.dz = -task.r; task.dx = -task.r; task.phase = 1;
     }
 
-    // The stream touches thousands of plant cells; a linear worldPickups.find
-    // per cell (and per culled plant) turned streaming into the frame's top cost.
+
+
     function vegPickupIndex() {
       const m = new Map();
       for (const p of worldPickups) if (p.__vegKey && !m.has(p.__vegKey)) m.set(p.__vegKey, p);
@@ -7514,7 +7514,7 @@
           const pickupKey = key + ':' + pl.sp.n;
           const pickup = byKey.get(pickupKey);
           if (pickup) {
-            // Streaming out of range is not a harvest; the cell must regrow on return.
+
             if (pickup.mesh.parent) pickup.mesh.parent.remove(pickup.mesh);
             if (pickup.mesh.userData.outlineRoot && pickup.mesh.userData.outlineRoot.parent) {
               pickup.mesh.userData.outlineRoot.parent.remove(pickup.mesh.userData.outlineRoot);
@@ -7634,8 +7634,8 @@
         const l = _vegStreamTask.layer;
         vegStreamStep(l === 'flowers' ? 3.0 : 1.5);
       }
-      // Restarting mid-stream threw away completed layers and made the scan
-      // re-walk the same cells every time the player crossed a grid line.
+
+
       if (!_vegStreamTask && Number.isFinite(_vegPendingX)) {
         _vegGX = Math.floor(_vegPendingX / 16); _vegGZ = Math.floor(_vegPendingZ / 16);
         _vegBeginStream(_vegPendingX, _vegPendingZ);
@@ -7647,8 +7647,8 @@
       let budget = 2;
       for (const sp of VEG_SPECIES) {
         if (!sp.dirty) continue;
-        // A full instance-buffer rewrite is O(placements) (up to 6000 flowers);
-        // streaming marks species dirty every frame, so cap refreshes per species.
+
+
         if (ti - (sp._instAt || 0) < 150) continue;
         if (budget-- <= 0) break;
         sp._instAt = ti;
@@ -8363,11 +8363,11 @@
     const _pickupMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false });
     function makePickupMesh(itemId) {
       const mesh = new THREE.Mesh(_pickupGeo, _pickupMat);
-      // Hit target only: it has no visible surface, so keep it out of the render list.
-      // Raycaster ignores `visible`, so the interact prompt still works.
+
+
       mesh.visible = false;
       mesh.userData.itemId = itemId;
-      // No outline: the root was never parented to the scene, so it could never draw.
+
       return mesh;
     }
 
@@ -8411,8 +8411,8 @@
       if (pickup.mesh.userData.outlineRoot) {
         pickup.mesh.userData.outlineRoot.position.copy(pickup.mesh.position);
       }
-      // A pickup is a hit target only: resolveInteractTarget raycasts it directly,
-      // so keeping it out of the scene avoids a scene-graph walk per render.
+
+
       pickup.mesh.updateMatrixWorld();
       bindInteractEntry(pickup.mesh, { target: pickup, type: 'pickup', label: pickup.label, activate: () => pickup.activate() });
       worldPickups.push(pickup);
@@ -8655,7 +8655,7 @@
       player.pos.set(saved.player[0], saved.player[1], saved.player[2]);
       player.yaw = saved.player[3] || 0;
       player.pitch = saved.player[4] || 0;
-      // A saved player may stand in any biome or on any pad; only lift them out of solid ground.
+
       for (let i = 0; i < 14 && world.field.sample(player.pos.x, player.pos.y + 0.5, player.pos.z) > 0; i++) {
         player.pos.y += 1;
       }
@@ -12020,9 +12020,9 @@
     }
     function buildingBlocked(b, t) { return !!buildingPlaceIssue(b, t); }
 
-    // A placed terrain block grows as a sphere over a few frames. Lift the body
-    // onto its finished surface so the fill pushes the player up, not through them.
-    // Returns null when there is no headroom above the new block.
+
+
+
     function terrainBlockLift(center, radius) {
       const p = player.pos, r = player.radius, h = player.height;
       const cols = [[0, 0]];
@@ -12042,7 +12042,7 @@
           const dy = y - center.y;
           const added = 1.8 * (radius - Math.sqrt(d2 + dy * dy));
           if (added > 0 && world.field.sample(p.x + ox, y, p.z + oz) + added > 0) colTop = y;
-          // Stop at the first air gap so a cave ceiling above is not treated as the top.
+
           else if (colTop > -Infinity && y > colTop + 0.35) break;
         }
         if (colTop > top) top = colTop;
@@ -12062,8 +12062,8 @@
       return blocked ? null : feet;
     }
 
-    // Ride the rising surface over the same 0.28 s the fill takes, instead of
-    // snapping the camera up in one frame.
+
+
     function updateGroundLift(dt) {
       if (!groundLift) return;
       if (keys.Space || flying || mapSystem?.isOpen()) { groundLift = null; return; }
@@ -12170,7 +12170,7 @@
       const savedY = player.pos.y;
       if (lift > savedY) player.pos.y = lift;
       const noRoom = playerCollides();
-      // Check headroom at the finished surface, but ride up from the old height.
+
       player.pos.y = savedY;
       if (noRoom) {
         notice('NO ROOM TO PLACE HERE');
@@ -12640,7 +12640,7 @@
       notice(`C4 ARMED · ${C4_FUSE}s`);
     }
 
-    // A flare calls an IRGC plane early for nearby boxes; the white flash hides the swap.
+
     function useFlare() {
       const s = inv.hot[inv.sel];
       if (!s || !ITEMS[s.id]?.flare) return false;
@@ -12683,9 +12683,9 @@
       }
     }
 
-    // Every few minutes an IRGC plane drops a pod in the plains: thin salvage plus one field note.
+
     function updateLorePods(dt) {
-      if (LORE_BOOKS.every((id) => ach.read[id])) return; // no notes left to find
+      if (LORE_BOOKS.every((id) => ach.read[id])) return;
       if (playTime < loreNextAt) return;
       loreNextAt = playTime + 180 + Math.random() * 180;
       const active = machineSystem.instances.filter((m) => m.def.id === 'drop_pod').length;
@@ -13027,8 +13027,8 @@
     const MAX_WALK_SLOPE = Math.tan(50 * Math.PI / 180);
     const SLOPE_PROBE = 1.0;
     const STEP_UP_MAX = 0.6;
-    // Ground-follow descent is rate-limited: a bigger step is a fall under
-    // gravity, not an instant teleport down with the terrain.
+
+
     const GROUND_FOLLOW_SPEED = 12;
 
     function slopeBlocked(dx, dz) {
@@ -13137,8 +13137,8 @@
     function movePlayer(dt) {
       if (mapSystem?.isOpen()) return;
 
-      // Releasing Space re-arms the jump: wedging against a wall can re-ground
-      // the body every frame, and a held key must not charge 1 hunger each time.
+
+
       if (!keys.Space) jumpUsed = false;
 
       if (flying) {
@@ -13290,8 +13290,8 @@
       } else if (wasGrounded && player.vel.y <= 0 && (mx !== 0 || mz !== 0)) {
 
         const gy = groundY();
-        // Only a rate-limited step follows the surface; a bigger drop falls
-        // under gravity instead of teleporting down with the terrain.
+
+
         if (gy !== null && player.pos.y - gy <= GROUND_FOLLOW_SPEED * dt) {
           player.pos.y = gy;
           player.onGround = true;
@@ -14772,10 +14772,10 @@
       tickTreeShake(dt);
       const paused = !locked && !replayPlay && !introOpen && !prayOpen && !bookOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
       if (!paused && !sleep) playTime += dt;
-      // The sim clamps dt to avoid tunneling; the FPS readout must not, or a stall reads as 20fps.
+
       fpsSmooth += ((1 / Math.max(exporting ? dt : rawDt, 1e-4)) - fpsSmooth) * 0.08;
       if (sleep) { updateSleep(dt); mining = false; player.vel.set(0, 0, 0); }
-      // Unlock detection and the toast must run even while a panel is open — that is when most crafts happen.
+
       updateAchievements(dt);
 
       if (!paused && !sleep) {
@@ -15306,8 +15306,8 @@
       return ok;
     };
 
-    // Serializing a save costs tens of ms. Coalesce the automatic ones and run
-    // them in spare idle time so they never sit inside a frame callback.
+
+
     let _saveQueued = false;
     function queueSave(reason) {
       if (_saveQueued || wipeSave || replayPlay) return;

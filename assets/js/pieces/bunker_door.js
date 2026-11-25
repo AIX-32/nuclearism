@@ -1,7 +1,7 @@
 import { baseAt } from './placement.js';
 
-// One leaf of a two-leaf bunker entrance. Each leaf is a full wall-width panel;
-// place two beside each other on floor BBs, then right-click to slide them apart.
+
+
 const W = 3, H = 3, TH = 0.25;
 export const SLIDE_DIST = W;
 export const SLIDE_TIME = 0.55;

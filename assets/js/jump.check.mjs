@@ -6,7 +6,7 @@ const rearm = src.match(/if \(!keys\.Space\) jumpUsed = false;/);
 const jump = src.match(/if \(!inWater && keys\.Space && !jumpUsed && player\.onGround\) \{[\s\S]*?sliding = false;\s*\}/);
 assert(rearm && jump, 'jump charge logic not found in game.js');
 
-// Run the game's own statements with a stub world that re-grounds every frame.
+
 const frame = new Function('state', 'space', 'onGround', `
   const keys = { Space: space };
   const vitals = state.vitals;
@@ -20,10 +20,10 @@ const frame = new Function('state', 'space', 'onGround', `
 `);
 
 const state = { jumpUsed: false, vitals: { hunger: 100 } };
-for (let i = 0; i < 120; i++) frame(state, true, true); // Space held, wedged on a wall
+for (let i = 0; i < 120; i++) frame(state, true, true);
 assert.equal(state.vitals.hunger, 99, 'holding Space must charge only one jump');
 
-for (let i = 0; i < 5; i++) frame(state, false, true); // release re-arms
+for (let i = 0; i < 5; i++) frame(state, false, true);
 assert.equal(state.vitals.hunger, 99, 'releasing Space must not charge a jump');
 frame(state, true, true);
 assert.equal(state.vitals.hunger, 98, 'a new hold charges one jump');

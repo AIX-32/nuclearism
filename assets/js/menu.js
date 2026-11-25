@@ -89,7 +89,7 @@ let newTerrain = 'realistic';
 let newStart = 'dawn';
 let newFallout = 'normal';
 
-// A numeric seed is used as-is; any other text is hashed so the same word always gives the same world.
+
 function parseSeed(text) {
   const s = String(text || '').trim();
   if (!s) return null;

@@ -1,7 +1,7 @@
-// Held radio: which clip to play, and how long until the scheduled strike.
+
 export const RADIO_STATIC = 'assets/audio/radio/static.mp3';
 export const RADIO_SIGNAL = 'assets/audio/radio/websdr.wav';
-export const RADIO_CUTOFF = 180; // seconds before impact that the signal cuts to static
+export const RADIO_CUTOFF = 180;
 
 export function nextStrikeDay(fromDay, interval) {
   const step = interval || 10;

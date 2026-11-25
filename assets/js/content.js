@@ -560,7 +560,7 @@ export function regionOre(x, z, savanna = false) {
 const MODEL = (id) => `assets/models/workbenches/${id}.gltf`;
 const LAYOUT = (id) => `assets/ui/${id}.json`;
 
-// Weighted [id, weight] tables. Scrap is rolled separately by the barrels, so it is not in here.
+
 export const BARREL_LOOT = [
   ['iron_plate', 14], ['copper_plate', 12], ['steel_plate', 10], ['lead_plate', 9],
   ['iron_ingot', 12], ['copper_ingot', 12], ['tin_ingot', 9], ['steel_ingot', 8], ['lead_ingot', 7],
@@ -575,7 +575,7 @@ export const SCRAP_RECYCLE_TABLE = [
   ['carbon', 12], ['graphite', 6], ['carbon_mesh', 4], ['copper_solenoid', 3],
   ['circuit_basic', 1.5], ['electric_motor', 1.5], ['linear_actuator', 1], ['machine_chassis', 0.8],
 ];
-// A thin version of BARREL_LOOT for the pods that fall in the plains.
+
 export const LORE_POD_LOOT = [
   ['scrap', 18], ['iron_ingot', 8], ['copper_ingot', 8], ['lead_ingot', 5], ['iron_plate', 6],
   ['plastic', 10], ['glass', 6], ['carbon', 8], ['herb', 7], ['cigarette_pack', 3],
@@ -591,7 +591,7 @@ export function rollWeighted(table) {
   return table[table.length - 1][0];
 }
 
-// What the IRGC pay, in rials, per item. Anything unlisted is worth 4, a machine block 300.
+
 export const RIAL_VALUE = {
   stone: 1, dirt: 1, sand: 1, gravel: 1, basalt: 1, wood: 2, carbon: 3, herb: 2, flower: 2,
   iron: 3, copper: 3, tin: 3, lead: 4, magnesium: 5, lithium: 7, boron: 7, zirconium: 10,
@@ -624,7 +624,7 @@ export function saleValue(slots) {
   return { count, total };
 }
 
-// An unseen item costs eight times more; a workbench you have never placed cannot be ordered at all.
+
 export function offerPrice(want, hasItem = () => true, hasMachine = () => true) {
   const out = {};
   let price = 0, blocked = false;
@@ -1051,7 +1051,7 @@ export const MACHINE_DEFS = [
 
 export const MACHINE_BY_ID = Object.fromEntries(MACHINE_DEFS.map((m) => [m.id, m]));
 
-// Anything the furnace or oven cooks out counts toward the chef achievements.
+
 export const COOKED_DISHES = new Set(
   ['electric_furnace', 'oven'].flatMap((id) =>
     (MACHINE_BY_ID[id].recipes || []).map((r) => Object.keys(r.out)[0])),
@@ -1093,7 +1093,7 @@ export const CRAFT_RECIPES = [
   ...TRIANGLE_RECIPES,
   ...BUNKER_DOOR_RECIPES,
 
-  // Every greenhouse crop can be turned back into its own seeds at the manufactory.
+
   ...Object.entries(ITEM_DEFS).filter(([, d]) => d.seed).map(([id, d]) => ({
     out: { [id]: 2 }, needs: { [d.seed]: 1 },
   })),
@@ -1104,10 +1104,10 @@ export const CRAFT_RECIPES = [
   { out: { speed_module: 1 }, needs: { electric_motor: 1, iron_plate: 15 } },
   { out: { efficiency_module: 1 }, needs: { circuit_basic: 2, copper_solenoid: 5 } },
 
- 
 
 
- 
+
+
   { out: { chicken_leg: 5 }, needs: { cooked_chicken: 1 } },
 
   { out: { jp_soy_sauce: 1 }, needs: { aromatic_powder: 2, carbon: 2, plastic: 1 } },
