@@ -75,6 +75,7 @@ async function load(seed) {
   assert.equal(S.getSetting('infoHud'), false);
   assert.equal(S.getSetting('sensitivity'), 1);
   assert.equal(S.getSetting('invertY'), false);
+  assert.equal(S.getSetting('laptopMode'), false);
   assert.equal(S.getSetting('volume'), 1);
 }
 

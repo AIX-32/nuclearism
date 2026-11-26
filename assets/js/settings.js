@@ -27,6 +27,7 @@ export const SETTING_DEFS = [
   { id: 'infoHud', group: 'DISPLAY', label: 'INFO HUD', type: 'toggle', def: false },
   { id: 'sensitivity', group: 'CONTROLS', label: 'MOUSE SENSITIVITY', type: 'range', def: 1, min: 0.2, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) },
   { id: 'invertY', group: 'CONTROLS', label: 'INVERT Y AXIS', type: 'toggle', def: false },
+  { id: 'laptopMode', group: 'CONTROLS', label: 'LAPTOP MODE', type: 'toggle', def: false },
   { id: 'volume', group: 'AUDIO', label: 'VOLUME', type: 'range', def: 1, min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
   { id: 'music', group: 'AUDIO', label: 'MUSIC', type: 'toggle', def: true },
   {

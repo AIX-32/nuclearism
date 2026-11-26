@@ -322,10 +322,15 @@ overlay.addEventListener('click', () => {
   finishLoading();
 });
 
+let galleryStop = null;
 function show(name) {
   for (const v of menu.querySelectorAll('.menu-view')) {
     v.classList.toggle('hidden', v.dataset.view !== name);
   }
+  if (name === 'gallery') import('./gallery.js').then(({ openGallery }) => {
+    if (!menu.querySelector('.menu-view[data-view="gallery"]')?.classList.contains('hidden')) galleryStop = openGallery();
+  });
+  else if (galleryStop) { galleryStop(); galleryStop = null; }
   if (name === 'worlds') paintWorlds();
   if (name === 'home') paintSplash();
 }
@@ -431,6 +436,7 @@ menu.addEventListener('click', async (e) => {
 
   if (act === 'worlds' || act === 'home') show(act);
   else if (act === 'settings') show('settings');
+  else if (act === 'gallery') show('gallery');
   else if (act === 'discord') window.open(DISCORD_URL, '_blank', 'noopener');
   else if (act === 'create') {
     createName.value = '';

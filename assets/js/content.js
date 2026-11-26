@@ -5,6 +5,8 @@ import { KIND as ROOF, ITEMS as ROOF_ITEMS, RECIPES as ROOF_RECIPES } from './pi
 import { KIND as DOOR, ITEMS as DOOR_ITEMS, RECIPES as DOOR_RECIPES } from './pieces/door.js';
 import { KIND as TRIANGLE, ITEMS as TRIANGLE_ITEMS, RECIPES as TRIANGLE_RECIPES } from './pieces/triangle.js';
 import { ITEMS as BUNKER_DOOR_ITEMS, RECIPES as BUNKER_DOOR_RECIPES } from './pieces/bunker_door.js';
+import { ITEMS as STAIR_ITEMS, RECIPES as STAIR_RECIPES } from './pieces/stair.js';
+import { ITEMS as LADDER_ITEMS, RECIPES as LADDER_RECIPES } from './pieces/ladder.js';
 
 export { BUILD_TIERS, BUILD_TIER_ORDER, BUILD_UPGRADES };
 
@@ -64,6 +66,8 @@ export const ITEM_DEFS = {
   ...DOOR_ITEMS,
   ...TRIANGLE_ITEMS,
   ...BUNKER_DOOR_ITEMS,
+  ...STAIR_ITEMS,
+  ...LADDER_ITEMS,
   stone: { code: 'ST', name: 'STONE', stack: 99, rad: 0, block: true, icon: 'assets/images/items/stone.png' },
   basalt: { code: 'BA', name: 'BASALT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/basalt.png' },
   dirt: { code: 'DI', name: 'DIRT', stack: 99, rad: 0, block: true, icon: 'assets/images/items/dirt.png' },
@@ -476,6 +480,8 @@ export const ITEM_DEFS = {
   copper_director: { code: 'CD', name: 'COPPER DIRECTOR', stack: 32, rad: 0, block: false, workbench: 'copper_director', desc: 'A cheap starter connector for linking nearby machines without a full power pole.' },
   simple_container: { code: 'SCN', name: 'SIMPLE CONTAINER', stack: 1, rad: 0, block: false, workbench: 'simple_container', model: 'assets/models/items/simple_container.gltf', desc: 'A basic storage vessel made from stone and wood.' },
   medium_container: { code: 'MCN', name: 'MEDIUM CONTAINER', stack: 1, rad: 0, block: false, workbench: 'medium_container', model: 'assets/models/items/medium_container.gltf', desc: 'A reinforced storage vessel with twice the space of a simple container.' },
+  massive_container: { code: 'MCX', name: 'MASSIVE CONTAINER', stack: 1, rad: 0, block: false, workbench: 'massive_container', model: 'assets/models/industrial/04_container_01.glb', desc: 'A shipping-container depot with eight times the space of a simple container. Tick USE AS SKYLINE STORAGE to let a requester draw from it.' },
+  requester: { code: 'RQT', name: 'REQUESTER', stack: 1, rad: 0, block: false, workbench: 'requester', model: 'assets/models/workbenches/requester.gltf', desc: 'Search every skyline-linked massive container and pull what you need into its slots.' },
   wooden_powerpole: { code: 'WP', name: 'WOODEN POWERPOLE', stack: 16, rad: 0, block: false, workbench: 'cable', desc: 'Links nearby machines into one power grid.' },
   skyline_pylon: { code: 'SY', name: 'SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'skyline_pylon', desc: 'A tall mast. Workbenches near a pylon can be linked by the zipline wrench.' },
   short_skyline_pylon: { code: 'SS', name: 'SHORT SKYLINE PYLON', stack: 16, rad: 0, block: false, workbench: 'short_skyline_pylon', desc: 'A half-height mast for tighter spaces. Workbenches near a pylon can be linked by the zipline wrench.' },
@@ -503,6 +509,10 @@ export const ITEM_DEFS = {
   atmospheric_scrubber: { code: 'SR', name: 'ATMOSPHERIC SCRUBBER', stack: 8, rad: 0, block: false, workbench: 'atmospheric_scrubber', desc: 'Filters the air around you. Enough of them make the late-game ambient dose survivable.' },
   greenhouse: { code: 'GH', name: 'GREENHOUSE', stack: 16, rad: 0, block: false, workbench: 'greenhouse', desc: 'Put seeds in it and it grows them into food ingredients.' },
   oven: { code: 'OV', name: 'OVEN', stack: 16, rad: 0, block: false, workbench: 'oven', desc: 'A powered oven for cooking hearty meals.' },
+  proton_canister: I('PC', 'PROTON CANISTER', { block: false, stack: 16, icon: 'assets/images/items/jerry_can_green.png', tint: 0x60d0ff, desc: 'Pressurised hydrogen for the collider injector. One canister per beam minute.' }),
+  antimatter: I('AM', 'ANTIMATTER', { block: false, stack: 8, rad: 1.5, icon: 'assets/images/items/matter.png', tint: 0xff70ff, desc: 'The last thing you will ever make. Handle with respect: it is very hot.' }),
+  blueprint_lhc: I('LC', 'COLLIDER BLUEPRINT', { block: false, stack: 8, icon: 'assets/images/items/blueprint.png', desc: 'A 100 metre ring design. Only spent fusion pellets carry the data needed to copy it.' }),
+  lhc: { code: 'LH', name: 'LARGE HADRON COLLIDER', stack: 1, rad: 0, block: false, workbench: 'lhc', desc: 'A 100 metre ring that eats proton canisters and drinks power. Each powered minute rolls a 4% chance for antimatter.' },
 };
 
 
@@ -570,10 +580,11 @@ export const BARREL_LOOT = [
   ['circuit_basic', 2], ['circuit_mid', 1], ['electric_motor', 1.5], ['linear_actuator', 1],
 ];
 export const SCRAP_RECYCLE_TABLE = [
-  ['iron_ingot', 20], ['copper_ingot', 18], ['tin_ingot', 14], ['lead_ingot', 10], ['steel_ingot', 8],
-  ['iron_plate', 10], ['copper_plate', 9], ['steel_plate', 6], ['lead_plate', 5],
-  ['carbon', 12], ['graphite', 6], ['carbon_mesh', 4], ['copper_solenoid', 3],
-  ['circuit_basic', 1.5], ['electric_motor', 1.5], ['linear_actuator', 1], ['machine_chassis', 0.8],
+  ['iron_ingot', 24], ['copper_ingot', 20], ['tin_ingot', 16], ['lead_ingot', 12], ['steel_ingot', 10],
+  ['iron_plate', 6], ['copper_plate', 5], ['steel_plate', 4], ['lead_plate', 3],
+  ['carbon', 6], ['graphite', 4], ['carbon_mesh', 3], ['copper_solenoid', 2],
+  ['circuit_basic', 6], ['circuit_mid', 3], ['circuit_board', 1.5],
+  ['electric_motor', 4], ['linear_actuator', 1.5], ['machine_chassis', 0.8],
 ];
 
 export const LORE_POD_LOOT = [
@@ -768,6 +779,11 @@ export const MACHINE_DEFS = [
         out: { containment_helmet: 1, containment_chestplate: 1, containment_leggings: 1, containment_boots: 1, containment_gloves: 1 }, time: 60
       },
       { in: { drill_bit: 4, circuit_advanced: 2, electric_motor: 2, steel_plate: 4, blueprint_containment: 1 }, out: { plasma_drill: 1 }, time: 30 },
+      { in: { steel_plate: 4, copper_solenoid: 4, glass: 4, carbon_mesh: 2 }, out: { proton_canister: 8 }, time: 40 },
+      {
+        in: { machine_chassis: 128, steel_plate: 256, iron_plate: 128, copper_solenoid: 64, circuit_advanced: 32, electric_motor: 24, linear_actuator: 16, cable: 96, heavy_shielding_plate: 16, advanced_shielding_plate: 8, data_drive: 8, blueprint_lhc: 1 },
+        out: { lhc: 1 }, time: 900
+      },
       {
         in: { zirconium_plate: 2, steel_plate: 1, jerry_can_green: 1 }, liquidIn: [{ id: 'heavy_water', amount: 8 }],
         out: { jerry_can_green: 1, heavy_water_rod: 1 }, time: 14
@@ -779,6 +795,7 @@ export const MACHINE_DEFS = [
       { in: { machine_chassis: 2, circuit_board: 1, copper_plate: 4, data_disk: 2 }, out: { energy_storage: 1 }, time: 10 },
       { in: { car_battery: 6, iron_plate: 5, cable: 4 }, out: { battery_stack: 1 }, time: 30 },
       { in: { iron_ingot: 5, wood: 2, stone: 10 }, out: { medium_container: 1 }, time: 8 },
+      { in: { machine_chassis: 1, circuit_board: 2, copper_plate: 4, cable: 4 }, out: { requester: 1 }, time: 10 },
       { in: { copper_plate: 2, iron_plate: 1 }, out: { cable: 8 }, time: 3 },
       { in: { machine_chassis: 1, circuit_basic: 2, iron_plate: 4, glass: 6 }, out: { solar_panel: 1 }, time: 10 },
       { in: { machine_chassis: 1, circuit_board: 1, lead_plate: 8, timer_module: 1 }, out: { decay_generator: 1 }, time: 14 },
@@ -801,6 +818,7 @@ export const MACHINE_DEFS = [
       { in: { data_drive: 2, circuit_advanced: 2, beryllium_ingot: 4, advanced_shielding_plate: 1 }, out: { blueprint_containment: 1 }, time: 30, rad: 0.2 },
       { in: { data_drive: 2, circuit_advanced: 3, polonium: 2, advanced_shielding_plate: 2 }, out: { blueprint_excavator: 1 }, time: 34, rad: 0.8 },
       { in: { data_drive: 2, circuit_advanced: 2, steel_plate: 12, electric_motor: 4, linear_actuator: 2 }, out: { blueprint_rammer: 1 }, time: 28, rad: 0.1 },
+      { in: { data_drive: 2, circuit_advanced: 4, depleted_fusion: 2, advanced_shielding_plate: 1 }, out: { blueprint_lhc: 1 }, time: 90, rad: 1 },
     ]
   },
   {
@@ -934,6 +952,8 @@ export const MACHINE_DEFS = [
   { id: 'battery_stack', kind: 'storage', name: 'BATTERY STACK', model: MODEL('battery_stack'), layout: LAYOUT('battery_stack'), label: 'Open battery stack', height: 1.3, dx: 2.8, dz: 1.8, capacity: 12000 },
   { id: 'simple_container', kind: 'storage', name: 'SIMPLE CONTAINER', model: 'assets/models/items/simple_container.gltf', label: 'Open simple container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 14 },
   { id: 'medium_container', kind: 'storage', name: 'MEDIUM CONTAINER', model: 'assets/models/items/medium_container.gltf', label: 'Open medium container', height: 0.675, dx: 1.125, dz: 1.125, storageSlots: 28 },
+  { id: 'massive_container', kind: 'storage', name: 'MASSIVE CONTAINER', model: 'assets/models/industrial/04_container_01.glb', label: 'Open massive container', height: 3.15, dx: 5.14, dz: 12.91, storageSlots: 112, skylineStorage: true },
+  { id: 'requester', kind: 'storage', name: 'REQUESTER', model: MODEL('requester'), label: 'Open requester', height: 1.0, dx: 1.5, dz: 1.5, storageSlots: 8, requester: true },
   { id: 'cable', kind: 'cable', name: 'WOODEN POWERPOLE', model: MODEL('cable'), layout: LAYOUT('cable'), label: 'Wooden powerpole', height: 3.2, reach: 1.6, dx: 2.8, dz: 1.8 },
   { id: 'copper_director', kind: 'starter_cable', name: 'COPPER DIRECTOR', model: MODEL('copper_director'), layout: LAYOUT('cable'), label: 'Copper director', height: 0.325, reach: 0.15, dx: 0.55, dz: 0.55 },
   { id: 'skyline_pylon', kind: 'pylon', name: 'SKYLINE PYLON', model: 'assets/models/workbenches/skyline_pylon.gltf', layout: LAYOUT('skyline_pylon'), label: 'Use skyline pylon', height: 3.4, dx: 2.8, dz: 1.8 },
@@ -1025,8 +1045,8 @@ export const MACHINE_DEFS = [
     ]
   },
   {
-    id: 'recycler', kind: 'processor', name: 'RECYCLER', model: MODEL('recycler'), layout: LAYOUT('recycler'), label: 'Use recycler',
-    height: 1.2, dx: 2.0, dz: 1.6, outputs: 4, randomOut: SCRAP_RECYCLE_TABLE,
+    id: 'recycler', kind: 'slot', name: 'RECYCLER', model: MODEL('recycler'), layout: LAYOUT('recycler'), label: 'Use recycler',
+    height: 1.2, dx: 2.0, dz: 1.6, outputs: 6, energy: { use: 20 }, randomOut: SCRAP_RECYCLE_TABLE,
     recipes: [
       { in: { scrap: 2 }, out: { iron_ingot: 1 }, time: 5 },
     ]
@@ -1046,6 +1066,12 @@ export const MACHINE_DEFS = [
   {
     id: 'drop_pod', kind: 'drop', name: 'DROP POD', model: MODEL('dropbox'), layout: LAYOUT('drop_pod'), label: 'Open drop pod',
     height: 0.9, dx: 1.2, dz: 1.2, outputs: 8, modelRotY: Math.PI,
+  },
+  {
+    id: 'lhc', kind: 'collider', name: 'LARGE HADRON COLLIDER', model: MODEL('lhc'), layout: LAYOUT('lhc'), label: 'Open the collider',
+    height: 12.4, dx: 50, dz: 50, footprint: [8, 8], reach: 60, energy: { use: 12000 }, outputs: 8,
+    spin: 'torus', spinRate: 0.6,
+    collider: { radius: 50, period: 60, chance: 0.04, feed: 'proton_canister', out: 'antimatter', startPower: 5000 },
   },
 ];
 
@@ -1092,6 +1118,8 @@ export const CRAFT_RECIPES = [
   ...DOOR_RECIPES,
   ...TRIANGLE_RECIPES,
   ...BUNKER_DOOR_RECIPES,
+  ...STAIR_RECIPES,
+  ...LADDER_RECIPES,
 
 
   ...Object.entries(ITEM_DEFS).filter(([, d]) => d.seed).map(([id, d]) => ({
@@ -1243,6 +1271,7 @@ export const CRAFT_RECIPES = [
   { out: { electric_furnace: 1 }, needs: { iron_ingot: 5, carbon: 3 } },
   { out: { cable: 6 }, needs: { copper_ingot: 2, iron_ingot: 1 } },
   { out: { simple_container: 1 }, needs: { stone: 20, wood: 1 } },
+  { out: { massive_container: 1 }, needs: { boron_plate: 50, stone: 40 } },
   { out: { copper_director: 3 }, needs: { copper_ingot: 1, wood: 1 } },
   { out: { wooden_powerpole: 1 }, needs: { cable: 5, wood: 3 } },
   { out: { ingot_former: 1 }, needs: { iron_ingot: 4, copper_ingot: 2 } },
@@ -1300,6 +1329,17 @@ export function layoutFor(def) {
   const grid = { cols: 12, rows: 7, cell: 64 };
   const S = (id, x, y, w, h, role, label) => el.push({ id, type: 'slot', x, y, w, h, role, label });
   el.push({ id: 'header', type: 'label', x: 0, y: 0, w: 12, h: 1, text: title, size: 19 });
+
+  if (def.kind === 'slot') {
+    el.length = 0;
+    const slotGrid = { cols: 6, rows: 11, cell: 48 };
+    el.push({ id: 'status', type: 'label', x: 0, y: 0, w: 6, h: 1, text: 'INSERT SCRAP', size: 11 });
+    el.push({ id: 'inHead', type: 'label', x: 1, y: 1, w: 4, h: 1, text: 'INPUT', size: 12 });
+    S('input0', 1, 2, 4, 4, 'input0', '');
+    el.push({ id: 'outHead', type: 'label', x: 0, y: 6, w: 6, h: 1, text: 'OUTPUT', size: 12 });
+    for (let i = 0; i < 6; i++) S(`output${i}`, (i % 3) * 2, 7 + Math.floor(i / 3) * 2, 2, 2, `output${i}`, '');
+    return { version: 1, id: def.id, title, grid: slotGrid, theme, elements: el };
+  }
 
   if (def.kind === 'crafting' || def.kind === 'processor') {
 
@@ -1362,13 +1402,22 @@ export function layoutFor(def) {
     return { version: 1, id: def.id, title, grid, theme, elements: el };
   }
 
+  if (def.requester) {
+    el.push({ id: 'info', type: 'label', x: 0, y: 0, w: 12, h: 1, text: 'CLICK AN ITEM TO REQUEST IT FROM SKYLINE STORAGE', size: 12 });
+    el.push({ id: 'requests', type: 'requests', x: 0, y: 1, w: 9, h: 4 });
+    for (let i = 0; i < 6; i++) S(`slot${i}`, 9 + (i % 3), 1 + Math.floor(i / 3), 1, 1, `slot${i}`, '');
+    el.push({ id: 'status', type: 'label', x: 0, y: 6, w: 12, h: 1, text: 'NO PYLON IN RANGE', size: 12 });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
   if (def.kind === 'storage') {
     const cols = 4;
     const slotCount = def.storageSlots || 14;
+    if (def.skylineStorage) el.push({ id: 'skylineToggle', type: 'button', x: 0, y: 0, w: cols, h: 1, text: 'USE AS SKYLINE STORAGE', action: 'toggleSkylineStorage' });
     for (let i = 0; i < slotCount; i++) {
       S(`slot${i}`, i % cols, 1 + Math.floor(i / cols), 1, 1, `slot${i}`, '');
     }
-    const rows = Math.max(5, Math.ceil(slotCount / cols) + 1);
+    const rows = Math.max(5, Math.ceil(slotCount / cols) + 1 + (def.skylineStorage ? 1 : 0));
     if (el[0] && el[0].id === 'header') el[0].w = cols;
     return { version: 1, id: def.id, title, grid: { cols, rows, cell: 64 }, theme, elements: el };
   }
@@ -1463,6 +1512,17 @@ export function layoutFor(def) {
     el.push({ id: 'info', type: 'label', x: 3, y: 1, w: 9, h: 2, text: 'INSERT A SCRUBBER FILTER', size: 12 });
     el.push({ id: 'status', type: 'label', x: 0, y: 4, w: 12, h: 1, text: 'NO FILTER', size: 12 });
     el.push({ id: 'progress', type: 'progress', x: 0, y: 5, w: 12, h: 1, label: 'FILTER' });
+    return { version: 1, id: def.id, title, grid, theme, elements: el };
+  }
+
+  if (def.kind === 'collider') {
+    grid.cols = 12; grid.rows = 8;
+    if (el[0]) el[0].w = grid.cols;
+    S('feed', 0, 1, 2, 2, 'fuel', 'PROTON FEED');
+    el.push({ id: 'info', type: 'label', x: 2, y: 1, w: 10, h: 2, text: 'ONE CANISTER PER MINUTE · 12000 PU/S · 4% ANTIMATTER CHANCE EACH POWERED MINUTE', size: 11 });
+    for (let i = 0; i < (def.outputs || 4); i++) S(`o${i}`, 2 + (i % 5) * 2, 3 + Math.floor(i / 5) * 2, 2, 2, `output${i}`, 'OUT');
+    el.push({ id: 'status', type: 'label', x: 0, y: 6, w: 12, h: 1, text: 'NO PROTON FEED', size: 12 });
+    el.push({ id: 'progress', type: 'progress', x: 0, y: 7, w: 12, h: 1, label: 'NEXT ROLL' });
     return { version: 1, id: def.id, title, grid, theme, elements: el };
   }
 
@@ -1568,7 +1628,12 @@ export const GUIDE_STEPS = [
   { id: 'fusion_reactor', title: 'BUILD A FUSION REACTOR', hint: 'Assembler: 6 chassis, 6 advanced circuits, 2 heavy-water rods, 8 reactor casings.', place: 'fusion_reactor' },
   { id: 'blueprint_scrubber', title: 'RESEARCH THE SCRUBBER BLUEPRINT', hint: 'Lab: 2 polonium, 2 data disks, an advanced circuit and 4 lead plates.', need: { blueprint_scrubber: 1 } },
   { id: 'scrubber', title: 'BUILD AN ATMOSPHERIC SCRUBBER', hint: 'Assembler: 4 chassis, 4 advanced circuits, 12 lead plates, 4 cooling fans.', place: 'atmospheric_scrubber' },
-  { id: 'more', title: 'THERES MORE', hint: 'The guide ends here, but the game doesnt. Research the containment blueprint for the suit and plasma drill, build a scrubber farm, chase achievements and survive the next strike. Just go on.' },
+  { id: 'blueprint_lhc', title: 'RESEARCH THE COLLIDER BLUEPRINT', hint: 'Lab: 2 data drives, 4 advanced circuits, 2 spent fusion pellets and a shielding plate.', need: { blueprint_lhc: 1 } },
+  { id: 'lhc', title: 'BUILD THE LARGE HADRON COLLIDER', hint: 'Assembler: the blueprint and a truly unreasonable pile of steel, copper and shielding.', place: 'lhc' },
+  { id: 'proton_canister', title: 'CHARGE THE BEAM', hint: 'Assembler: steel plates, copper solenoids, glass and carbon mesh.', need: { proton_canister: 4 } },
+  { id: 'collider_on', title: 'RUN THE COLLIDER', hint: 'Feed it canisters on a fusion-powered grid. Each powered minute rolls a 4% chance.', active: 'lhc' },
+  { id: 'antimatter', title: 'HARVEST ANTIMATTER', hint: 'Keep the ring fed and powered until a roll lands. This is the last thing you make.', need: { antimatter: 1 } },
+  { id: 'more', title: 'THERES MORE', hint: 'You have made antimatter. The guide ends here, but the game doesnt. Research the containment blueprint for the suit and plasma drill, build a scrubber farm, chase achievements and survive the next strike. Just go on.' },
 ];
 
 
@@ -1677,6 +1742,7 @@ export const ACHIEVEMENT_TYPES = [
       { name: 'CHAIN REACTION', icon: 'leu_235_fuel', req: 'Start a fission reactor.', started: 'fission' },
       { name: 'BOTTLE A STAR', icon: 'fusion_reactor', req: 'Build a fusion reactor.', built: 'fusion_reactor' },
       { name: 'SUNLIGHT', icon: 'fusion_fuel', req: 'Start a fusion reactor.', started: 'fusion' },
+      { name: 'THE LAST THING', icon: 'antimatter', req: 'Build the large hadron collider.', built: 'lhc' },
     ],
   },
   {

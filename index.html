@@ -197,6 +197,8 @@
 
   <div id="replayRec" class="hidden"><b>●</b> REC <span id="replayRecTime">0:00</span></div>
 
+  <div id="replayCursor" class="hidden"><img alt="recorded mouse cursor" /></div>
+
   <div id="invPanel" class="hidden">
     <div class="box">
       <header class="inventory-header">
@@ -341,6 +343,7 @@
         <div class="menu-actions">
           <button class="mbtn primary" data-act="worlds">START</button>
           <button class="mbtn" data-act="settings">SETTINGS</button>
+          <button class="mbtn" data-act="gallery">GALLERY</button>
           <button class="mbtn" data-act="discord">DISCORD</button>
         </div>
       </section>
@@ -398,6 +401,18 @@
           <button class="mbtn link" data-reset-settings>RESET DEFAULTS</button>
           <button class="mbtn link" data-act="home">BACK</button>
         </div>
+      </section>
+
+      <section class="menu-view hidden" data-view="gallery">
+        <h2>MODEL GALLERY</h2>
+        <div class="gallery-body">
+          <div id="galleryGrid" class="gallery-grid"></div>
+          <div class="gallery-view">
+            <canvas id="galleryCanvas" aria-label="3D model viewer"></canvas>
+            <div id="galleryCaption" class="gallery-caption">SELECT A MODEL · DRAG TO ROTATE · SCROLL TO ZOOM</div>
+          </div>
+        </div>
+        <button class="mbtn link" data-act="home">BACK</button>
       </section>
     </div>
     <div id="legacyModal" hidden>

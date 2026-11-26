@@ -95,10 +95,10 @@ export const KIND = {
 };
 
 export const ITEMS = {
-  bunker_door_wood: { code: 'BD', name: 'WOOD BUNKER DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'wood' }, table: true, desc: 'One full-width leaf of a bunker blast door. Put two beside each other on floor BBs and right-click to slide them apart.' },
-  bunker_door_brick: { code: 'BB', name: 'BRICK BUNKER DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'brick' }, desc: 'One leaf of a heavier bunker blast door.' },
-  bunker_door_concrete: { code: 'BC', name: 'CONCRETE BUNKER DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'concrete' }, desc: 'One leaf of a poured bunker blast door.' },
-  bunker_door_shielded: { code: 'BS', name: 'SHIELDED BUNKER DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'shielded' }, desc: 'One leaf of a lead-lined bunker blast door. Almost nothing gets through while shut.' },
+  bunker_door_wood: { code: 'BD', name: 'WOOD SLIDING DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'wood' }, table: true, desc: 'One full-width leaf of a sliding blast door. Put two beside each other on floor BBs and right-click to slide them apart.' },
+  bunker_door_brick: { code: 'BB', name: 'BRICK SLIDING DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'brick' }, desc: 'One leaf of a heavier sliding blast door.' },
+  bunker_door_concrete: { code: 'BC', name: 'CONCRETE SLIDING DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'concrete' }, desc: 'One leaf of a poured sliding blast door.' },
+  bunker_door_shielded: { code: 'BS', name: 'SHIELDED SLIDING DOOR BB', stack: 16, rad: 0, block: false, building: { kind: 'bunker_door', tier: 'shielded' }, desc: 'One leaf of a lead-lined sliding blast door. Almost nothing gets through while shut.' },
 };
 
 export const RECIPES = [

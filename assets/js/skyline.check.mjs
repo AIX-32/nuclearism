@@ -3,7 +3,7 @@
 import {
   recipeNeeds, recipeOutputs, recipeList, machineKey, outputRoles, storageRoles,
   inputRoles, deliveryRoles, sourceItems, destItems, matchRoute,
-  pushIntoSlots, takeFromSlots, SKYLINE_MODE,
+  pushIntoSlots, takeFromSlots, skylineStorages, stockedItems, pullItems, SKYLINE_MODE,
 } from './skyline.js';
 
 const ok = [];
@@ -116,6 +116,33 @@ const taken = takeFromSlots(slots, inputRoles(), 'iron', 10);
 check(taken === 10, 'taking moves the requested count');
 check(slots.input0.n === 89, 'the slot keeps the rest');
 check(takeFromSlots(slots, inputRoles(), 'copper', 5) === 0, 'a wrong item is not taken');
+
+const pyl = { def: { id: 'skyline_pylon', kind: 'pylon' }, x: 0, y: 0, z: 0 };
+const depot = {
+  def: { id: 'massive_container', kind: 'storage', storageSlots: 112, skylineStorage: true },
+  state: { slots: { slot0: { id: 'iron', n: 120 }, slot1: { id: 'stone', n: 10 } }, skylineStorage: true },
+};
+const unticked = {
+  def: { id: 'massive_container', kind: 'storage', storageSlots: 112, skylineStorage: true },
+  state: { slots: { slot0: { id: 'copper', n: 7 } }, skylineStorage: false },
+};
+const req = { def: { id: 'requester', kind: 'storage', storageSlots: 8, requester: true }, state: { slots: {} } };
+const inRange = (m) => m === pyl || m === depot || m === req ? pyl : null;
+const linked = (a, b) => a === b || (a === pyl && b === pyl);
+const storages = skylineStorages([depot, unticked, req], req, inRange, linked);
+check(storages.length === 1 && storages[0] === depot, 'only ticked containers in the pylon network are visible to the requester');
+const stock = stockedItems(storages);
+check(stock.find((o) => o.id === 'iron')?.n === 120, 'the requester lists what the containers hold');
+check(!stock.some((o) => o.id === 'copper'), 'an unticked container stays private');
+const moved = pullItems(req, storages, 'iron', () => 50);
+check(moved === 120 && req.state.slots.slot0.n === 50 && req.state.slots.slot1.n === 50 && req.state.slots.slot2.n === 20, 'a request fills slots up to the stack cap');
+check(!depot.state.slots.slot0, 'requested stacks leave the container');
+for (const role of storageRoles(req)) if (!req.state.slots[role]) req.state.slots[role] = { id: 'iron', n: 50 };
+check(pullItems(req, storages, 'stone', () => 50) === 0 && depot.state.slots.slot1.n === 10, 'a full requester leaves the stock in the container');
+const flask = { id: 'jerry_can_black', n: 1, liquid: { id: 'water', amount: 5 } };
+depot.state.slots.slot2 = flask;
+const emptyReq = { def: { id: 'requester', kind: 'storage', storageSlots: 8 }, state: { slots: {} } };
+check(pullItems(emptyReq, storages, 'jerry_can_black', () => 10) === 1 && emptyReq.state.slots.slot0 === flask && !depot.state.slots.slot2, 'a filled container moves whole and keeps its liquid');
 
 let failed = 0;
 for (const [pass, name] of ok) {

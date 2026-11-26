@@ -16,8 +16,9 @@
     import { sourcePoint, transmission, relativeBearing, compass, shaftBurial, RAD_OCCL } from './radiation.js';
     import { vegTint } from './veg-tint.js';
     import { getSetting, renderSettings, onSettingsChange } from './settings.js';
-    import { createReplay, pushFrame, pushEdit, sampleAt, editIndexAt, editAt, heldId, packReplay, unpackReplay, replayBytes, frameCount, editCount } from './replay.js';
+    import { createReplay, pushFrame, pushEdit, pushState, pushEvent, sampleAt, stateIndexAt, stateAt, editIndexAt, editAt, eventIndexAt, eventAt, heldId, packReplay, unpackReplay, replayBytes, frameCount, editCount } from './replay.js';
     import { createReplayUI, formatTime } from './replay-ui.js';
+    import { paintUI, paintCursor, replayCursorImage } from './replay-capture.js';
     import { createRealisticTerrain } from './terrain-realistic.js';
     import { idbGet, idbSet, idbRemove, idbEntries } from './idb-store.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -76,11 +77,12 @@
     let vsync = getSetting('vsync');
     let mouseSens = getSetting('sensitivity');
     let invertY = getSetting('invertY');
+    let laptopMode = getSetting('laptopMode');
     const CHUNK_Y_MIN = -8;
     const CHUNK_Y_MAX = 2;
 
     const SAVE_KEY = MENU_WORLD ? `idte.save.v2.${MENU_WORLD.id}` : 'idte.save.v1';
-    const ICON_CACHE_KEY = 'idte.icon.v25.';
+    const ICON_CACHE_KEY = 'idte.icon.v30.';
 
     async function readSaveData(key = SAVE_KEY) {
       try {
@@ -5505,6 +5507,7 @@
       const y = world.surfaceY(site.x, site.z, ground + 30);
       carveNukeCrater(site.x, y, site.z, site.r);
       nuclearStrikes.push({ x: site.x, y, z: site.z, day: clock.day, r: site.r, radMult: nukeRadMult });
+      replayEvent('strike', { x: +site.x.toFixed(2), y: +y.toFixed(2), z: +site.z.toFixed(2), r: site.r });
       nukeRadMult *= 1.5;
       shakeT = Math.max(shakeT, 2.5);
       playNukeBoom();
@@ -6117,6 +6120,7 @@
     }
 
     function triggerSwing(dur) {
+      replayEvent('swing', { id: vm.item || null });
       const cfg = (TOOL_MODELS[vm.item] || {}).swing;
       vm.swingDur = (cfg && cfg.dur) || THREE.MathUtils.clamp(dur || 0.3, 0.22, 0.6);
       vm.swingT = 0;
@@ -8750,6 +8754,8 @@
       onClosed: () => { lockPointer(); },
     });
 
+    machineSystem.ctx.skyline = skylineSystem;
+
     const pipeSystem = new PipeSystem({ THREE, scene, GLTFLoader, give });
     pipeSystem.load().then(() => {
       if (saved && saved.pipes) pipeSystem.restore(saved.pipes);
@@ -9202,6 +9208,7 @@
       else if (id === 'music') musicEnabled = v;
       else if (id === 'sensitivity') mouseSens = v;
       else if (id === 'invertY') invertY = v;
+      else if (id === 'laptopMode') laptopMode = v;
       else if (id === 'fov') { camera.fov = v; camera.updateProjectionMatrix(); }
       else if (id === 'resolution') { PIXEL = v; applyPixelSize(); }
       else if (id === 'colorLevels') { COLOR_LEVELS = v; postMat.uniforms.uLevels.value = v; }
@@ -9230,6 +9237,7 @@
 
 
     function lockPointer() {
+      if (replayPlay) return;
       try {
         const menuEl = document.getElementById('menu');
         if (menuEl) { menuEl.classList.remove('loading-behind'); menuEl.classList.add('hidden'); }
@@ -9442,6 +9450,10 @@
           vel: new THREE.Vector3(-sy * 4.5, 2.5, -cy * 4.5), resting: false
         });
       }
+      replayEvent('drop', {
+        id, n, liquid: liquid || null, plates: plates || null,
+        x: +m.position.x.toFixed(2), y: +m.position.y.toFixed(2), z: +m.position.z.toFixed(2),
+      });
     }
 
     function dropSolidAt(x, y, z) {
@@ -9980,7 +9992,7 @@
         give(outId, outN);
         made++;
       }
-      if (made) { achCraft(outId, made); syncBars(); }
+      if (made) { achCraft(outId, made); syncBars(); replayEvent('craft', { id: outId, n: made }); }
     }
 
     const tableCraftUI = new CraftOptions({
@@ -10630,6 +10642,7 @@
       }
 
       const at = { x: player.pos.x, y: player.pos.y, z: player.pos.z };
+      replayEvent('death', { x: +at.x.toFixed(2), z: +at.z.toFixed(2) });
       const spill = (s) => {
         if (s) deathSpill.push({
           id: s.id, n: s.n, at,
@@ -10672,6 +10685,7 @@
     }
 
     document.addEventListener('mousemove', (e) => {
+      if (!replayPlay) replayCursor = { x: e.clientX, y: e.clientY };
       if (!locked) return;
       if (lookSkipEvents > 0) { lookSkipEvents--; return; }
       if (performance.now() < lookBlockedUntil) return;
@@ -10787,6 +10801,12 @@
       }
       keys[e.code] = true;
 
+      if (laptopMode && locked && !e.repeat && (e.code === 'KeyQ' || e.code === 'KeyE')) {
+        // reuse the mouse handlers so laptop keys get the exact click behaviour
+        renderer.domElement.dispatchEvent(new MouseEvent('mousedown', { button: e.code === 'KeyQ' ? 0 : 2, bubbles: true }));
+        return;
+      }
+
       if (e.code === 'Space' && !e.repeat && WORLD_MODE === 'sandbox') {
         const now = performance.now();
         if (now - lastSpaceTap < 300) {
@@ -10892,7 +10912,7 @@
         }
       }
 
-      if (e.code === 'KeyQ' && (locked || invOpen)) {
+      if ((e.code === 'KeyQ' || (laptopMode && e.code === 'KeyX')) && (locked || invOpen)) {
 
         let t = -1;
         if (invOpen && hoverSlot >= 0) {
@@ -10914,7 +10934,12 @@
       if (e.code === 'Space') e.preventDefault();
     });
 
-    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+    document.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+      if (laptopMode && (e.code === 'KeyQ' || e.code === 'KeyE')) {
+        window.dispatchEvent(new MouseEvent('mouseup', { button: e.code === 'KeyQ' ? 0 : 2 }));
+      }
+    });
 
     document.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -11848,9 +11873,10 @@
         }
       }
       for (const p of group) if (p.open !== open) buildingSystem.toggle(p);
+      replayEvent('door', { id: piece.id, open });
       triggerSwing(0.25);
       notice(piece.kind === 'bunker_door'
-        ? (open ? 'BUNKER DOORS OPEN' : 'BUNKER DOORS CLOSED')
+        ? (open ? 'SLIDING DOORS OPEN' : 'SLIDING DOORS CLOSED')
         : (open ? 'DOOR OPEN' : 'DOOR CLOSED'));
       return true;
     }
@@ -12856,6 +12882,7 @@
 
 
     function applyConsumable(s, def) {
+      replayEvent('use', { id: s.id, n: s.n });
       const c = def.consumable;
       inv.dose = Math.max(0, inv.dose + (c.dose || 0));
       if (c.food) {
@@ -13134,6 +13161,23 @@
       return false;
     }
 
+    const LADDER_SPEED = 3.2;
+    function ladderUnderBody() {
+      if (!buildingSystem) return false;
+      const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+      const r = player.radius + 0.55;
+      for (const p of buildingSystem.pieces.values()) {
+        if (p.kind !== 'ladder') continue;
+        if (py + player.height < p.y || py >= p.y + 3) continue;
+        const dx = (p.x + 0.5) - px, dz = (p.z + 0.5) - pz;
+        if (dx * dx + dz * dz > r * r) continue;
+        // Only grab a ladder you are facing: walking past one must not hijack movement.
+        if (dx * -Math.sin(player.yaw) + dz * -Math.cos(player.yaw) < -0.15) continue;
+        return true;
+      }
+      return false;
+    }
+
     function movePlayer(dt) {
       if (mapSystem?.isOpen()) return;
 
@@ -13204,7 +13248,13 @@
       }
 
 
-      if (!inWater && keys.Space && !jumpUsed && player.onGround) {
+      const onLadder = !inWater && ladderUnderBody();
+      if (onLadder) {
+        player.vel.y = ((keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0)) * LADDER_SPEED;
+        fallPeak = 0;
+      }
+
+      if (!inWater && !onLadder && keys.Space && !jumpUsed && player.onGround) {
         jumpUsed = true;
         if (vitals.hunger >= 1) vitals.hunger -= 1;
         player.vel.y = 8.6;
@@ -14290,6 +14340,189 @@
 
     function replayNow() { return replayRecT; }
 
+    const REPLAY_STATE_INTERVAL = 0.25;
+    let replayNextState = 0;
+    let replayCursor = { x: innerWidth / 2, y: innerHeight / 2 };
+    let replayApplied = null;
+    let replayBaseline = null;
+    let replaySavedTimeLock = null;
+
+    function replayEvent(type, data = null) {
+      if (replayRec) pushEvent(replayRec, replayRecT, type, data);
+    }
+
+    function replayClearMachines() {
+      while (machineSystem.instances.length) machineSystem.remove(machineSystem.instances[0], false);
+      machineSystem.cableDirty = true;
+      machineSystem._netSig = null;
+      machineSystem._netCache = null;
+    }
+
+    function replayClearBuildings() {
+      while (buildingSystem.pieces.size) buildingSystem.remove(buildingSystem.pieces.values().next().value);
+      for (const mesh of buildingSystem.meshes.values()) buildingSystem.group.remove(mesh);
+      buildingSystem.meshes.clear();
+      buildingSystem.meshPieces.clear();
+      buildingSystem.rebuild();
+    }
+
+    function replayClearPipes() {
+      for (const c of [...pipeSystem.cells.values()]) pipeSystem.removeAt(c.x, c.y, c.z, false);
+      pipeSystem.cells.clear();
+    }
+
+    function replayClearSkyline() {
+      for (const r of [...skylineSystem.routes]) skylineSystem.dropRoute(r);
+      skylineSystem.group.clear();
+      skylineSystem.networkWires.length = 0;
+      skylineSystem.pods.length = 0;
+      skylineSystem.lastDispatch.clear();
+      skylineSystem.pending = null;
+      skylineSystem._pylonSig = '';
+    }
+
+    function replayClearTorches() {
+      for (const t of torches) scene.remove(t.grp);
+      torches.length = 0;
+      refreshTorchLights();
+    }
+
+    function replayClearDrops() {
+      for (const d of drops) scene.remove(d.mesh);
+      drops.length = 0;
+    }
+
+    function replaySnapshot() {
+      const base = world.buildSave(player).data;
+      return {
+        day: base.day, dayT: base.dayT,
+        inv: base.inv, vitals: base.vitals,
+        guide: base.guide, achievements: base.achievements,
+        nuclearStrikes: base.nuclearStrikes,
+        lastNukeCheckDay: base.lastNukeCheckDay,
+        nextNukeDay: base.nextNukeDay,
+        nextNukeWillHit: base.nextNukeWillHit,
+        nukeRadMult: base.nukeRadMult,
+        machines: base.machines, pipes: base.pipes, skyline: base.skyline,
+        buildings: base.buildings, map: base.map, torches: base.torches,
+        openedBarrels: base.openedBarrels,
+        drops: drops.map((d) => ({
+          id: d.id, n: d.n, liquid: d.liquid, plates: d.plates,
+          x: +d.mesh.position.x.toFixed(2), y: +d.mesh.position.y.toFixed(2), z: +d.mesh.position.z.toFixed(2),
+        })),
+        ui: replayUIState(),
+        cursor: [Math.round(replayCursor.x), Math.round(replayCursor.y)],
+      };
+    }
+
+    function replayUIState() {
+      const open = machineSystem?.openInst;
+      return {
+        inv: !!invOpen,
+        recipes: !!recipeOpen,
+        tree: !!visibleTree(),
+        treeId: treeRootId || null,
+        workbench: open ? [open.def.id, +open.x.toFixed(2), +open.y.toFixed(2), +open.z.toFixed(2), open.rot | 0] : null,
+        map: !!mapSystem?.isOpen(),
+        achieve: !!achieveOpen,
+        cmd: !!cmdOpen,
+        intro: !!introOpen,
+        skyline: !!skylineSystem?.isOpen(),
+      };
+    }
+
+    function applyReplayUI(ui) {
+      if (ui.workbench) {
+        const [id, x, y, z, rot] = ui.workbench;
+        const cur = machineSystem.openInst;
+        const matches = cur && cur.def.id === id && Math.abs(cur.x - x) < 0.05 && Math.abs(cur.y - y) < 0.05 && Math.abs(cur.z - z) < 0.05;
+        if (!matches) {
+          if (cur) workbenchUI.close();
+          const inst = machineSystem.instances.find((m) => m.def.id === id
+            && Math.abs(m.x - x) < 0.05 && Math.abs(m.y - y) < 0.05 && Math.abs(m.z - z) < 0.05 && (m.rot | 0) === rot);
+          if (inst) machineSystem.open(inst);
+        }
+      } else if (machineSystem.openInst) workbenchUI.close();
+      if (ui.inv !== undefined && !!invOpen !== !!ui.inv) toggleInv(!!ui.inv, false);
+      if (ui.recipes !== undefined && !!recipeOpen !== !!ui.recipes) toggleRecipes(!!ui.recipes);
+      const treePanel = document.getElementById('treePanel');
+      if (treePanel) treePanel.classList.toggle('hidden', !ui.tree);
+      if (ui.map !== undefined && !!mapSystem?.isOpen() !== !!ui.map) { if (ui.map) mapSystem.show(); else mapSystem.hide(); }
+      if (ui.achieve !== undefined && !!achieveOpen !== !!ui.achieve) { if (ui.achieve) openAchievements(); else closeAchievements(); }
+      if (ui.cmd !== undefined && !!cmdOpen !== !!ui.cmd) { if (ui.cmd) openCmd(); else closeCmd(); }
+      if (!ui.skyline && skylineSystem?.isOpen()) skylineSystem.closeUI();
+    }
+
+    function applyReplayState(s) {
+      if (!s) return;
+      const applied = replayApplied || {};
+      const changed = (key) => {
+        const sig = JSON.stringify(s[key] ?? null);
+        if (applied[key] === sig) return false;
+        applied[key] = sig;
+        return true;
+      };
+
+      if (s.inv && changed('inv')) {
+        const put = (arr, data) => { arr.length = 0; for (const s of (data || [])) arr.push(s ? JSON.parse(JSON.stringify(s)) : null); };
+        put(inv.hot, s.inv.hot);
+        put(inv.main, s.inv.main);
+        put(inv.armor, s.inv.armor);
+        inv.sel = s.inv.sel | 0;
+        inv.dose = +s.inv.dose || 0;
+        syncBars();
+      }
+      if (s.vitals && changed('vitals')) {
+        vitals.hp = +s.vitals.hp || 0;
+        vitals.hunger = +s.vitals.hunger || 0;
+        vitals.wounds = JSON.parse(JSON.stringify(s.vitals.wounds || {}));
+        vitals.infectionImmunity = +s.vitals.immunity || 0;
+        vitals.foodNumb = +s.vitals.foodNumb || 0;
+        paintVitals();
+      }
+      if (Number.isFinite(s.day)) clock.day = s.day | 0;
+      if (Array.isArray(s.nuclearStrikes) && changed('nuclearStrikes')) {
+        nuclearStrikes = s.nuclearStrikes.map((x) => ({ ...x }));
+      }
+      if (Number.isFinite(s.lastNukeCheckDay)) lastNukeCheckDay = s.lastNukeCheckDay | 0;
+      if (Number.isFinite(s.nextNukeDay)) nextNukeDay = s.nextNukeDay | 0;
+      if (typeof s.nextNukeWillHit === 'boolean') nextNukeWillHit = s.nextNukeWillHit;
+      if (Number.isFinite(s.nukeRadMult)) nukeRadMult = s.nukeRadMult;
+      if (Array.isArray(s.openedBarrels) && changed('openedBarrels')) {
+        openedBarrels.clear();
+        for (const k of s.openedBarrels) openedBarrels.add(k);
+      }
+
+      if (changed('machines')) { replayClearMachines(); if (Array.isArray(s.machines)) machineSystem.restore(s.machines); }
+      if (changed('buildings')) { replayClearBuildings(); if (Array.isArray(s.buildings)) buildingSystem.restore(s.buildings); }
+      if (changed('pipes')) { replayClearPipes(); if (Array.isArray(s.pipes)) pipeSystem.restore(s.pipes); }
+      if (changed('skyline')) { replayClearSkyline(); if (Array.isArray(s.skyline)) skylineSystem.restore(s.skyline); }
+      if (changed('torches')) {
+        replayClearTorches();
+        for (const t of s.torches || []) addTorch(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[0] - t[3], t[1] - t[4], t[2] - t[5]);
+      }
+      if (changed('drops')) {
+        replayClearDrops();
+        for (const d of s.drops || []) {
+          spawnDrop(d.id, d.n, { x: d.x, y: d.y - 0.3, z: d.z }, d.liquid, d.plates, true);
+          const made = drops[drops.length - 1];
+          if (made) { made.mesh.position.set(d.x, d.y, d.z); made.vel.set(0, 0, 0); made.resting = true; }
+        }
+      }
+      if (s.map && changed('map')) {
+        mapSystem.seen.clear();
+        mapSystem.bookmarks.length = 0;
+        mapSystem.deaths.length = 0;
+        mapSystem.strikes.length = 0;
+        mapSystem.selected = null;
+        mapSystem.restore(s.map);
+        mapSystem.requestDraw();
+      }
+      if (s.ui && changed('ui')) applyReplayUI(s.ui);
+      if (s.cursor && changed('cursor')) replayCursor = { x: s.cursor[0], y: s.cursor[1] };
+      replayApplied = applied;
+    }
+
     function startReplayRecording() {
       if (replayRec) return;
       replayRec = createReplay({
@@ -14300,6 +14533,8 @@
       });
       replayRecT0 = performance.now();
       replayRecT = 0;
+      replayNextState = REPLAY_STATE_INTERVAL;
+      pushState(replayRec, 0, replaySnapshot(), true);
       notice('RECORDING STARTED');
     }
 
@@ -14336,6 +14571,10 @@
 
     function beginPlayback(r, opts = {}) {
       stopReplayRecording();
+      replayBaseline = replaySnapshot();
+      replayApplied = null;
+      replaySavedTimeLock = timeLock;
+      timeLock = null;
       const saved = new Map();
       for (let i = 0; i < editCount(r); i++) {
         const e = editAt(r, i);
@@ -14344,6 +14583,7 @@
       }
       replayPlay = {
         replay: r, t: 0, speed: 1, playing: true, editIdx: 0, saved,
+        snapIdx: -1, eventIdx: 0,
         exporting: !!opts.exporting,
       };
       unlockPointer();
@@ -14385,13 +14625,30 @@
       if (x0 <= x1) world.markEdited(x0, x1, y0, y1, z0, z1);
     }
 
+    function applyReplayEvents(p) {
+      const idx = eventIndexAt(p.replay, p.t);
+      while (p.eventIdx < idx) {
+        const ev = eventAt(p.replay, p.eventIdx++);
+        if (!ev) continue;
+        if (ev.type === 'swing') triggerSwing(0.3);
+        else if (ev.type === 'strike') shakeT = Math.max(shakeT, 2.5);
+        else if (ev.type === 'death') shakeT = Math.max(shakeT, 1.2);
+        else if (ev.type === 'door') triggerSwing(0.25);
+      }
+    }
+
     function seekReplay(t) {
       const p = replayPlay;
       if (!p) return;
       restoreReplayWorld();
       p.t = Math.max(0, Math.min(p.replay.dur, t));
       p.editIdx = 0;
+      p.snapIdx = -1;
+      p.eventIdx = 0;
       applyReplayEdits(p.t);
+      const snap = stateAt(p.replay, p.t);
+      if (snap) applyReplayState(snap);
+      applyReplayEvents(p);
     }
 
     function updateReplayPlayback(dt) {
@@ -14429,6 +14686,13 @@
         replayHeld = hid ? { id: hid } : null;
       }
       applyReplayEdits(p.t);
+      const si = stateIndexAt(p.replay, p.t);
+      if (si !== p.snapIdx) {
+        p.snapIdx = si;
+        const snap = stateAt(p.replay, p.t);
+        if (snap) applyReplayState(snap);
+      }
+      applyReplayEvents(p);
     }
 
     function endPlayback() {
@@ -14437,6 +14701,12 @@
       restoreReplayWorld();
       replayPlay = null;
       replayHeld = null;
+      timeLock = replaySavedTimeLock;
+      if (replayBaseline) {
+        replayApplied = null;
+        applyReplayState(replayBaseline);
+        replayBaseline = null;
+      }
       if (!replayExport) setOverlay(true);
     }
 
@@ -14612,6 +14882,9 @@
     const replayBtn = document.getElementById('replayBtn');
     const replayRecEl = document.getElementById('replayRec');
     const replayRecTimeEl = document.getElementById('replayRecTime');
+    const replayCursorEl = document.getElementById('replayCursor');
+    const replayCursorImg = replayCursorEl?.querySelector('img');
+    if (replayCursorImg) replayCursorImg.src = replayCursorImage().src;
     function syncReplayButton() {
       if (!replayBtn) return;
       replayBtn.classList.toggle('hidden', !replayEnabled());
@@ -14771,12 +15044,12 @@
       last = now;
       tickTreeShake(dt);
       const paused = !locked && !replayPlay && !introOpen && !prayOpen && !bookOpen && !invOpen && !cmdOpen && !mapSystem?.isOpen() && !recipeOpen && !visibleTree() && !workbenchUI.opened && !skylineSystem?.isOpen() && !achieveOpen;
-      if (!paused && !sleep) playTime += dt;
+      if (!paused && !sleep && !replayPlay) playTime += dt;
 
       fpsSmooth += ((1 / Math.max(exporting ? dt : rawDt, 1e-4)) - fpsSmooth) * 0.08;
       if (sleep) { updateSleep(dt); mining = false; player.vel.set(0, 0, 0); }
 
-      updateAchievements(dt);
+      if (!replayPlay) updateAchievements(dt);
 
       if (!paused && !sleep) {
       const _pMove = performance.now();
@@ -14796,35 +15069,37 @@
       } else mining = false;
 
 
-      if (timeLock === null) {
-        clock.t += dt;
-        if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; maybeNuclearStrike(); }
-      } else {
-        clock.t = timeLock;
+      if (!replayPlay) {
+        if (timeLock === null) {
+          clock.t += dt;
+          if (clock.t >= TUNING.DAY_SECONDS) { clock.t -= TUNING.DAY_SECONDS; clock.day++; maybeNuclearStrike(); }
+        } else {
+          clock.t = timeLock;
+        }
+        updateAmbientMusic(dt);
+        updateRadio();
+        updateMachineSounds(dt);
+        if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
+        if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
+        if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
+        if (cigModel) cigModel.visible = smokeTime > 0;
+        machineSystem?.update(dt);
+        skylineSystem?.update(dt);
+        if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
+        updateVitals(dt);
+        updateGuide(dt);
+        const inWaste = biomeAt(player.pos.x, player.pos.z) === B.WASTELAND;
+        if (inWaste !== wasInWaste) {
+          wasInWaste = inWaste;
+          if (inWaste) notice('WASTELAND · HOT GROUND');
+        }
+        const radRate = doseRate();
+        if (radRate <= 0.01) radFreeT += dt; else radFreeT = 0;
+        if (radFreeT >= TUNING.RAD_CALM_DELAY) inv.dose = Math.max(0, inv.dose - TUNING.RAD_DECAY * dt);
+        inv.dose += radRate * dt;
+        if (inv.dose >= TUNING.RAD_LETHAL_DOSE) die();
       }
       updateDaylight();
-      updateAmbientMusic(dt);
-      updateRadio();
-      updateMachineSounds(dt);
-      if (armorShieldTimer > 0) armorShieldTimer = Math.max(0, armorShieldTimer - dt);
-      if (radIntakeTimer > 0) radIntakeTimer = Math.max(0, radIntakeTimer - dt);
-      if (smokeTime > 0) smokeTime = Math.max(0, smokeTime - dt);
-      if (cigModel) cigModel.visible = smokeTime > 0;
-      machineSystem?.update(dt);
-      skylineSystem?.update(dt);
-      if (machineSystem) for (const c of machineSystem.cleaners) inv.dose = Math.max(0, inv.dose - 8 * dt);
-      updateVitals(dt);
-      updateGuide(dt);
-      const inWaste = biomeAt(player.pos.x, player.pos.z) === B.WASTELAND;
-      if (inWaste !== wasInWaste) {
-        wasInWaste = inWaste;
-        if (inWaste) notice('WASTELAND · HOT GROUND');
-      }
-      const radRate = doseRate();
-      if (radRate <= 0.01) radFreeT += dt; else radFreeT = 0;
-      if (radFreeT >= TUNING.RAD_CALM_DELAY) inv.dose = Math.max(0, inv.dose - TUNING.RAD_DECAY * dt);
-      inv.dose += radRate * dt;
-      if (inv.dose >= TUNING.RAD_LETHAL_DOSE && !replayPlay) die();
       if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
       if (deathT > 0) deathT = Math.max(0, deathT - dt);
       if (noticeT > 0) noticeT = Math.max(0, noticeT - dt);
@@ -14833,12 +15108,6 @@
 
 
       if (replayPlay) updateReplayPlayback(dt);
-      else if (replayRec) {
-        replayRecT += dt;
-        const held = inv.hot[inv.sel];
-        pushFrame(replayRec, replayRecT, player.pos.x, player.pos.y, player.pos.z,
-          player.yaw, player.pitch, clock.t, held ? held.id : null, eyeCur, slidePitch);
-      }
 
       if (replayPlay) {
 
@@ -14880,8 +15149,7 @@
 
 
       const _pDrops = performance.now();
-      pumpDeathSpill();
-      updateDrops(dt, now);
+      if (!replayPlay) { pumpDeathSpill(); updateDrops(dt, now); }
       workbenchUI.update(dt);
       if (recipeOpen) {
         starterUiTimer += dt;
@@ -14907,6 +15175,17 @@
       barrelUpdate(player.pos.x, player.pos.z);
       } else {
         world.updateJobs(0);
+      }
+
+      if (replayRec && !replayPlay) {
+        replayRecT += dt;
+        const held = inv.hot[inv.sel];
+        pushFrame(replayRec, replayRecT, player.pos.x, player.pos.y, player.pos.z,
+          player.yaw, player.pitch, clock.t, held ? held.id : null, eyeCur, slidePitch);
+        if (replayRecT >= replayNextState) {
+          pushState(replayRec, replayRecT, replaySnapshot());
+          replayNextState = replayRecT + REPLAY_STATE_INTERVAL;
+        }
       }
 
       if (sleep) {
@@ -15058,7 +15337,7 @@
       }
 
 
-      updateTorches(dt, now);
+      if (!replayPlay) updateTorches(dt, now);
       updateDoorSwings(dt);
       updateC4(dt);
       updateFlare(dt);
@@ -15141,7 +15420,21 @@
           const ex = replayExport;
           ex.c2d.drawImage(renderer.domElement, 0, 0, ex.w, ex.h);
 
-          const cx = ex.w / 2, cy = ex.h / 2, g = ex.c2d;
+          const g = ex.c2d;
+          const sx = ex.w / innerWidth, sy = ex.h / innerHeight;
+          paintUI(g, [
+            document.getElementById('hud'), document.getElementById('bar'),
+            hotbarEl, document.getElementById('vitals'), document.getElementById('objective'),
+            document.getElementById('minimap'), document.getElementById('nowPlaying'),
+            document.getElementById('achToast'), document.getElementById('urgentCard'),
+            document.getElementById('tip'), invPanel, recipePanelEl, treePanelEl,
+            document.getElementById('mapPanel'), document.getElementById('achievePanel'),
+            document.getElementById('cmd'), document.querySelector('.workbench-screen'),
+            document.querySelector('.skyline-screen'), document.querySelector('.bwe-mini'),
+          ], sx, sy);
+          paintCursor(g, replayCursorImage(), replayCursor.x, replayCursor.y, sx, sy);
+
+          const cx = ex.w / 2, cy = ex.h / 2;
           g.strokeStyle = 'rgba(255,255,255,0.9)';
           g.lineWidth = Math.max(1, Math.round(ex.h / 720));
           const cs = Math.max(6, Math.round(ex.h / 90));
@@ -15168,6 +15461,10 @@
       paintGainCard(now);
       updateHud(dt);
       replayUI?.paint();
+      if (replayCursorEl) {
+        replayCursorEl.classList.toggle('hidden', !replayPlay);
+        if (replayPlay) replayCursorEl.style.transform = `translate(${replayCursor.x - 2}px, ${replayCursor.y - 2}px)`;
+      }
       if (replayRecEl) {
         const on = !!replayRec && !replayPlay;
         replayRecEl.classList.toggle('hidden', !on);

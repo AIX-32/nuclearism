@@ -6,8 +6,8 @@ import * as Liquid from './liquids.js';
 import { MachineSystem } from './machines.js';
 
 const ok = [];
-const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'batteryPie', 'input', 'orders', 'button']);
-const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore', 'pickup', 'askbox', 'drop']);
+const TYPES = new Set(['label', 'slot', 'progress', 'arrow', 'power', 'recipes', 'bwe', 'bore', 'batteryPie', 'input', 'orders', 'requests', 'button']);
+const KINDS = new Set(['crafting', 'armor', 'processor', 'reactor', 'generator', 'excavator', 'bwe', 'absorber', 'cable', 'starter_cable', 'storage', 'geiger', 'cleaner', 'scrubber', 'pump', 'pylon', 'bed', 'vehicle', 'bore', 'pickup', 'askbox', 'drop', 'collider', 'slot']);
 
 function has(id) { return Object.prototype.hasOwnProperty.call(ITEM_DEFS, id); }
 
@@ -451,9 +451,26 @@ const bsLayout = JSON.parse(readFileSync(new URL('../../assets/ui/battery_stack.
 ok.push([bsLayout.id === 'battery_stack' && !bsLayout.elements.some((e) => e.type === 'slot')
   && bsLayout.elements.some((e) => e.id === 'status') && bsLayout.elements.some((e) => e.type === 'batteryPie')
   && bsLayout.elements.every((e) => TYPES.has(e.type)), 'battery stack panel is a clean charge readout with a machine-drain square chart']);
-for (const id of ['battery_stack', 'bed', 'pickup_box', 'ask_box', 'dropbox']) {
+for (const id of ['battery_stack', 'bed', 'pickup_box', 'ask_box', 'dropbox', 'lhc', 'recycler', 'requester']) {
   ok.push([existsSync(new URL(`../../assets/models/workbenches/${id}.gltf`, import.meta.url)), `${id} has its own model`]);
 }
+const recDef = MACHINE_BY_ID.recycler;
+const recLayout = layoutFor(recDef);
+ok.push([recDef.kind === 'slot' && recDef.energy?.use > 0, 'recycler is a powered slot machine, not a workbench']);
+ok.push([recDef.outputs === 6 && recDef.recipes[0].in.scrap > 0, 'recycler takes scrap and has six outputs']);
+ok.push([recLayout.elements.filter((e) => e.type === 'slot' && e.role === 'input0').length === 1
+  && recLayout.elements.filter((e) => e.type === 'slot' && /^output\d+$/.test(e.role)).length === 6,
+'recycler panel has one big input and six small outputs']);
+ok.push([['INPUT', 'OUTPUT'].every((t) => recLayout.elements.some((e) => e.type === 'label' && e.text === t)),
+'recycler panel labels its input and output']);
+const mc = MACHINE_BY_ID.massive_container, rq = MACHINE_BY_ID.requester;
+ok.push([mc?.kind === 'storage' && mc.storageSlots === MACHINE_BY_ID.simple_container.storageSlots * 8, 'massive container has eight times the simple container slots']);
+ok.push([!!mc?.skylineStorage && layoutFor(mc).elements.some((e) => e.id === 'skylineToggle' && e.action === 'toggleSkylineStorage'), 'massive container has the skyline-storage tick']);
+ok.push([ITEM_DEFS.massive_container?.model === 'assets/models/industrial/04_container_01.glb' && ITEM_DEFS.requester?.model === 'assets/models/workbenches/requester.gltf', 'the massive container reuses the industrial shipping-container model, the requester has its own']);
+const mcRec = CRAFT_RECIPES.find((r) => r.out.massive_container);
+ok.push([mcRec && Object.keys(mcRec.needs).length === 2 && mcRec.needs.boron_plate === 50 && mcRec.needs.stone === 40, 'massive container costs 50 boron sheets and 40 stone']);
+ok.push([!!rq?.requester && layoutFor(rq).elements.some((e) => e.type === 'requests'), 'requester has a searchable request panel']);
+ok.push([MACHINE_BY_ID.assembler.recipes.some((r) => r.out.requester), 'requester is assembler-craftable']);
 const bedRec = CRAFT_RECIPES.find((r) => r.out.bed);
 ok.push([MACHINE_BY_ID.bed?.sleep === true, 'bed lets you sleep']);
 ok.push([bedRec && Object.keys(bedRec.needs).length === 2 && bedRec.needs.iron_ingot === 2 && bedRec.needs.herb === 5, 'bed costs 2 iron ingots and 5 herb']);

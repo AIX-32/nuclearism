@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const src = fs.readFileSync(new URL('./game.js', import.meta.url), 'utf8');
 const rearm = src.match(/if \(!keys\.Space\) jumpUsed = false;/);
-const jump = src.match(/if \(!inWater && keys\.Space && !jumpUsed && player\.onGround\) \{[\s\S]*?sliding = false;\s*\}/);
+const jump = src.match(/if \(!inWater && !onLadder && keys\.Space && !jumpUsed && player\.onGround\) \{[\s\S]*?sliding = false;\s*\}/);
 assert(rearm && jump, 'jump charge logic not found in game.js');
 
 
@@ -12,6 +12,7 @@ const frame = new Function('state', 'space', 'onGround', `
   const vitals = state.vitals;
   const player = { onGround, vel: { y: 0 } };
   const inWater = false;
+  const onLadder = false;
   let sliding = false;
   let jumpUsed = state.jumpUsed;
   ${rearm[0]}

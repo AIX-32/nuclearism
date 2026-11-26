@@ -126,6 +126,8 @@ export class WorkbenchUI {
     this._orderFilter = '';
     this._orderRowSig = null;
     this._orderGridSig = null;
+    this._requestFilter = '';
+    this._requestSig = null;
     this.inventorySignature = '';
     this.root.hidden = false;
     this.craftRail.hidden = !this.bridge.hasCraftList?.();
@@ -163,6 +165,7 @@ export class WorkbenchUI {
   renderLayout() {
     const isWorkflowOnly = !!this.machine && (this.machine.def.kind === 'processor' || this.machine.def.kind === 'crafting' || this.machine.def.kind === 'bwe');
     const { cols } = this.layout.grid;
+    this.workArea.classList.toggle('scrollable', !!this.machine?.def?.skylineStorage);
     if (isWorkflowOnly) {
       this.workArea.style.display = 'flex';
       this.workArea.style.flexDirection = 'column';
@@ -222,6 +225,17 @@ export class WorkbenchUI {
         node.style.gridRow = `${el.y + 1} / span ${el.h}`;
         this.workArea.appendChild(node);
         this.buildBatteryPie(node);
+        continue;
+      }
+
+      if (el.type === 'requests') {
+        const node = document.createElement('div');
+        node.className = 'workbench-requests workbench-orders';
+        node.dataset.id = el.id;
+        node.style.gridColumn = `${el.x + 1} / span ${el.w}`;
+        node.style.gridRow = `${el.y + 1} / span ${el.h}`;
+        this.buildRequests(node);
+        this.workArea.appendChild(node);
         continue;
       }
 
@@ -473,6 +487,59 @@ export class WorkbenchUI {
     if (wheel) {
       wheel.classList.toggle('active', !!state.wheel);
       wheel.textContent = state.wheel ? 'STOP' : 'SPIN';
+    }
+  }
+
+  buildRequests(node) {
+    node.innerHTML = '<input class="wb-order-search" type="search" placeholder="SEARCH SKYLINE STORAGE" aria-label="Search stored items"><div class="wb-order-grid"></div>';
+    const search = node.querySelector('.wb-order-search');
+    search.value = this._requestFilter || '';
+    search.addEventListener('input', () => { this._requestFilter = search.value.trim().toLowerCase(); this._requestSig = null; this.renderRequests(); });
+    this._requestSig = null;
+    this.renderRequests();
+  }
+
+  renderRequests() {
+    const node = this.workArea?.querySelector('.workbench-requests');
+    if (!node) return;
+    const stock = this.bridge.requestStock?.() || [];
+    const filter = this._requestFilter || '';
+    const sig = `${filter}|${stock.map((o) => `${o.id}:${o.n}`).join(',')}`;
+    if (sig === this._requestSig) return;
+    this._requestSig = sig;
+    const grid = node.querySelector('.wb-order-grid');
+    grid.replaceChildren();
+    let shown = 0;
+    for (const { id, n } of stock) {
+      if (filter && !(id.includes(filter) || (this.bridge.item?.(id)?.name || '').toLowerCase().includes(filter))) continue;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'wb-order-pick';
+      cell.title = `${this.bridge.item?.(id)?.name || id} · ${n} stored`;
+      const url = this.bridge.icon?.(id) || '';
+      if (url) {
+        const img = document.createElement('img');
+        img.src = url; img.alt = id;
+        cell.appendChild(img);
+      }
+      const label = document.createElement('span');
+      label.textContent = `${(this.bridge.item?.(id)?.code || id).slice(0, 3)} ×${n}`;
+      cell.appendChild(label);
+      cell.addEventListener('click', () => {
+        this.bridge.requestItem?.(id);
+        this.renderInventory(); this.renderDynamic();
+        this._requestSig = null; this.renderRequests();
+      });
+      cell.addEventListener('mouseenter', (e) => this.bridge.showTip?.({ id, n }, e.clientX, e.clientY));
+      cell.addEventListener('mouseleave', () => this.bridge.hideTip?.());
+      grid.appendChild(cell);
+      if (++shown >= 160) break;
+    }
+    if (!shown) {
+      const empty = document.createElement('div');
+      empty.className = 'wb-request-empty';
+      empty.textContent = filter ? 'NO MATCHING ITEMS' : 'NO ITEMS IN SKYLINE STORAGE';
+      grid.appendChild(empty);
     }
   }
 
@@ -937,9 +1004,14 @@ export class WorkbenchUI {
         const v = this.bridge.powerValue?.();
         if (bar) bar.style.width = `${Math.max(0, Math.min(1, v ?? 0)) * 100}%`;
       }
+      if (el.type === 'button' && el.id === 'skylineToggle') {
+        const node = this.workArea.querySelector(`[data-id="${CSS.escape(el.id)}"]`);
+        if (node) node.setAttribute('aria-pressed', this.bridge.skylineStorage?.() ? 'true' : 'false');
+      }
     }
     this.renderMachineWorkflow();
     this.renderOrders();
+    this.renderRequests();
     this.renderBweDynamic();
     this.renderBoreDynamic();
     this.renderBatteryPieDynamic();

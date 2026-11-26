@@ -1,21 +1,11 @@
 
-
-
-
-
-
-
-
-
-
-
-
-export const REPLAY_VERSION = 2;
+export const REPLAY_VERSION = 3;
 export const REPLAY_RATE = 30;
 export const REPLAY_MIN_INTERVAL = 1 / REPLAY_RATE;
 export const REPLAY_FRAME_STRIDE = 10;
 export const REPLAY_FRAME_STRIDE_V1 = 8;
 export const REPLAY_EDIT_STRIDE = 5;
+export const REPLAY_STATE_KEYFRAME = 40;
 
 export function createReplay(meta = {}) {
   return {
@@ -30,6 +20,8 @@ export function createReplay(meta = {}) {
     held: [],
     f: [],
     e: [],
+    s: [],
+    a: [],
   };
 }
 
@@ -70,6 +62,31 @@ export function pushFrame(r, t, x, y, z, yaw, pitch, clockT, heldId, eye = 1.62,
 
 export function pushEdit(r, t, x, y, z, v) {
   r.e.push(t, x, y, z, v);
+  if (t > r.dur) r.dur = t;
+}
+
+// State snapshots are diffed against the previous one; a full keyframe every
+// REPLAY_STATE_KEYFRAME entries keeps seeking cheap without storing the whole
+// world state four times a second.
+export function pushState(r, t, snap, full = false) {
+  if (!r.s) r.s = [];
+  const prev = r._lastState || {};
+  const diff = {};
+  for (const k of Object.keys(snap)) {
+    if (snap[k] === undefined) continue;
+    if (JSON.stringify(prev[k]) !== JSON.stringify(snap[k])) diff[k] = snap[k];
+  }
+  const keys = Object.keys(diff);
+  const isFull = full || r.s.length === 0 || r.s.length % REPLAY_STATE_KEYFRAME === 0 || keys.length > 12;
+  r.s.push([t, isFull ? { full: true, ...snap } : { d: diff }]);
+  r._lastState = snap;
+  if (t > r.dur) r.dur = t;
+  return true;
+}
+
+export function pushEvent(r, t, type, data = null) {
+  if (!r.a) r.a = [];
+  r.a.push([t, type, data]);
   if (t > r.dur) r.dur = t;
 }
 
@@ -147,6 +164,60 @@ export function heldId(r, idx) {
   return idx >= 0 && idx < r.held.length ? r.held[idx] : null;
 }
 
+function countAt(arr, t, stride) {
+  const n = (arr.length / stride) | 0;
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid * stride] <= t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+function pairIndexAt(arr, t) {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid][0] <= t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+export function stateIndexAt(r, t) {
+  return pairIndexAt(r.s || [], t);
+}
+
+export function stateAt(r, t) {
+  const s = r.s || [];
+  if (!s.length) return null;
+  let idx = stateIndexAt(r, t) - 1;
+  if (idx < 0) return null;
+  let start = idx;
+  while (start > 0 && !s[start][1].full) start--;
+  let out = {};
+  for (let i = start; i <= idx; i++) {
+    const entry = s[i][1];
+    if (entry.full) {
+      out = { ...entry };
+      delete out.full;
+    } else if (entry.d) {
+      for (const k of Object.keys(entry.d)) {
+        if (entry.d[k] === null) delete out[k]; else out[k] = entry.d[k];
+      }
+    }
+  }
+  return out;
+}
+
+export function eventIndexAt(r, t) {
+  return pairIndexAt(r.a || [], t);
+}
+
+export function eventAt(r, i) {
+  const e = (r.a || [])[i];
+  return e ? { t: e[0], type: e[1], data: e[2] } : null;
+}
+
 
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -190,6 +261,14 @@ function b64ToFloats(str) {
   return Array.from(f);
 }
 
+function textToB64(str) {
+  return bytesToB64(new TextEncoder().encode(str));
+}
+
+function b64ToText(str) {
+  return new TextDecoder().decode(b64ToBytes(str));
+}
+
 
 
 export function packReplay(r) {
@@ -204,11 +283,13 @@ export function packReplay(r) {
     held: r.held.slice(),
     fb: floatsToB64(r.f),
     eb: floatsToB64(r.e),
+    sb: r.s && r.s.length ? textToB64(JSON.stringify(r.s)) : '',
+    ab: r.a && r.a.length ? textToB64(JSON.stringify(r.a)) : '',
   };
 }
 
 export function unpackReplay(o) {
-  if (!o || (o.v !== 1 && o.v !== REPLAY_VERSION)) return null;
+  if (!o || (o.v !== 1 && o.v !== 2 && o.v !== REPLAY_VERSION)) return null;
   const r = createReplay(o);
   r.v = o.v;
   r.stride = o.v === 1 ? REPLAY_FRAME_STRIDE_V1 : REPLAY_FRAME_STRIDE;
@@ -216,11 +297,17 @@ export function unpackReplay(o) {
   r.f = o.fb ? b64ToFloats(o.fb) : [];
   r.e = o.eb ? b64ToFloats(o.eb) : [];
   r.dur = o.dur || 0;
+  try { r.s = o.sb ? JSON.parse(b64ToText(o.sb)) : []; } catch { r.s = []; }
+  try { r.a = o.ab ? JSON.parse(b64ToText(o.ab)) : []; } catch { r.a = []; }
+  if (!Array.isArray(r.s)) r.s = [];
+  if (!Array.isArray(r.a)) r.a = [];
   return r;
 }
 
 
 export function replayBytes(packed) {
   if (!packed) return 0;
-  return (packed.fb?.length || 0) + (packed.eb?.length || 0) + JSON.stringify(packed.held || []).length + 200;
+  return (packed.fb?.length || 0) + (packed.eb?.length || 0)
+    + (packed.sb?.length || 0) + (packed.ab?.length || 0)
+    + JSON.stringify(packed.held || []).length + 200;
 }

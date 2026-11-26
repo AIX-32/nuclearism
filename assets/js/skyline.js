@@ -100,6 +100,67 @@ export function deliveryRoles(machine, itemId, items) {
 
 
 
+export function skylineStorages(machines, requester, pylonFor, pylonPath) {
+  if (!requester) return [];
+  const from = pylonFor(requester);
+  if (!from) return [];
+  return machines.filter((m) => {
+    if (!m.def.skylineStorage || !m.state.skylineStorage) return false;
+    const p = pylonFor(m);
+    return p && pylonPath(p, from);
+  });
+}
+
+export function stockedItems(containers) {
+  const out = new Map();
+  for (const m of containers) {
+    for (const role of storageRoles(m)) {
+      const s = m.state.slots[role];
+      if (!s?.id || !(s.n > 0)) continue;
+      const cur = out.get(s.id) || { id: s.id, n: 0 };
+      cur.n += s.n;
+      out.set(s.id, cur);
+    }
+  }
+  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function pullItems(requester, containers, id, stackCap) {
+  if (!requester || !id) return 0;
+  const roles = storageRoles(requester);
+  const cap = stackCap(id) || MAXSTACK;
+  let moved = 0;
+  for (const m of containers) {
+    for (const role of storageRoles(m)) {
+      const s = m.state.slots[role];
+      if (!s || s.id !== id || !(s.n > 0)) continue;
+      const empty = () => roles.find((r) => !requester.state.slots[r]);
+      if (s.liquid || s.plates) {                       // containers keep their contents, never merge
+        const dst = empty();
+        if (!dst) return moved;
+        requester.state.slots[dst] = s;
+        m.state.slots[role] = null;
+        moved += s.n || 1;
+        continue;
+      }
+      while (s.n > 0) {
+        let dst = roles.find((r) => {
+          const d = requester.state.slots[r];
+          return d?.id === id && !d.liquid && !d.plates && d.n < cap;
+        });
+        if (!dst) dst = empty();
+        if (!dst) return moved;
+        if (!requester.state.slots[dst]) requester.state.slots[dst] = { id, n: 0 };
+        const d = requester.state.slots[dst];
+        const take = Math.min(s.n, cap - d.n);
+        d.n += take; s.n -= take; moved += take;
+        if (s.n <= 0) m.state.slots[role] = null;
+      }
+    }
+  }
+  return moved;
+}
+
 export function sourceItems(machine, craftRecipes) {
   const out = new Map();
   const add = (id, n) => {
@@ -369,6 +430,22 @@ export class SkylineSystem {
         this.networkWires.push(line);
       }
     }
+  }
+
+  requesterContainers(requester) {
+    const list = this.machines?.instances || [];
+    return skylineStorages(list, requester, (m) => this.pylonFor(m), (a, b) => !!this.pylonPath(a, b));
+  }
+
+  requesterStock(requester) {
+    return stockedItems(this.requesterContainers(requester));
+  }
+
+  requestItem(requester, id) {
+    const n = pullItems(requester, this.requesterContainers(requester), id, (i) => this.items?.[i]?.stack || MAXSTACK);
+    if (n) this.ctx.notice?.(`REQUESTED ${n} ${this.items?.[id]?.name || id}`);
+    else this.ctx.notice?.('NOTHING TO REQUEST');
+    return n;
   }
 
   pylonPath(from, to) {

@@ -3,6 +3,7 @@ import {
   createReplay, pushFrame, pushEdit, frameCount, editCount, duration,
   sampleAt, editIndexAt, editAt, heldId, packReplay, unpackReplay,
   replayBytes, lerpAngle, REPLAY_MIN_INTERVAL,
+  pushState, stateAt, stateIndexAt, pushEvent, eventIndexAt, eventAt,
 } from './replay.js';
 
 let fails = 0;
@@ -88,6 +89,26 @@ ok(v1p.v === 1, 'v1 packs as v1');
 const v1b = unpackReplay(v1p);
 ok(v1b && frameCount(v1b) === 2, 'v1 unpacks');
 ok(near(sampleAt(v1b, 0).eye, 1.62) && near(sampleAt(v1b, 0).slideP, 0), 'v1 defaults eye/slide');
+
+
+const st = createReplay();
+pushState(st, 0, { inv: { sel: 0 }, ui: { cursor: [10, 20] }, clock: { day: 1 } }, true);
+pushState(st, 0.25, { inv: { sel: 0 }, ui: { cursor: [30, 40] }, clock: { day: 1 } });
+pushState(st, 0.5, { inv: { sel: 1 }, ui: { cursor: [30, 40] }, clock: { day: 1 } });
+ok(stateIndexAt(st, 0.2) === 1 && stateIndexAt(st, 9) === 3, 'state index at time');
+ok(stateAt(st, -1) === null, 'no state before the first snapshot');
+ok(stateAt(st, 0.1).ui.cursor[0] === 10, 'first snapshot is a full keyframe');
+ok(stateAt(st, 0.3).ui.cursor[0] === 30 && stateAt(st, 0.3).inv.sel === 0, 'diff snapshots fold forward');
+ok(stateAt(st, 0.6).inv.sel === 1, 'later diffs apply');
+const stBack = unpackReplay(packReplay(st));
+ok(stateAt(stBack, 0.6).inv.sel === 1 && stateAt(stBack, 0.6).ui.cursor[1] === 40, 'state survives packing');
+pushEvent(st, 0.1, 'drop', { id: 'wood', n: 2 });
+pushEvent(st, 0.4, 'open', { id: 'furnace' });
+ok(eventIndexAt(st, 0.3) === 1 && eventIndexAt(st, 9) === 2, 'event index at time');
+ok(eventAt(st, 1).type === 'open' && eventAt(st, 1).data.id === 'furnace', 'event payload');
+const evBack = unpackReplay(packReplay(st));
+ok(eventAt(evBack, 0).data.id === 'wood', 'events survive packing');
+ok(stBack.v === 3, 'new replays are v3');
 
 
 const big = createReplay();

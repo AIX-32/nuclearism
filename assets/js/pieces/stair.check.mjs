@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ITEM_DEFS, CRAFT_RECIPES } from '../content.js';
 import { KIND as STAIR, ITEMS, RECIPES } from './stair.js';
 
 const X0 = 4, Y0 = 10, Z0 = 7;
@@ -83,6 +84,10 @@ assert.ok(Object.values(ITEMS).every((it) => it.building?.kind === 'stair'));
 assert.equal(ITEMS.stair_wood.table, true, 'the wood stair is a bootstrap craft');
 assert.equal(RECIPES.length, 4);
 assert.ok(RECIPES.every((r) => Object.keys(r.out).length === 1 && Object.keys(r.needs).length > 0));
+for (const id of Object.keys(ITEMS)) {
+  assert.ok(ITEM_DEFS[id], `item "${id}" is in the catalogue`);
+  assert.ok(CRAFT_RECIPES.some((r) => r.out[id]), `item "${id}" is craftable`);
+}
 
 
 const { BuildingSystem } = await import('../building.js');

@@ -151,6 +151,32 @@ export class MachineSystem {
       g.add(arm);
       return g;
     }
+    if (def.kind === 'collider') {
+      const r = def.collider?.radius || 50;
+      const t = Math.max(0.25, h * 0.07);
+      const rotor = new T.Group();
+      rotor.name = 'colliderRotor';
+      const ring = new T.Mesh(new T.TorusGeometry(r, t, 6, 72), new T.MeshLambertMaterial({ color: 0xb9c9e0, emissive: 0x12203a, emissiveIntensity: 0.4 }));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = h - t;
+      rotor.add(ring);
+      const pipe = new T.Mesh(new T.TorusGeometry(r, t * 0.35, 5, 72), new T.MeshBasicMaterial({ color: 0x7ff0ff }));
+      pipe.rotation.x = Math.PI / 2;
+      pipe.position.y = h - t;
+      rotor.add(pipe);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const det = new T.Mesh(new T.BoxGeometry(3.2, h * 0.5, 2.4), new T.MeshLambertMaterial({ color: i % 2 ? 0x7f8fa6 : 0x9aa9c0 }));
+        det.position.set(Math.cos(a) * r, (h - t) * 0.55, Math.sin(a) * r);
+        det.rotation.y = -a;
+        rotor.add(det);
+        const leg = new T.Mesh(new T.BoxGeometry(0.5, h - t, 0.5), new T.MeshLambertMaterial({ color: 0x6d7a8c }));
+        leg.position.set(Math.cos(a) * r, (h - t) / 2, Math.sin(a) * r);
+        g.add(leg);
+      }
+      g.add(rotor);
+      return g;
+    }
     const box = new T.Mesh(new T.BoxGeometry(0.92, h, 0.92), new T.MeshLambertMaterial({ color: col, emissive: 0x101418, emissiveIntensity: 0.3 }));
     box.position.y = h / 2;
     g.add(box);
@@ -439,7 +465,7 @@ export class MachineSystem {
       uid: this.uidSeq++, def: tpl.def, x, y, z, rot, mesh, layout: tpl.layout,
       top: y + tpl.def.height * MACHINE_SCALE, hx, hz,
       spinNode: spinNodes[0] || null, spinNodes, bwe, boreMask: tpl.bore || null,
-      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0, collect: true, burnCarbon: false, usage: {}, want: [null, null, null] },
+      state: { slots: {}, progress: 0, heat: 0, recipe: null, job: null, queue: [], burning: false, burnT: 0, buffer: (tpl.def.coolingPower ? (tpl.def.capacity || 0) : 0), genRate: (tpl.def.infinite ? 1000 : 0), status: 'IDLE', fuelBuf: 0, boreProg: 0, pitch: 0, pitchCur: 0, collect: true, burnCarbon: false, usage: {}, want: [null, null, null], skylineStorage: false },
       mixer: null, action: null, net: null,
     };
     if (tpl.animations.length) {
@@ -503,6 +529,13 @@ export class MachineSystem {
     this.ui.renderOrderRows?.();
   }
 
+
+  toggleSkylineStorage() {
+    const m = this.openInst;
+    if (!m || !m.def.skylineStorage) return;
+    m.state.skylineStorage = !m.state.skylineStorage;
+    this.ctx.notice?.(m.state.skylineStorage ? 'SKYLINE STORAGE ENABLED' : 'SKYLINE STORAGE DISABLED');
+  }
 
   payExact() {
     const m = this.openInst;
@@ -600,6 +633,14 @@ export class MachineSystem {
       items: () => this.ITEMS,
       order: (i, id, n) => this.setOrder(i, id, n),
       payExact: () => this.payExact(),
+      skylineStorage: () => !!this.openInst?.state.skylineStorage,
+      toggleSkylineStorage: () => this.toggleSkylineStorage(),
+      requestStock: () => this.ctx.skyline?.requesterStock(this.openInst),
+      requestItem: (id) => {
+        const n = this.ctx.skyline?.requestItem(this.openInst, id) || 0;
+        if (n) this.ctx.syncBars?.();
+        return n;
+      },
       icon: (id) => this.ctx.icon(id),
       selectedHotbar: () => this.inv.sel,
       selectHotbar: (i) => { this.inv.sel = i; this.ctx.syncBars(); },
@@ -697,6 +738,7 @@ export class MachineSystem {
       return stack.id === role && !stack.liquid && !(cur && cur.n >= this.stackCap(role));
     }
     if (role === 'armor') return !!this.ITEMS[stack.id]?.armor;
+    if (m.def.kind === 'slot' && role.startsWith('input')) return stack.id === 'scrap' && !stack.liquid;
     if (role.startsWith('output')) return false;
     if (role.startsWith('pay')) return stack.id === 'rials';
     if (role.startsWith('plate')) {
@@ -705,6 +747,7 @@ export class MachineSystem {
       return !!this.ITEMS[stack.id]?.plate && !!a && (armor.plates || []).length < (a.plateSlots || 0);
     }
     if (role.startsWith('rod')) return !!this.ITEMS[stack.id]?.rod;
+    if (m.def.kind === 'collider' && role === 'fuel') return stack.id === 'proton_canister';
     if (m.def.kind === 'reactor' && role === 'fuel') return !!this.ITEMS[stack.id]?.fuel;
     if ((m.def.drive || m.def.bore) && role.startsWith('fuel')) {
       if (stack.id === 'carbon' || stack.id === 'heavy_fuel_oil') return true;
@@ -1392,12 +1435,14 @@ export class MachineSystem {
       for (const m of net.members) this.chargePower(m, dt, net);
       for (const m of net.members) {
         const k = m.def.kind;
-        if (k === 'processor' || k === 'crafting') this.tickProcessor(m, dt, net);
+        if (k === 'slot' && !m.state.job && !m.state.queue?.length) this.startJobFromSlots(m, m.def.recipes[0]);
+        if (k === 'processor' || k === 'crafting' || k === 'slot') this.tickProcessor(m, dt, net);
         else if (k === 'excavator') this.tickExcavator(m, dt, net);
         else if (k === 'bwe') this.tickBwe(m, dt, net);
         else if (k === 'bore') this.tickBore(m, dt, net);
         else if (k === 'absorber') this.tickAbsorber(m, dt, net);
         else if (k === 'scrubber') this.tickScrubber(m, dt, net);
+        else if (k === 'collider') this.tickCollider(m, dt, net);
         else if (k === 'pickup' || k === 'askbox') this.tickOffer(m);
         else if (k === 'geiger') {
           const r = this.localRad(m.x, m.y + 1, m.z);
@@ -1564,6 +1609,10 @@ export class MachineSystem {
 
 
       if (m.def.kind === 'crafting') return;
+      if (m.def.kind === 'slot') {
+        st.status = this.outputsHaveRoom(m, m.def.recipes[0]) ? 'INSERT SCRAP' : 'OUTPUT FULL';
+        return;
+      }
       const n = this.craftOptions(m).length;
       st.status = n ? `${n} RECIPE${n === 1 ? '' : 'S'} READY` : 'NO MATERIALS';
       return;
@@ -1920,6 +1969,40 @@ export class MachineSystem {
     }
   }
 
+  tickCollider(m, dt, net) {
+    const st = m.state, cfg = m.def.collider || {};
+    const feed = st.slots.fuel;
+    const period = Math.max(1, cfg.period || 60);
+    const out = cfg.out || 'antimatter';
+    const start = Math.max(0, cfg.startPower || 0);
+    st.burning = false;
+    if (!feed || feed.id !== cfg.feed) {
+      st.status = 'NO PROTON FEED';
+      st.progress = 0;
+      return;
+    }
+    if ((st.buffer || 0) < start) { st.status = `NEEDS ${Math.round(start)} POWER`; return; }
+    if (!this.outputsHaveRoom(m, { out: { [out]: 1 } })) { st.status = 'OUTPUT FULL'; return; }
+    const cost = this.useRate(m) * dt;
+    if (!this.drawPower(m, cost)) { st.status = 'NO POWER'; return; }
+    st.burning = true;
+    for (const node of (m.spinNodes || (m.spinNode ? [m.spinNode] : []))) node.rotateY(dt * (m.def.spinRate || 0.6));
+    st.burnT = (st.burnT || 0) + dt;
+    st.progress = Math.min(1, st.burnT / period);
+    st.status = `COLLIDING · NEXT ROLL ${Math.max(0, Math.ceil(period - st.burnT))}S`;
+    if (st.burnT < period) return;
+    st.burnT = 0;
+    st.progress = 0;
+    feed.n--;
+    if (feed.n <= 0) st.slots.fuel = null;
+    if (Math.random() < (cfg.chance ?? 0.04)) {
+      this.addOutput(m, out, 1);
+      this.ctx.onCraft?.(out, 1);
+      this.ctx.notice?.(`ANTIMATTER PRODUCED · ${this.ITEMS[out]?.name || out}`);
+      st.status = 'ANTIMATTER PRODUCED';
+    } else st.status = 'NO ANTIMATTER · FEED SPENT';
+  }
+
   ambientCut() {
     let cut = 0;
     for (const m of this.scrubbers) cut += m.def.ambientCut || 0;
@@ -2027,6 +2110,7 @@ export class MachineSystem {
 
   statusText() {
     const m = this.openInst; if (!m) return '';
+    if (m.def.requester) return this.ctx.skyline?.pylonFor(m) ? 'READY · NEAR A SKYLINE PYLON' : 'NO PYLON IN RANGE';
     if (m.def.kind === 'bwe') {
       const b = m.bwe || {};
       return `${m.state.status || 'IDLE'} · YAW ${Math.round((b.yawCur || 0) * 180 / Math.PI)}° · BOOM ${Math.round((b.boomCur || 0) * 180 / Math.PI)}°`;
@@ -2063,6 +2147,7 @@ export class MachineSystem {
       if (n) return `${n} RECIPE${n === 1 ? '' : 'S'} READY`;
       return m.state.status || 'NO MATERIALS';
     }
+    if (m.def.kind === 'slot') return m.state.status || 'INSERT SCRAP';
     if (m.def.kind === 'reactor') {
       const head = m.state.status || 'NO FUEL';
       if (!m.state.coolTarget) return head;
@@ -2210,6 +2295,7 @@ export class MachineSystem {
         bore: m.def.bore ? { fb: +(m.state.fuelBuf || 0).toFixed(3), bp: +(m.state.boreProg || 0).toFixed(3), pitch: +(m.state.pitch || 0).toFixed(3), pk: m.state.collect !== false, bc: !!m.state.burnCarbon } : null,
         usage: m.def.capacity ? m.state.usage || {} : null,
         want: m.state.want || null,
+        skylineStorage: !!m.state.skylineStorage,
       },
     }));
   }
@@ -2222,6 +2308,7 @@ export class MachineSystem {
       if (!inst || !e.s) continue;
       inst.state.slots = e.s.slots || {};
       if (Array.isArray(e.s.want)) inst.state.want = e.s.want;
+      inst.state.skylineStorage = !!e.s.skylineStorage;
       inst.state.progress = e.s.progress || 0;
       inst.state.heat = e.s.heat || 0;
       inst.state.burning = !!e.s.burning;
@@ -2249,7 +2336,7 @@ export class MachineSystem {
         inst.mesh.rotation.z = -inst.state.pitch;
       }
 
-      if (inst.def.kind === 'processor' || inst.def.kind === 'crafting') {
+      if (inst.def.kind === 'processor' || inst.def.kind === 'crafting' || inst.def.kind === 'slot') {
         const recipes = inst.def.kind === 'crafting' ? (this.ctx.craftRecipes || []) : (inst.def.recipes || []);
         const job = e.s.job;
         if (job && recipes[job.i]) {

@@ -44,6 +44,7 @@ const MACHINE_COLORS = {
   cable: '#7d7d7d',
   storage: '#cfcfcf',
   pylon: '#d8e4ff',
+  collider: '#c3a6ff',
 };
 
 
